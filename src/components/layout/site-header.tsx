@@ -1,5 +1,7 @@
+"use client";
+
 import Link from "next/link";
-import { Terminal, Menu } from "lucide-react";
+import { Terminal, Menu, Maximize } from "lucide-react";
 import { SettingsMenu } from "@/components/settings-menu";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Text } from "@/components/providers/preferences-provider";
@@ -15,11 +17,8 @@ import {
 } from "@/components/ui/sheet";
 
 const navItems = [
-  { href: "/", pt: "Início", en: "Home", es: "Inicio" },
-  { href: "/netflix", pt: "Netflix", en: "Netflix", es: "Netflix" },
-  { href: "/scene-scroll", pt: "scene-scroll", en: "scene-scroll", es: "scene-scroll" },
-  { href: "/vendas", pt: "Vendas", en: "Sales", es: "Ventas" },
-  { href: "/vertex-ai-demo", pt: "Vertex AI", en: "Vertex AI", es: "Vertex AI" },
+  { href: "/dashboard", pt: "Dashboard", en: "Dashboard", es: "Dashboard" },
+  { href: "/editor", pt: "Novo Roteiro", en: "New Script", es: "Nuevo Guion" },
 ];
 
 export function SiteHeader() {
@@ -50,13 +49,16 @@ export function SiteHeader() {
               <Text pt={item.pt} en={item.en} es={item.es} />
             </Link>
           ))}
-          <Link href="#components" className="hover:text-primary transition-colors whitespace-nowrap">
-            <Text pt="Componentes" en="Components" es="Componentes" />
-          </Link>
         </nav>
 
         {/* Ações & Menu Mobile */}
         <div className="flex items-center gap-2">
+          <Button variant="ghost" size="icon" className="hidden sm:flex" onClick={() => {
+            if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
+            else if (document.exitFullscreen) document.exitFullscreen();
+          }} title="Alternar Tela Cheia">
+             <Maximize className="h-5 w-5 text-muted-foreground" />
+          </Button>
           <div className="hidden sm:flex items-center gap-2">
             <LanguageSwitcher />
             <SettingsMenu />
