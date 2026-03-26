@@ -123,3 +123,16 @@ html[data-font-size="18"] { font-size: 18px; }
 html[data-font-size="20"] { font-size: 20px; }
 html[data-font-size="22"] { font-size: 22px; }
 html[data-font-size="24"] { font-size: 24px; }
+
+   .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        ::selection {
+          background-color: #3b82f6 !important;
+          color: white !important;
+        }
+
+        /* Correção para seleção em texto espelhado */
+        [style*="transform: scaleX(-1)"] ::selection {
+           background-color: #ef4444 !important;
+        }
