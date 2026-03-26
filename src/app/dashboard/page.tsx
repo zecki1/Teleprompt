@@ -176,70 +176,85 @@ export default function DashboardPage() {
                 </Button>
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {projectScripts.map(script => (
-                  <Card key={script.id} className="hover:shadow-md transition-shadow group flex flex-col pt-4">
-                    <CardHeader>
-                      {editingId === script.id ? (
-                        <div className="flex items-center gap-2">
-                          <Input 
-                            value={editTitle} 
-                            onChange={(e) => setEditTitle(e.target.value)} 
-                            autoFocus 
-                            onKeyDown={(e) => e.key === 'Enter' && saveTitle(script.id)}
-                          />
-                          <Button size="icon" variant="ghost" onClick={() => saveTitle(script.id)}>
-                            <Check className="w-4 h-4 text-green-500" />
+              {/* CONTAINER DE SCROLL LATERAL */}
+              <div className="relative">
+                <div className="flex gap-6 overflow-x-auto pb-6 pt-2 no-scrollbar snap-x snap-mandatory">
+                  {projectScripts.map(script => (
+                    <div key={script.id} className="min-w-[85%] md:min-w-[45%] lg:min-w-[calc(33.333%-1rem)] snap-start">
+                      <Card className="h-full hover:shadow-md transition-shadow group flex flex-col pt-4">
+                        <CardHeader>
+                          {editingId === script.id ? (
+                            <div className="flex items-center gap-2">
+                              <Input 
+                                value={editTitle} 
+                                onChange={(e) => setEditTitle(e.target.value)} 
+                                autoFocus 
+                                onKeyDown={(e) => e.key === 'Enter' && saveTitle(script.id)}
+                              />
+                              <Button size="icon" variant="ghost" onClick={() => saveTitle(script.id)}>
+                                <Check className="w-4 h-4 text-green-500" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between group/title">
+                              <CardTitle className="line-clamp-1" title={script.title}>{script.title}</CardTitle>
+                              <Button 
+                                size="icon" 
+                                variant="ghost" 
+                                className="h-6 w-6 opacity-0 group-hover/title:opacity-100 transition-opacity" 
+                                onClick={() => { setEditingId(script.id); setEditTitle(script.title); }}
+                              >
+                                <Edit2 className="w-3 h-3 text-muted-foreground" />
+                              </Button>
+                            </div>
+                          )}
+                          <p className="text-sm text-muted-foreground">
+                            {script.createdAt ? format(new Date(script.createdAt), "dd 'de' MMMM, yyyy", { locale: ptBR }) : "Sem data"}
+                          </p>
+                        </CardHeader>
+                        <CardContent className="flex-1">
+                          <div className="flex gap-2 mb-2">
+                            <Button variant="secondary" className="w-full" asChild>
+                              <Link href={`/tp/${script.id}`}>
+                                <Play className="w-4 h-4 mr-2" /> Iniciar TP
+                              </Link>
+                            </Button>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button variant="outline" className="w-full" asChild>
+                              <Link href={`/editor/${script.id}`}>
+                                <Edit2 className="w-4 h-4 mr-2" /> Editar Roteiro
+                              </Link>
+                            </Button>
+                          </div>
+                        </CardContent>
+                        <CardFooter className="bg-muted/30 border-t p-4 flex justify-between">
+                          <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`${window.location.origin}/tp/${script.id}`)}>
+                            <Copy className="w-4 h-4 mr-2" /> Link Publico
                           </Button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-between group/title">
-                          <CardTitle className="line-clamp-1" title={script.title}>{script.title}</CardTitle>
-                          <Button 
-                            size="icon" 
-                            variant="ghost" 
-                            className="h-6 w-6 opacity-0 group-hover/title:opacity-100 transition-opacity" 
-                            onClick={() => { setEditingId(script.id); setEditTitle(script.title); }}
-                          >
-                            <Edit2 className="w-3 h-3 text-muted-foreground" />
+                          <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive text-opacity-80" onClick={() => handleDelete(script.id)}>
+                            <Trash2 className="w-4 h-4" />
                           </Button>
-                        </div>
-                      )}
-                      <p className="text-sm text-muted-foreground">
-                        {script.createdAt ? format(new Date(script.createdAt), "dd 'de' MMMM, yyyy", { locale: ptBR }) : "Sem data"}
-                      </p>
-                    </CardHeader>
-                    <CardContent className="flex-1">
-                      <div className="flex gap-2 mb-2">
-                        <Button variant="secondary" className="w-full" asChild>
-                          <Link href={`/tp/${script.id}`}>
-                            <Play className="w-4 h-4 mr-2" /> Iniciar TP
-                          </Link>
-                        </Button>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button variant="outline" className="w-full" asChild>
-                          <Link href={`/editor/${script.id}`}>
-                            <Edit2 className="w-4 h-4 mr-2" /> Editar Roteiro
-                          </Link>
-                        </Button>
-                      </div>
-                    </CardContent>
-                    <CardFooter className="bg-muted/30 border-t p-4 flex justify-between">
-                      <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`${window.location.origin}/tp/${script.id}`)}>
-                        <Copy className="w-4 h-4 mr-2" /> Link Publico
-                      </Button>
-                      <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive text-opacity-80" onClick={() => handleDelete(script.id)}>
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </CardFooter>
-                  </Card>
-                ))}
+                        </CardFooter>
+                      </Card>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           ))}
         </div>
       )}
+      
+      <style jsx global>{`
+        .no-scrollbar::-webkit-scrollbar {
+          display: none;
+        }
+        .no-scrollbar {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+        }
+      `}</style>
     </div>
   );
 }

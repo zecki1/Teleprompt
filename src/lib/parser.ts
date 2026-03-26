@@ -13,14 +13,14 @@ export interface Scene {
 export function parseScript(text: string): Scene[] {
   const scenes: Scene[] = [];
   
-  // Divide o texto pelo delimitador "Cena"
+  // Divide o texto pelo delimitador "Cena" (ignora maiúsculas/minúsculas)
   const parts = text.split(/Cena\s*(?:\[)?([\w\d]+(?:-\w+)*)?(?:\])?\s*/i);
   
   for (let i = 1; i < parts.length; i += 2) {
     const sceneNumber = parts[i] ? parts[i].trim() : String(Math.floor(i / 2) + 1);
     const content = parts[i + 1] || "";
     
-    // MÉTODO A: Busca por Labels Estritos (incluindo img: e url:)
+    // MÉTODO A: Busca por Labels Estritos
     const labels = [
       { key: "time", label: "Tempo|Duração" },
       { key: "description", label: "Descrição" },
@@ -75,7 +75,7 @@ export function parseScript(text: string): Scene[] {
       });
 
     } else {
-      // MÉTODO B: Fallback Posicional (Formato que você enviou: Tempo -> Texto -> img -> url)
+      // MÉTODO B: Fallback Posicional (Tempo -> Texto -> img -> url)
       const rawLines = content.split('\n');
       const lines = rawLines
         .map(l => l.trim().replace(/[\u202F\u00A0\u2000-\u200A]/g, ''))
@@ -89,7 +89,7 @@ export function parseScript(text: string): Scene[] {
       const textParts: string[] = [];
       
       lines.forEach(line => {
-        // Verifica se é tempo (ex: 0-20s)
+        // Verifica se é tempo (ex: 0-20s ou 00:10)
         if (line.match(/^[\d:.\-s]+$/i) && !time) {
           time = line;
         } 
@@ -101,7 +101,7 @@ export function parseScript(text: string): Scene[] {
         else if (line.toLowerCase().startsWith('url:')) {
           sourceUrl = line.replace(/^url:\s*/i, '').trim();
         }
-        // Se for uma URL pura sem tag, tenta adivinhar
+        // Se for uma URL pura sem tag
         else if (line.match(/^https?:\/\/[^\s]+$/i)) {
           if (!imageUrl) imageUrl = line;
           else if (!sourceUrl) sourceUrl = line;
