@@ -1,6 +1,9 @@
 export interface Scene {
   id: string;
   sceneNumber: string;
+  time?: string | null;
+  imageUrl?: string | null;     // Tag img: (miniatura)
+  sourceUrl?: string | null;    // Tag url: (download)
   description?: string | null;
   onScreenText?: string | null;
   spokenText?: string | null;
@@ -10,108 +13,122 @@ export interface Scene {
 export function parseScript(text: string): Scene[] {
   const scenes: Scene[] = [];
   
-  // Split using the exact word "Cena" ignoring case.
+  // Divide o texto pelo delimitador "Cena"
   const parts = text.split(/Cena\s*(?:\[)?([\w\d]+(?:-\w+)*)?(?:\])?\s*/i);
   
   for (let i = 1; i < parts.length; i += 2) {
     const sceneNumber = parts[i] ? parts[i].trim() : String(Math.floor(i / 2) + 1);
     const content = parts[i + 1] || "";
     
-    // Method A: Try Strict Label-based parsing first
+    // MÉTODO A: Busca por Labels Estritos (incluindo img: e url:)
     const labels = [
+      { key: "time", label: "Tempo|Duração" },
       { key: "description", label: "Descrição" },
-      { key: "onScreenText", label: "Texto em tela" },
-      { key: "spokenText", label: "Locução | Legenda" },
+      { key: "onScreenText", label: "Texto em tela|GC" },
+      { key: "imageUrl", label: "img|Link da imagem|Imagem" },
+      { key: "sourceUrl", label: "url|Download|Link" },
+      { key: "spokenText", label: "Locução | Legenda|Locução" },
       { key: "pronunciation", label: "Pronúncia" },
-      { key: "spokenTextAlternative", label: "Locução" }
     ];
 
-    const foundLabels = labels.map(l => {
+    const foundLabels = labels.flatMap(l => {
       const escapedLabel = l.label.replace(/\|/g, '\\|');
-      const regexStr = `^\\s*${escapedLabel}.*$`;
+      const regexStr = `^\\s*[-]?\\s*(${escapedLabel})\\s*[:\\-]?\\s*`;
       const regex = new RegExp(regexStr, 'im');
       const match = content.match(regex);
-      return {
-        key: l.key === "spokenTextAlternative" ? "spokenText" : l.key,
-        matchIndex: match ? match.index! : -1,
-        contentStartIndex: match ? match.index! + match[0].length : -1,
-      };
-    }).filter(l => l.matchIndex !== -1).sort((a, b) => a.matchIndex - b.matchIndex);
+      
+      if (match) {
+        return [{
+          key: l.key,
+          matchIndex: match.index!,
+          contentStartIndex: match.index! + match[0].length,
+        }];
+      }
+      return [];
+    }).sort((a, b) => a.matchIndex - b.matchIndex);
 
     if (foundLabels.length > 0) {
-        // Label format matched
-        const result: Record<string, string> = {};
-        for (let j = 0; j < foundLabels.length; j++) {
-            const current = foundLabels[j];
-            const next = foundLabels[j + 1];
-            let fieldText = "";
-            
-            if (next) {
-                fieldText = content.substring(current.contentStartIndex, next.matchIndex).trim();
-            } else {
-                fieldText = content.substring(current.contentStartIndex).trim();
-            }
-            
-            result[current.key] = fieldText;
+      const result: Record<string, string> = {};
+      for (let j = 0; j < foundLabels.length; j++) {
+        const current = foundLabels[j];
+        const next = foundLabels[j + 1];
+        let fieldText = "";
+        
+        if (next) {
+          fieldText = content.substring(current.contentStartIndex, next.matchIndex).trim();
+        } else {
+          fieldText = content.substring(current.contentStartIndex).trim();
         }
+        result[current.key] = fieldText;
+      }
 
-        scenes.push({
-          id: crypto.randomUUID(),
-          sceneNumber,
-          description: result.description || null,
-          onScreenText: result.onScreenText || null,
-          spokenText: result.spokenText || null,
-          pronunciation: result.pronunciation || null,
-        });
+      scenes.push({
+        id: crypto.randomUUID(),
+        sceneNumber,
+        time: result.time || null,
+        imageUrl: result.imageUrl || null,
+        sourceUrl: result.sourceUrl || null,
+        description: result.description || null,
+        onScreenText: result.onScreenText || null,
+        spokenText: result.spokenText || null,
+        pronunciation: result.pronunciation || null,
+      });
 
     } else {
-        // Method B: Positional Fallback for Word Table copy-paste
-        const rawLines = content.split('\n');
-        // Remove invisible/formatting chars usually left by Word copies
-        const lines = rawLines.map(l => l.trim().replace(/[\u202F\u00A0\u2000-\u200A]/g, '')).filter(l => l.length > 0);
-        
-        if (lines.length === 0) continue;
-        
-        let description = "";
-        const onScreenText: string[] = []; // Corrigido: alterado para const
-        const spokenText: string[] = [];   // Corrigido: alterado para const
-        
-        let startIndex = 0;
-        // Skip time formatting like "0-20s" or "00:20-00:40"
-        if (lines[0] && lines[0].match(/^[\d:-]+s?$/i)) {
-           startIndex = 1;
+      // MÉTODO B: Fallback Posicional (Formato que você enviou: Tempo -> Texto -> img -> url)
+      const rawLines = content.split('\n');
+      const lines = rawLines
+        .map(l => l.trim().replace(/[\u202F\u00A0\u2000-\u200A]/g, ''))
+        .filter(l => l.length > 0);
+      
+      if (lines.length === 0) continue;
+      
+      let time: string | null = null;
+      let imageUrl: string | null = null;
+      let sourceUrl: string | null = null;
+      const textParts: string[] = [];
+      
+      lines.forEach(line => {
+        // Verifica se é tempo (ex: 0-20s)
+        if (line.match(/^[\d:.\-s]+$/i) && !time) {
+          time = line;
+        } 
+        // Verifica se é img:
+        else if (line.toLowerCase().startsWith('img:')) {
+          imageUrl = line.replace(/^img:\s*/i, '').trim();
         }
-
-        if (lines[startIndex]) {
-            description = lines[startIndex];
-            startIndex++;
+        // Verifica se é url:
+        else if (line.toLowerCase().startsWith('url:')) {
+          sourceUrl = line.replace(/^url:\s*/i, '').trim();
         }
-
-        const linkIndex = lines.findIndex((l, idx) => idx >= startIndex && /^Link da imagem/i.test(l));
-
-        if (linkIndex !== -1) {
-            // Lines between Desc tools and Link da imagem usually contain OnScreen text
-            for(let k = startIndex; k < linkIndex; k++) onScreenText.push(lines[k]);
-            
-            // Everything after Link da imagem is usually Spoken Text
-            for(let k = linkIndex + 1; k < lines.length; k++) spokenText.push(lines[k]);
-        } else {
-            // Assume the remaining is all spoken text
-            for(let k = startIndex; k < lines.length; k++) {
-                spokenText.push(lines[k]);
-            }
+        // Se for uma URL pura sem tag, tenta adivinhar
+        else if (line.match(/^https?:\/\/[^\s]+$/i)) {
+          if (!imageUrl) imageUrl = line;
+          else if (!sourceUrl) sourceUrl = line;
         }
-        
-        scenes.push({
-           id: crypto.randomUUID(),
-           sceneNumber,
-           description: description || null,
-           onScreenText: onScreenText.length ? onScreenText.join('\n') : null,
-           spokenText: spokenText.length ? spokenText.join('\n') : null,
-           pronunciation: null
-        });
+        // O que sobrar é Locução
+        else {
+          textParts.push(line);
+        }
+      });
+      
+      scenes.push({
+         id: crypto.randomUUID(),
+         sceneNumber,
+         time,
+         imageUrl,
+         sourceUrl,
+         spokenText: textParts.join('\n').trim() || null,
+         description: null,
+         onScreenText: null,
+         pronunciation: null
+      });
     }
   }
   
+  if (scenes.length === 0 && text.trim().length > 0) {
+    scenes.push({ id: crypto.randomUUID(), sceneNumber: "1", spokenText: text.trim() });
+  }
+
   return scenes;
 }

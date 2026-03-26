@@ -33,7 +33,7 @@ export function SiteHeader() {
               <Terminal className="h-5 w-5 text-primary-foreground" />
             </div>
             <span className="font-bold text-lg hidden sm:inline-block">
-              Super<span className="text-primary">Template</span>
+              <span className="text-primary">Teleprompt</span>
             </span>
           </Link>
         </div>

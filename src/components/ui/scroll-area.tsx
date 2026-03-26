@@ -13,14 +13,25 @@ function ScrollArea({
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
-      className={cn("relative", className)}
+      className={cn("relative overflow-hidden", className)}
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
+        /* 
+           IMPORTANTE: Forçamos display: block via style inline 
+           para matar o display: table padrão do Radix que causa o overflow.
+        */
+        style={{ display: "block" }}
         className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1"
       >
-        {children}
+        {/* 
+           Envolvemos os filhos em uma div com min-w-0 para permitir 
+           que o flexbox reduza o tamanho dos cards corretamente.
+        */}
+        <div className="min-w-0 w-full h-full flex flex-col">
+          {children}
+        </div>
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar />
       <ScrollAreaPrimitive.Corner />
@@ -49,7 +60,7 @@ function ScrollBar({
     >
       <ScrollAreaPrimitive.ScrollAreaThumb
         data-slot="scroll-area-thumb"
-        className="bg-border relative flex-1 rounded-full"
+        className="bg-border relative flex-1 rounded-full hover:bg-zinc-400 dark:hover:bg-zinc-600 transition-colors"
       />
     </ScrollAreaPrimitive.ScrollAreaScrollbar>
   )

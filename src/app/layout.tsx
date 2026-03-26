@@ -20,8 +20,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "SuperTemplate | Template Robusto Next.js 15+",
-    template: "%s | SuperTemplate",
+    default: "Teleprompter",
+    template: "Teleprompter",
   },
   description: "Um template Next.js 15+ de alta performance, acessível e rico em funcionalidades com Tailwind CSS, Framer Motion e suporte a i18n.",
   keywords: ["Next.js", "React", "Tailwind CSS", "TypeScript", "Template", "Boilerplate", "Accessibility", "i18n"],
@@ -30,21 +30,21 @@ export const metadata: Metadata = {
     type: "website",
     locale: "pt_BR",
     url: "https://template-next-robust.vercel.app/",
-    siteName: "SuperTemplate",
-    title: "SuperTemplate | Next.js 15+ Robust Template",
+    siteName: "Teleprompter",
+    title: "Teleprompter",
     description: "A high-performance, accessible, and feature-rich Next.js 15+ template.",
     images: [
       {
         url: "/og-image.png",
         width: 1200,
         height: 630,
-        alt: "Prévia do SuperTemplate",
+        alt: "Prévia do Teleprompter",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "SuperTemplate | Next.js 15+ Robust Template",
+    title: "Teleprompter",
     description: "A high-performance, accessible, and feature-rich Next.js 15+ template.",
     images: ["/og-image.png"],
   },
