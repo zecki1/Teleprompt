@@ -6,7 +6,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   const filename = searchParams.get('filename');
 
   if (!filename || !request.body) {
-    return NextResponse.json({ error: 'Filename and body are required' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'Filename and body are required' }, 
+      { status: 400 }
+    );
   }
 
   try {
@@ -14,10 +17,18 @@ export async function POST(request: Request): Promise<NextResponse> {
       access: 'public',
     });
     
-    // returns { url: "https://...", downloadUrl: "...", pathname: "..." }
+    // Retorna { url: "https://...", downloadUrl: "...", pathname: "..." }
     return NextResponse.json(blob);
-  } catch (err: any) {
-    console.error("Vercel Blob Upload Error:", err);
-    return NextResponse.json({ error: err.message || 'Upload failed' }, { status: 500 });
+  } catch (err) {
+    // Tratamento de erro sem 'any':
+    // Verificamos se o erro é uma instância da classe Error para acessar .message com segurança
+    const errorMessage = err instanceof Error ? err.message : 'Upload failed';
+    
+    console.error("Vercel Blob Upload Error:", errorMessage);
+    
+    return NextResponse.json(
+      { error: errorMessage }, 
+      { status: 500 }
+    );
   }
 }

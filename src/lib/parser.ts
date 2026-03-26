@@ -73,8 +73,8 @@ export function parseScript(text: string): Scene[] {
         if (lines.length === 0) continue;
         
         let description = "";
-        let onScreenText: string[] = [];
-        let spokenText: string[] = [];
+        const onScreenText: string[] = []; // Corrigido: alterado para const
+        const spokenText: string[] = [];   // Corrigido: alterado para const
         
         let startIndex = 0;
         // Skip time formatting like "0-20s" or "00:20-00:40"

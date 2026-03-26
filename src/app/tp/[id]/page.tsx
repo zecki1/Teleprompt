@@ -35,6 +35,9 @@ export default function TeleprompterPage({ params }: { params: Promise<{ id: str
   const lastProgressUpdate = useRef<number>(0);
   const bcRef = useRef<BroadcastChannel | null>(null);
 
+  // CORREÇÃO DO LOOP: Ref para rastrear o último reset processado
+  const lastProcessedReset = useRef<number>(0);
+
   // Load scenes
   useEffect(() => {
     async function loadScenes() {
@@ -52,7 +55,9 @@ export default function TeleprompterPage({ params }: { params: Promise<{ id: str
           setDuration(estimatedSeconds);
           updateDoc(doc(db, "scripts", id), { duration: estimatedSeconds }).catch(() => {});
         }
-      } catch (err) { }
+      } catch { 
+        // Erro silencioso
+      }
       setLoading(false);
     }
     loadScenes();
@@ -65,10 +70,16 @@ export default function TeleprompterPage({ params }: { params: Promise<{ id: str
         const d = docObj.data();
         if (typeof d.isPlaying === "boolean") setIsPlaying(d.isPlaying);
         if (typeof d.speed === "number") setSpeed(d.speed);
-        if (d.resetRequest) {
-          if (containerRef.current) containerRef.current.scrollTop = 0;
+        
+        // CORREÇÃO: Só executa o reset se o resetRequest for um timestamp NOVO
+        if (d.resetRequest && d.resetRequest !== lastProcessedReset.current) {
+          if (containerRef.current) {
+            containerRef.current.scrollTop = 0;
+          }
           setLocalProgress(0);
+          lastProcessedReset.current = d.resetRequest; // Marca este timestamp como processado
         }
+
         if (d.manualScroll && d.manualScroll !== lastManualScroll.current) {
           if (containerRef.current) containerRef.current.scrollTop += (d.manualScroll - lastManualScroll.current);
           lastManualScroll.current = d.manualScroll;
@@ -116,6 +127,7 @@ export default function TeleprompterPage({ params }: { params: Promise<{ id: str
             setLocalProgress(currentProgress);
 
             const now = Date.now();
+            // Sincroniza o progresso no Firebase a cada 1 segundo
             if (now - lastProgressUpdate.current > 1000) {
               updateDoc(doc(db, "scripts", id), { progress: currentProgress }).catch(() => {});
               lastProgressUpdate.current = now;
@@ -222,10 +234,11 @@ export default function TeleprompterPage({ params }: { params: Promise<{ id: str
           ))}
         </div>
 
+        {/* Linha de Guia Visual */}
         <div className="fixed top-1/2 left-0 w-full h-8 bg-gradient-to-r from-red-600/30 via-red-500/10 to-transparent -translate-y-1/2 pointer-events-none border-t border-b border-red-500/30 z-10 hidden md:block" />
       </div>
 
-      {/* Control View Panel */}
+      {/* Painel Lateral de Controle */}
       {!isMirrorWindow && (
         <div className="w-[380px] shrink-0 h-full bg-zinc-950 border-l border-zinc-800 p-6 flex flex-col hidden lg:flex relative z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
           <div className="mb-6 flex flex-col gap-3">
@@ -234,12 +247,11 @@ export default function TeleprompterPage({ params }: { params: Promise<{ id: str
             </div>
             
             <div className="flex gap-2">
-                <button onClick={() => setShowRemote(!showRemote)} className={`flex-1 py-3 px-2 rounded-lg font-bold text-xs uppercase tracking-wide transition border focus:outline-none ${!showRemote ? 'bg-zinc-800 text-white border-zinc-600' : 'bg-transparent text-zinc-400 border-zinc-800 hover:bg-zinc-900'}`}>Formato</button>
-                <button onClick={() => setShowRemote(!showRemote)} className={`flex-1 py-3 px-2 rounded-lg font-bold text-xs uppercase tracking-wide transition border focus:outline-none ${showRemote ? 'bg-zinc-800 text-white border-zinc-600' : 'bg-transparent text-zinc-400 border-zinc-800 hover:bg-zinc-900'}`}>Remoto</button>
+                <button onClick={() => setShowRemote(false)} className={`flex-1 py-3 px-2 rounded-lg font-bold text-xs uppercase tracking-wide transition border focus:outline-none ${!showRemote ? 'bg-zinc-800 text-white border-zinc-600' : 'bg-transparent text-zinc-400 border-zinc-800 hover:bg-zinc-900'}`}>Formato</button>
+                <button onClick={() => setShowRemote(true)} className={`flex-1 py-3 px-2 rounded-lg font-bold text-xs uppercase tracking-wide transition border focus:outline-none ${showRemote ? 'bg-zinc-800 text-white border-zinc-600' : 'bg-transparent text-zinc-400 border-zinc-800 hover:bg-zinc-900'}`}>Remoto</button>
             </div>
 
             {!showRemote ? (
-                // FORMAT & APPEARANCE TAB
                 <div className="flex flex-col gap-2 mt-4 text-white">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mt-2 mb-1">Janela Autônoma</p>
                     <button onClick={openMirrorWindow} className="px-4 py-3 bg-blue-600/20 text-blue-400 border border-blue-600/50 font-bold rounded-lg text-xs tracking-wider uppercase hover:bg-blue-600 hover:text-white transition shadow">
@@ -289,7 +301,6 @@ export default function TeleprompterPage({ params }: { params: Promise<{ id: str
                     </div>
                 </div>
             ) : (
-                // REMOTE CONTROL UI TAB
                 <div className="flex-1 mt-4 rounded-3xl overflow-hidden border border-zinc-800 shadow-xl min-h-[500px]">
                     <RemoteControlUI
                        isPlaying={isPlaying}
@@ -299,7 +310,6 @@ export default function TeleprompterPage({ params }: { params: Promise<{ id: str
                        update={(data) => updateDoc(doc(db, "scripts", id), data).catch(()=>{})}
                        manualScroll={(amt) => {
                            if (containerRef.current) containerRef.current.scrollTop += amt;
-                           // It's manually scrolled on the master here. Broadcast happens auto via RAF tick!
                        }}
                     />
                 </div>
@@ -313,7 +323,7 @@ export default function TeleprompterPage({ params }: { params: Promise<{ id: str
         </div>
       )}
 
-      {/* Fallback floating button for small screens */}
+      {/* Botão flutuante para mobile */}
       {!isMirrorWindow && (
         <button onClick={() => setIsMirrored(!isMirrored)} className="lg:hidden fixed bottom-6 right-6 p-4 bg-zinc-800/80 rounded-full backdrop-blur z-50 text-white shadow-xl shadow-black">
           Espelhar
