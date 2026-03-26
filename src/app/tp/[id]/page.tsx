@@ -1,44 +1,105 @@
 "use client";
 
-import { useEffect, useState, useRef, use } from "react";
+import { useEffect, useState, useRef, use, Suspense } from "react";
 import { doc, onSnapshot, getDocs, collection, query, orderBy, limit, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Scene } from "@/lib/parser";
 import { RemoteControlUI } from "@/components/tp/RemoteControlUI";
+import { 
+  Monitor, 
+  ChevronLeft, 
+  Type, 
+  AlignJustify,
+  Settings2,
+  Palette,
+  Clock,
+  Expand,
+  Zap,
+  Save,
+  CheckCircle2
+} from "lucide-react";
+import Link from "next/link";
 
-export default function TeleprompterPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
-  
+function TeleprompterContent({ id }: { id: string }) {
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [versionId, setVersionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   
   const isMirrorWindow = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('mirror') === 'true' : false;
-  const [isMirrored, setIsMirrored] = useState(isMirrorWindow);
+  const [isMirrored] = useState(isMirrorWindow);
   const [showRemote, setShowRemote] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   
   // App State
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(3);
-  const [duration, setDuration] = useState(1);
+  const [duration, setDuration] = useState(0);
   const [localProgress, setLocalProgress] = useState(0);
+  const [saveStatus, setSaveStatus] = useState<'saved' | null>(null);
 
-  // Text Appearance Styles
-  const [fontSize, setFontSize] = useState("text-6xl md:text-8xl");
+  // Refs para Motor de Scroll (Evita lag de estado)
+  const isPlayingRef = useRef(false);
+  const speedRef = useRef(3);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const sceneRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const requestRef = useRef<number | null>(null);
+  const bcRef = useRef<BroadcastChannel | null>(null);
+  const lastFirebaseUpdate = useRef<number>(0);
+  const lastProcessedReset = useRef<number>(0);
+
+  // Appearance States
+  const [fontSize, setFontSize] = useState("text-7xl");
   const [textAlign, setTextAlign] = useState("text-left");
   const [fontFamily, setFontFamily] = useState("font-sans");
   const [fontWeight, setFontWeight] = useState("font-medium");
+  const [maxWidth, setMaxWidth] = useState("max-w-4xl");
+  const [bgColor, setBgColor] = useState("#000000");
+  const [textColor, setTextColor] = useState("#ffffff");
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const requestRef = useRef<number>(null);
-  const lastManualScroll = useRef<number>(0);
-  const lastProgressUpdate = useRef<number>(0);
-  const bcRef = useRef<BroadcastChannel | null>(null);
+  // --- 1. LÓGICA DE FULLSCREEN E SUPORTE ---
 
-  // CORREÇÃO DO LOOP: Ref para rastrear o último reset processado
-  const lastProcessedReset = useRef<number>(0);
+  useEffect(() => {
+    const handleFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handleFsChange);
+    return () => document.removeEventListener("fullscreenchange", handleFsChange);
+  }, []);
 
-  // Load scenes
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      } else {
+        if (document.exitFullscreen) await document.exitFullscreen();
+      }
+    } catch (e) { console.error(e); }
+  };
+
+  const calculateDuration = (scenesList: Scene[]) => {
+    const wordCount = scenesList.reduce((acc, s) => acc + (s.spokenText ? s.spokenText.split(/\s+/).length : 0), 0);
+    return Math.max(10, Math.floor((wordCount / 130) * 60));
+  };
+
+  const reconstructRawText = (scenesList: Scene[]): string => {
+    return scenesList.map(s => {
+      let sceneText = `Cena ${s.sceneNumber}\n`;
+      if (s.time) sceneText += `Tempo: ${s.time}\n`;
+      if (s.imageUrl) sceneText += `img: ${s.imageUrl}\n`;
+      if (s.sourceUrl) sceneText += `url: ${s.sourceUrl}\n`;
+      if (s.lettering) sceneText += `let: ${s.lettering}\n`;
+      if (s.spokenText) sceneText += `Locução: ${s.spokenText}\n`;
+      return sceneText;
+    }).join('\n');
+  };
+
+  const updateGlobalStyle = async (data: Record<string, string | number | boolean>) => {
+    if (isMirrorWindow) return;
+    try {
+      await updateDoc(doc(db, "scripts", id), data);
+    } catch (e) { console.error(e); }
+  };
+
+  // --- 2. CARREGAMENTO E SYNC FIRESTORE ---
+
   useEffect(() => {
     async function loadScenes() {
       try {
@@ -47,60 +108,133 @@ export default function TeleprompterPage({ params }: { params: Promise<{ id: str
         if (!snapshot.empty) {
           const docData = snapshot.docs[0].data();
           setVersionId(snapshot.docs[0].id);
-          const loadedScenes: Scene[] = docData.scenes || [];
+          const loadedScenes = docData.scenes || [];
           setScenes(loadedScenes);
-          
-          const wordCount = loadedScenes.reduce((acc, s) => acc + (s.spokenText ? s.spokenText.split(' ').length : 0), 0);
-          const estimatedSeconds = Math.max(10, Math.floor((wordCount / 130) * 60));
-          setDuration(estimatedSeconds);
-          updateDoc(doc(db, "scripts", id), { duration: estimatedSeconds }).catch(() => {});
+          setDuration(calculateDuration(loadedScenes));
         }
-      } catch { 
-        // Erro silencioso
-      }
+      } catch (e) { console.error(e); }
       setLoading(false);
     }
     loadScenes();
   }, [id]);
 
-  // Firestore Sync Setup
   useEffect(() => {
     const unsub = onSnapshot(doc(db, "scripts", id), (docObj) => {
       if (docObj.exists()) {
         const d = docObj.data();
-        if (typeof d.isPlaying === "boolean") setIsPlaying(d.isPlaying);
-        if (typeof d.speed === "number") setSpeed(d.speed);
-        
-        // CORREÇÃO: Só executa o reset se o resetRequest for um timestamp NOVO
-        if (d.resetRequest && d.resetRequest !== lastProcessedReset.current) {
-          if (containerRef.current) {
-            containerRef.current.scrollTop = 0;
-          }
-          setLocalProgress(0);
-          lastProcessedReset.current = d.resetRequest; // Marca este timestamp como processado
+        if (typeof d.isPlaying === "boolean") {
+          setIsPlaying(d.isPlaying);
+          isPlayingRef.current = d.isPlaying;
         }
+        if (typeof d.speed === "number") {
+          setSpeed(d.speed);
+          speedRef.current = d.speed;
+        }
+        // Sincronizar estilos salvos
+        if (d.fontSize) setFontSize(d.fontSize);
+        if (d.textAlign) setTextAlign(d.textAlign);
+        if (d.bgColor) setBgColor(d.bgColor);
+        if (d.textColor) setTextColor(d.textColor);
+        if (d.maxWidth) setMaxWidth(d.maxWidth);
+        if (d.fontFamily) setFontFamily(d.fontFamily);
+        if (d.fontWeight) setFontWeight(d.fontWeight);
 
-        if (d.manualScroll && d.manualScroll !== lastManualScroll.current) {
-          if (containerRef.current) containerRef.current.scrollTop += (d.manualScroll - lastManualScroll.current);
-          lastManualScroll.current = d.manualScroll;
+        if (d.resetRequest && d.resetRequest !== lastProcessedReset.current) {
+          if (containerRef.current) containerRef.current.scrollTop = 0;
+          lastProcessedReset.current = d.resetRequest;
         }
       }
     });
     return () => unsub();
   }, [id]);
 
-  // BroadcastChannel Setup for multi-window
+  // --- 3. ATALHOS DE TECLADO (POWERPOINT / CONTROLE) ---
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLElement && e.target.isContentEditable) return;
+      const currentScroll = containerRef.current?.scrollTop || 0;
+
+      switch(e.code) {
+        case 'Space':
+          e.preventDefault();
+          updateDoc(doc(db, "scripts", id), { isPlaying: !isPlayingRef.current });
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          updateDoc(doc(db, "scripts", id), { speed: Math.min(speedRef.current + 1, 20) });
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          updateDoc(doc(db, "scripts", id), { speed: Math.max(speedRef.current - 1, 0) });
+          break;
+        case 'ArrowUp':
+        case 'PageUp':
+          e.preventDefault();
+          const prev = [...sceneRefs.current].reverse().find(ref => ref && ref.offsetTop < currentScroll - 150);
+          containerRef.current?.scrollTo({ top: prev?.offsetTop || 0, behavior: 'smooth' });
+          break;
+        case 'ArrowDown':
+        case 'PageDown':
+          e.preventDefault();
+          const next = sceneRefs.current.find(ref => ref && ref.offsetTop > currentScroll + 150);
+          if (next) containerRef.current?.scrollTo({ top: next.offsetTop, behavior: 'smooth' });
+          break;
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [id]);
+
+  // --- 4. MOTOR DE SCROLL E BROADCAST ---
+
+  useEffect(() => {
+    const scrollFn = () => {
+      if (containerRef.current && !isMirrorWindow) {
+        if (isPlayingRef.current) {
+          containerRef.current.scrollTop += (speedRef.current * 0.4);
+        }
+        
+        const maxScroll = containerRef.current.scrollHeight - containerRef.current.clientHeight;
+        const currentProgress = maxScroll > 0 ? containerRef.current.scrollTop / maxScroll : 0;
+        setLocalProgress(currentProgress);
+
+        if (bcRef.current) {
+          bcRef.current.postMessage({ 
+            type: 'syncScroll', 
+            scrollTop: containerRef.current.scrollTop,
+            progress: currentProgress 
+          });
+        }
+
+        const now = Date.now();
+        if (now - lastFirebaseUpdate.current > 1000) {
+          updateDoc(doc(db, "scripts", id), { progress: currentProgress }).catch(() => {});
+          lastFirebaseUpdate.current = now;
+        }
+      }
+      requestRef.current = requestAnimationFrame(scrollFn);
+    };
+    requestRef.current = requestAnimationFrame(scrollFn);
+    return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
+  }, [id, isMirrorWindow]);
+
   useEffect(() => {
     const bc = new BroadcastChannel(`tp-sync-${id}`);
     bcRef.current = bc;
-    
     if (isMirrorWindow) {
       bc.onmessage = (ev) => {
-        if (ev.data.type === 'syncScroll' && containerRef.current) containerRef.current.scrollTop = ev.data.scrollTop;
+        if (ev.data.type === 'syncScroll' && containerRef.current) {
+          containerRef.current.scrollTop = ev.data.scrollTop;
+          setLocalProgress(ev.data.progress);
+        }
         if (ev.data.type === 'syncScenes') setScenes(ev.data.scenes);
         if (ev.data.type === 'syncStyles') {
            setFontSize(ev.data.styles.fontSize);
            setTextAlign(ev.data.styles.textAlign);
+           setBgColor(ev.data.styles.bgColor);
+           setTextColor(ev.data.styles.textColor);
+           setMaxWidth(ev.data.styles.maxWidth);
            setFontFamily(ev.data.styles.fontFamily);
            setFontWeight(ev.data.styles.fontWeight);
         }
@@ -109,228 +243,187 @@ export default function TeleprompterPage({ params }: { params: Promise<{ id: str
     return () => bc.close();
   }, [id, isMirrorWindow]);
 
-  // Scroll Engine Loop (Runs only on Master)
   useEffect(() => {
-    const scrollFn = () => {
-      if (containerRef.current) {
-        if (!isMirrorWindow) {
-            if (isPlaying) {
-                containerRef.current.scrollTop += (speed * 0.5);
-            }
-            
-            if (bcRef.current) {
-                bcRef.current.postMessage({ type: 'syncScroll', scrollTop: containerRef.current.scrollTop });
-            }
+    if (!isMirrorWindow && bcRef.current) {
+      bcRef.current.postMessage({ 
+        type: 'syncStyles', 
+        styles: { fontSize, textAlign, fontFamily, fontWeight, maxWidth, bgColor, textColor } 
+      });
+    }
+  }, [fontSize, textAlign, fontFamily, fontWeight, maxWidth, bgColor, textColor, isMirrorWindow]);
 
-            const maxScroll = containerRef.current.scrollHeight - containerRef.current.clientHeight;
-            const currentProgress = maxScroll > 0 ? containerRef.current.scrollTop / maxScroll : 0;
-            setLocalProgress(currentProgress);
-
-            const now = Date.now();
-            // Sincroniza o progresso no Firebase a cada 1 segundo
-            if (now - lastProgressUpdate.current > 1000) {
-              updateDoc(doc(db, "scripts", id), { progress: currentProgress }).catch(() => {});
-              lastProgressUpdate.current = now;
-            }
-        }
-      }
-      requestRef.current = requestAnimationFrame(scrollFn);
-    };
-    requestRef.current = requestAnimationFrame(scrollFn);
-    return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
-  }, [isPlaying, speed, id, isMirrorWindow]);
-
-  // Broadcast Style changes from master to mirror
-  useEffect(() => {
-      if (!isMirrorWindow && bcRef.current) {
-          bcRef.current.postMessage({ type: 'syncStyles', styles: { fontSize, textAlign, fontFamily, fontWeight } });
-      }
-  }, [fontSize, textAlign, fontFamily, fontWeight, isMirrorWindow]);
-
-  // Global Hotkeys for Master
-  useEffect(() => {
-    if (isMirrorWindow) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLElement && e.target.isContentEditable) return;
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-      switch(e.code) {
-        case 'Space':
-          e.preventDefault();
-          updateDoc(doc(db, "scripts", id), { isPlaying: !isPlaying }).catch(()=>{});
-          break;
-        case 'ArrowUp':
-          e.preventDefault();
-          updateDoc(doc(db, "scripts", id), { speed: Math.min(speed + 1, 15) }).catch(()=>{});
-          break;
-        case 'ArrowDown':
-          e.preventDefault();
-          updateDoc(doc(db, "scripts", id), { speed: Math.max(speed - 1, 0) }).catch(()=>{});
-          break;
-        case 'PageUp':
-          e.preventDefault();
-          if (containerRef.current) containerRef.current.scrollTop -= 500;
-          break;
-        case 'PageDown':
-          e.preventDefault();
-          if (containerRef.current) containerRef.current.scrollTop += 500;
-          break;
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [id, isPlaying, speed, isMirrorWindow]);
-
-  const openMirrorWindow = () => {
-    window.open(window.location.href + "?mirror=true", "TeleprompterMirror", "width=800,height=800,menubar=no,toolbar=no");
-  };
-
-  const handleInlineEdit = async (sceneId: string, newText: string) => {
-      const newScenes = scenes.map(s => s.id === sceneId ? { ...s, spokenText: newText } : s);
-      setScenes(newScenes);
-
-      if (bcRef.current) bcRef.current.postMessage({ type: 'syncScenes', scenes: newScenes });
-      if (versionId) {
-          try {
-             await updateDoc(doc(db, "scripts", id, "versions", versionId), { scenes: newScenes });
-          } catch (e) { console.error("Could not overwrite scene to Firestore", e); }
-      }
-  };
-
-  if (loading) return <div className="absolute inset-0 z-[50] bg-black text-white flex items-center justify-center font-sans">Carregando...</div>;
-
-  const wrapperClass = isMirrorWindow 
-      ? 'fixed inset-0 z-[100] bg-black flex flex-row overflow-hidden cursor-default'
-      : 'absolute inset-0 bg-black flex flex-row overflow-hidden cursor-default top-[64px] h-[calc(100vh-64px)] z-40';
+  if (loading) return <div className="fixed inset-0 bg-black flex items-center justify-center text-white font-bold animate-pulse">SINCRONIZANDO...</div>;
 
   return (
-    <div className={wrapperClass}>
+    <div className={isMirrorWindow ? "fixed inset-0 z-[100] flex overflow-hidden" : "absolute inset-0 flex overflow-hidden top-[64px] h-[calc(100vh-64px)] z-40"} style={{ backgroundColor: bgColor }}>
       
-      {/* Teleprompter View Area */}
-      <div 
-        className="flex-1 h-full overflow-y-auto relative no-scrollbar"
-        ref={containerRef}
-        style={{ scrollBehavior: 'auto' }}
-      >
+      {/* OVERLAY PARA FULLSCREEN (Mirror Only) */}
+      {isMirrorWindow && !isFullscreen && (
+        <div onClick={toggleFullscreen} className="fixed inset-0 z-[110] bg-black/95 flex flex-col items-center justify-center cursor-pointer group transition-all">
+          <Expand size={64} className="text-blue-500 mb-6 group-hover:scale-110 transition-transform" />
+          <p className="text-white font-black text-xl uppercase tracking-tighter text-center">
+            Ativar Tela de Retorno<br/>
+            <span className="text-zinc-500 text-sm font-normal normal-case italic">Clique para entrar em modo Fullscreen</span>
+          </p>
+        </div>
+      )}
+
+      {/* ÁREA DO TEXTO */}
+      <div className="flex-1 h-full overflow-y-auto relative no-scrollbar" ref={containerRef}>
+        <div className="fixed top-1/2 left-0 w-full h-32 bg-white/5 pointer-events-none -translate-y-1/2 z-10 border-y border-white/10 shadow-2xl" />
         <div 
-          className={`max-w-[70vw] mx-auto px-10 py-[60vh] transition-transform duration-300 relative border-l-2 border-transparent hover:border-zinc-800 ${fontFamily}`}
-          style={{ transform: isMirrored ? "scaleX(-1)" : "none" }}
+          className={`mx-auto px-12 py-[60vh] transition-all duration-300 relative ${fontFamily} ${maxWidth}`}
+          style={{ transform: isMirrored ? "scaleX(-1)" : "none", color: textColor }}
         >
-          {scenes.map(s => (
+          {scenes.map((s, idx) => (
             <div 
               key={s.id} 
-              className={`mb-32 break-words outline-none whitespace-pre-wrap ${textAlign} ${fontWeight} ${fontSize} ${isPlaying ? 'leading-[1.4] text-yellow-50' : 'leading-[1.4] text-yellow-50/60 transition-opacity'}`}
-              contentEditable={!isMirrorWindow}
+              ref={el => { sceneRefs.current[idx] = el; }} 
+              className={`mb-32 break-words outline-none whitespace-pre-wrap transition-opacity duration-700 ${textAlign} ${fontWeight} ${fontSize} ${isPlaying ? 'opacity-100' : 'opacity-30'}`} 
+              contentEditable={!isMirrorWindow} 
               suppressContentEditableWarning={true}
               onBlur={(e) => {
-                  const textVal = e.currentTarget.innerText;
-                  if (textVal !== s.spokenText) handleInlineEdit(s.id, textVal);
+                 const rawText = e.currentTarget.innerText;
+                 const updatedScenes = scenes.map(scene => scene.id === s.id ? {...scene, spokenText: rawText} : scene);
+                 setScenes(updatedScenes);
+                 const rawContent = reconstructRawText(updatedScenes);
+                 updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes: updatedScenes, content: rawContent });
+                 updateDoc(doc(db, "scripts", id), { duration: calculateDuration(updatedScenes) });
               }}
-              title={!isMirrorWindow ? "Clique para editar o texto ao vivo" : ""}
             >
-              {s.spokenText || '\u00A0'}
+              {(s.spokenText || '').replace(/\[\d+\]/g, '') || '\u00A0'}
             </div>
           ))}
         </div>
-
-        {/* Linha de Guia Visual */}
-        <div className="fixed top-1/2 left-0 w-full h-8 bg-gradient-to-r from-red-600/30 via-red-500/10 to-transparent -translate-y-1/2 pointer-events-none border-t border-b border-red-500/30 z-10 hidden md:block" />
       </div>
 
-      {/* Painel Lateral de Controle */}
       {!isMirrorWindow && (
-        <div className="w-[380px] shrink-0 h-full bg-zinc-950 border-l border-zinc-800 p-6 flex flex-col hidden lg:flex relative z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
-          <div className="mb-6 flex flex-col gap-3">
-            <div className="flex justify-between items-center">
-               <h2 className="text-xl font-bold tracking-tight text-white mb-2">Editor Teleprompter</h2>
-            </div>
-            
-            <div className="flex gap-2">
-                <button onClick={() => setShowRemote(false)} className={`flex-1 py-3 px-2 rounded-lg font-bold text-xs uppercase tracking-wide transition border focus:outline-none ${!showRemote ? 'bg-zinc-800 text-white border-zinc-600' : 'bg-transparent text-zinc-400 border-zinc-800 hover:bg-zinc-900'}`}>Formato</button>
-                <button onClick={() => setShowRemote(true)} className={`flex-1 py-3 px-2 rounded-lg font-bold text-xs uppercase tracking-wide transition border focus:outline-none ${showRemote ? 'bg-zinc-800 text-white border-zinc-600' : 'bg-transparent text-zinc-400 border-zinc-800 hover:bg-zinc-900'}`}>Remoto</button>
-            </div>
-
-            {!showRemote ? (
-                <div className="flex flex-col gap-2 mt-4 text-white">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mt-2 mb-1">Janela Autônoma</p>
-                    <button onClick={openMirrorWindow} className="px-4 py-3 bg-blue-600/20 text-blue-400 border border-blue-600/50 font-bold rounded-lg text-xs tracking-wider uppercase hover:bg-blue-600 hover:text-white transition shadow">
-                      🚀 Abrir Janela Prompter
-                    </button>
-                    <button onClick={() => setIsMirrored(!isMirrored)} className="px-4 py-2 bg-zinc-800 text-zinc-400 rounded-lg text-xs uppercase font-bold tracking-wider hover:bg-zinc-700 transition">
-                      Espelhar esta tela principal
-                    </button>
-
-                    <div className="mt-8 border border-zinc-800 rounded-xl bg-zinc-900 p-4 space-y-5">
-                       <div>
-                         <p className="text-[10px] uppercase font-bold text-zinc-500 mb-2">Tamanho Fonte</p>
-                         <div className="flex gap-1.5">
-                            <button onClick={() => setFontSize("text-5xl md:text-6xl")} className={`flex-1 py-2 rounded text-xs font-bold border ${fontSize.includes('5xl') ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>A-</button>
-                            <button onClick={() => setFontSize("text-6xl md:text-8xl")} className={`flex-1 py-2 rounded text-xs font-bold border ${fontSize.includes('6xl') ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>A</button>
-                            <button onClick={() => setFontSize("text-8xl md:text-[9rem]")} className={`flex-1 py-2 rounded text-xs font-bold border ${fontSize.includes('8xl') ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>A+</button>
-                         </div>
-                       </div>
-                       
-                       <div>
-                         <p className="text-[10px] uppercase font-bold text-zinc-500 mb-2">Alinhamento</p>
-                         <div className="flex gap-1.5">
-                            <button onClick={() => setTextAlign("text-left")} className={`flex-1 py-2 rounded text-xs font-bold border ${textAlign === 'text-left' ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>Esq</button>
-                            <button onClick={() => setTextAlign("text-center")} className={`flex-1 py-2 rounded text-xs font-bold border ${textAlign === 'text-center' ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>Cen</button>
-                            <button onClick={() => setTextAlign("text-right")} className={`flex-1 py-2 rounded text-xs font-bold border ${textAlign === 'text-right' ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>Dir</button>
-                            <button onClick={() => setTextAlign("text-justify")} className={`flex-1 py-2 rounded text-xs font-bold border ${textAlign === 'text-justify' ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>Jus</button>
-                         </div>
-                       </div>
-
-                       <div>
-                         <p className="text-[10px] uppercase font-bold text-zinc-500 mb-2">Estilo (Família)</p>
-                         <div className="flex gap-1.5">
-                            <button onClick={() => setFontFamily("font-sans")} className={`flex-1 py-2 rounded text-xs font-bold border ${fontFamily === 'font-sans' ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>Sans</button>
-                            <button onClick={() => setFontFamily("font-serif")} className={`flex-1 py-2 rounded text-xs font-bold border ${fontFamily === 'font-serif' ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>Serif</button>
-                            <button onClick={() => setFontFamily("font-mono")} className={`flex-1 py-2 rounded text-xs font-bold border ${fontFamily === 'font-mono' ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>Mono</button>
-                         </div>
-                       </div>
-
-                       <div>
-                         <p className="text-[10px] uppercase font-bold text-zinc-500 mb-2">Peso da Fonte</p>
-                         <div className="flex gap-1.5">
-                            <button onClick={() => setFontWeight("font-normal")} className={`flex-1 py-2 rounded text-xs font-normal border ${fontWeight === 'font-normal' ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>Normal</button>
-                            <button onClick={() => setFontWeight("font-medium")} className={`flex-1 py-2 rounded text-xs font-medium border ${fontWeight === 'font-medium' ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>Médio</button>
-                            <button onClick={() => setFontWeight("font-bold")} className={`flex-1 py-2 rounded text-xs font-bold border ${fontWeight === 'font-bold' ? 'bg-white text-black border-white' : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:bg-zinc-800'}`}>Negrito</button>
-                         </div>
-                       </div>
-                    </div>
-                </div>
-            ) : (
-                <div className="flex-1 mt-4 rounded-3xl overflow-hidden border border-zinc-800 shadow-xl min-h-[500px]">
-                    <RemoteControlUI
-                       isPlaying={isPlaying}
-                       speed={speed}
-                       duration={duration}
-                       progress={localProgress}
-                       update={(data) => updateDoc(doc(db, "scripts", id), data).catch(()=>{})}
-                       manualScroll={(amt) => {
-                           if (containerRef.current) containerRef.current.scrollTop += amt;
-                       }}
-                    />
-                </div>
-            )}
-            
+        <div className="w-[400px] shrink-0 h-full bg-zinc-950 border-l border-zinc-800 flex flex-col hidden lg:flex z-20 shadow-2xl overflow-hidden">
+          <div className="p-4 border-b border-zinc-900 flex items-center justify-between">
+            <Link href="/dashboard" className="p-2 text-zinc-500 hover:text-white transition"><ChevronLeft size={20}/></Link>
+            <span className="text-[10px] font-black tracking-[0.2em] text-zinc-400 uppercase font-mono">Master Control</span>
+            <Settings2 size={18} className="text-zinc-700" />
           </div>
 
-          <div className="mt-auto border-t border-zinc-800 pt-4 pb-2">
-            <p className="text-[10px] text-center text-zinc-600 font-mono uppercase tracking-[0.2em]">Pressione Espaço para iniciar</p>
+          <div className="flex p-1.5 bg-zinc-900 m-4 rounded-xl gap-1 border border-zinc-800">
+            <button onClick={() => setShowRemote(false)} className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase transition-all ${!showRemote ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}>Estilo</button>
+            <button onClick={() => setShowRemote(true)} className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase transition-all ${showRemote ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}>Remoto</button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-6 pb-6 no-scrollbar text-zinc-100">
+            {!showRemote ? (
+              <div className="space-y-8 py-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                <button onClick={() => window.open(window.location.href + "?mirror=true", "TPMirror", "width=1200,height=900,menubar=no")} className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-3 transition-all shadow-xl shadow-blue-900/20">
+                  <Monitor size={18} /> Abrir Tela de Retorno
+                </button>
+
+                <div className="space-y-6 pt-4 border-t border-zinc-900">
+                  <div className="space-y-4">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><Palette size={14}/> Cores do Tema</p>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                           <p className="text-[9px] text-zinc-600 uppercase font-bold">Fundo</p>
+                           <div className="flex gap-2">
+                              {['#000000', '#0a192f', '#064e3b'].map(c => (
+                                <button key={c} onClick={() => updateGlobalStyle({bgColor: c})} className={`w-8 h-8 rounded-full border-2 transition-all ${bgColor === c ? 'border-blue-500 scale-110' : 'border-zinc-800 hover:border-zinc-600'}`} style={{ backgroundColor: c }} />
+                              ))}
+                           </div>
+                        </div>
+                        <div className="space-y-2">
+                           <p className="text-[9px] text-zinc-600 uppercase font-bold">Texto</p>
+                           <div className="flex gap-2">
+                              {['#ffffff', '#ffff00', '#22d3ee'].map(c => (
+                                <button key={c} onClick={() => updateGlobalStyle({textColor: c})} className={`w-8 h-8 rounded-full border-2 transition-all ${textColor === c ? 'border-blue-500 scale-110' : 'border-zinc-800 hover:border-zinc-600'}`} style={{ backgroundColor: c }} />
+                              ))}
+                           </div>
+                        </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><Type size={14}/> Tamanho Fonte</p>
+                    <div className="flex gap-1.5">
+                      {['text-5xl', 'text-7xl', 'text-9xl'].map(t => (
+                        <button key={t} onClick={() => updateGlobalStyle({fontSize: t})} className={`flex-1 py-3 rounded-lg text-xs font-bold border transition-all ${fontSize === t ? 'bg-white text-black border-white' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}>{t.replace('text-', '')}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><Zap size={14}/> Estilos</p>
+                    <div className="grid grid-cols-2 gap-2">
+                       <button onClick={() => updateGlobalStyle({fontFamily: "font-sans"})} className={`py-2 rounded-lg text-[10px] font-bold border ${fontFamily === 'font-sans' ? 'bg-zinc-200 text-black' : 'text-zinc-500 border-zinc-800'}`}>SANS SERIF</button>
+                       <button onClick={() => updateGlobalStyle({fontFamily: "font-serif"})} className={`py-2 rounded-lg text-[10px] font-bold border font-serif ${fontFamily === 'font-serif' ? 'bg-zinc-200 text-black' : 'text-zinc-500 border-zinc-800'}`}>SERIF</button>
+                       <button onClick={() => updateGlobalStyle({fontWeight: "font-normal"})} className={`py-2 rounded-lg text-[10px] font-normal border ${fontWeight === 'font-normal' ? 'bg-zinc-200 text-black' : 'text-zinc-500 border-zinc-800'}`}>NORMAL</button>
+                       <button onClick={() => updateGlobalStyle({fontWeight: "font-black"})} className={`py-2 rounded-lg text-[10px] font-black border ${fontWeight === 'font-black' ? 'bg-zinc-200 text-black' : 'text-zinc-500 border-zinc-800'}`}>BLACK</button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><AlignJustify size={14}/> Largura do Bloco</p>
+                    <div className="grid grid-cols-2 gap-2">
+                       {['max-w-2xl', 'max-w-4xl', 'max-w-6xl', 'max-w-none'].map(w => (
+                         <button key={w} onClick={() => updateGlobalStyle({maxWidth: w})} className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${maxWidth === w ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-500 border-zinc-800 hover:bg-zinc-800'}`}>{w === 'max-w-none' ? 'FULL' : w.split('-')[2]}</button>
+                       ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 pt-4 border-t border-zinc-900">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><Save size={14}/> Salvar Roteiro</p>
+                    <button 
+                      onClick={async () => {
+                        const rawContent = reconstructRawText(scenes);
+                        await updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes, content: rawContent });
+                        await updateDoc(doc(db, "scripts", id), { duration: calculateDuration(scenes) });
+                        setSaveStatus('saved');
+                        setTimeout(() => setSaveStatus(null), 2000);
+                      }}
+                      className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-900/20"
+                    >
+                      {saveStatus === 'saved' ? (
+                        <>
+                          <CheckCircle2 size={16} /> SALVO!
+                        </>
+                      ) : (
+                        <>
+                          <Save size={16} /> SALVAR AGORA
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="h-full py-4 animate-in slide-in-from-left-4 duration-300">
+                  <RemoteControlUI
+                     isPlaying={isPlaying}
+                     speed={speed}
+                     duration={duration}
+                     progress={localProgress}
+                     update={(data) => updateDoc(doc(db, "scripts", id), data)}
+                     manualScroll={(amt) => { if (containerRef.current) containerRef.current.scrollBy({ top: amt, behavior: 'smooth' }); }}
+                  />
+              </div>
+            )}
+          </div>
+          
+          <div className="p-4 border-t border-zinc-900 bg-zinc-950 flex items-center justify-center gap-4 shrink-0">
+             <Clock size={12} className="text-zinc-600" />
+             <span className="text-[9px] font-black uppercase text-zinc-600 tracking-[0.3em]">
+                {isPlaying ? 'EXECUTANDO' : 'PAUSADO'} | VEL {speed}X
+             </span>
           </div>
         </div>
       )}
-
-      {/* Botão flutuante para mobile */}
-      {!isMirrorWindow && (
-        <button onClick={() => setIsMirrored(!isMirrored)} className="lg:hidden fixed bottom-6 right-6 p-4 bg-zinc-800/80 rounded-full backdrop-blur z-50 text-white shadow-xl shadow-black">
-          Espelhar
-        </button>
-      )}
-
-      <style jsx global>{`.no-scrollbar::-webkit-scrollbar { display: none; } .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
     </div>
+  );
+}
+
+export default function TeleprompterPageWrapper({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  return (
+    <Suspense fallback={<div className="fixed inset-0 bg-black flex items-center justify-center text-blue-500 font-black tracking-widest uppercase">Puxando Roteiro...</div>}>
+      <TeleprompterContent id={id} />
+    </Suspense>
   );
 }
