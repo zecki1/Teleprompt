@@ -14,7 +14,7 @@ export function RemoteControlUI({
   speed: number;
   duration: number;
   progress: number;
-  update: (data: any) => void;
+  update: (data: Record<string, unknown>) => void; // Corrigido de 'any' para 'Record<string, unknown>'
   manualScroll: (amount: number) => void;
 }) {
   const remainingSeconds = Math.max(0, Math.floor(duration * (1 - progress)));

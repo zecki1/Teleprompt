@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Play, Save, Settings2, Link as Share } from "lucide-react";
+import { Play, Save, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { collection, addDoc, doc, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -80,7 +80,7 @@ export default function EditorPage() {
           </div>
         </div>
         
-        <Label className="text-muted-foreground">Cole seu roteiro do Word no formato "Cena [X]... Locução... Tempo..."</Label>
+        <Label className="text-muted-foreground">Cole seu roteiro do Word no formato &quot;Cena [X]... Locução... Tempo...&quot;</Label>
         
         <Textarea 
           placeholder={`Cena 1\n\nDescrição\nO apresentador gesticula...\n\nTexto em tela\nPROMOÇÃO IMPERDÍVEL\n\nLocução | Legenda\nBem vindos a nossa mais nova promoção de verão!\n\nPronúncia\nBem vin-dus`} 
@@ -101,10 +101,10 @@ export default function EditorPage() {
           <div className="space-y-4 pb-12">
             {scenes.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center mt-10">
-                Nenhuma cena reconhecida. Clique em "Parse Roteiro".
+                Nenhuma cena reconhecida. Clique em &quot;Parse Roteiro&quot;.
               </p>
             ) : (
-              scenes.map((scene, i) => (
+              scenes.map((scene) => (
                 <Card key={scene.id} className="shadow-sm">
                   <CardHeader className="py-3 bg-muted/50">
                     <CardTitle className="text-sm flex justify-between">
@@ -125,7 +125,7 @@ export default function EditorPage() {
                     {scene.spokenText && (
                       <div className="text-sm font-medium">
                         <span className="block text-xs text-muted-foreground mb-1">Locução | Legenda:</span>
-                        "{scene.spokenText}"
+                        &quot;{scene.spokenText}&quot;
                       </div>
                     )}
                     {scene.pronunciation && (
