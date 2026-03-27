@@ -587,6 +587,20 @@ function EditorContent({ id }: { id: string }) {
                     />
                   </div>
 
+                  <div className="space-y-1">
+                    <Label className="text-[9px] uppercase font-black text-purple-500/70 tracking-widest">
+                      Observação
+                    </Label>
+                    <Textarea
+                      value={scene.observation || ""}
+                      onChange={(e) =>
+                        updateScene(index, { observation: e.target.value })
+                      }
+                      placeholder="Notas e observações..."
+                      className="text-xs font-medium leading-relaxed min-h-[60px] border-none bg-purple-50/50 dark:bg-purple-900/20 p-3 resize-none w-full rounded shadow-inner dark:text-purple-200 placeholder:text-purple-300/50"
+                    />
+                  </div>
+
                   {(scene.imageUrl || (scene.images && scene.images.length > 0)) && (
                     <div className="grid grid-cols-2 gap-2 shrink-0 mt-2">
                       {scene.imageUrl && (
