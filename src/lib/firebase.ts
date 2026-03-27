@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -11,10 +11,22 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-// Initialize Firebase only if there are no initialized apps
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+// Initialize Firebase default app
+let app;
+const apps = getApps();
+if (apps.length > 0) {
+  app = apps[0];
+} else {
+  app = initializeApp(firebaseConfig);
+}
 
 const auth = getAuth(app);
+
+// Set persistence to LOCAL (remains logged in even after closing browser)
+setPersistence(auth, browserLocalPersistence).catch((error) => {
+  console.error("Error setting auth persistence:", error);
+});
+
 const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
 

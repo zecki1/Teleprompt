@@ -2,11 +2,21 @@
 
 import React, { useEffect, useState, use, Suspense } from "react";
 import { Scene, parseScript } from "@/lib/parser";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Play,
   Save,
@@ -25,6 +35,12 @@ import {
   Video,
   MonitorPlay,
   Type,
+  Send,
+  Clock,
+  XCircle,
+  Lock,
+  Unlock,
+  Eye,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -40,7 +56,19 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+// import { addScriptLinkToZecki } from "@/services/zecki";
 import Link from "next/link";
+
+type ScriptStatus = "rascunho" | "em_revisao" | "revisao_realizada" | "aguardando_gravacao" | "gravado" | "rejeitado";
+
+const statusConfig: Record<ScriptStatus, { label: string; color: string; icon: React.ElementType }> = {
+  rascunho: { label: "Rascunho", color: "bg-zinc-500", icon: FileText },
+  em_revisao: { label: "Em Revisão", color: "bg-yellow-500", icon: Clock },
+  revisao_realizada: { label: "Revisão Realizada", color: "bg-orange-500", icon: CheckCircle2 },
+  aguardando_gravacao: { label: "Aguardando Gravação", color: "bg-green-500", icon: CheckCircle2 },
+  gravado: { label: "Gravado", color: "bg-blue-500", icon: Send },
+  rejeitado: { label: "Rejeitado", color: "bg-red-500", icon: XCircle },
+};
 
 function formatEditorLettering(spokenText: string | null | undefined): React.ReactNode {
   if (!spokenText) return null;
@@ -79,15 +107,25 @@ function EditorContent({ id }: { id: string }) {
   const [text, setText] = useState("");
   const [title, setTitle] = useState("Novo Roteiro");
   const [project, setProject] = useState("Geral");
+  const [projectId, setProjectId] = useState<string | null>(null);
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [loading, setLoading] = useState(!isNew);
+  const [scriptStatus, setScriptStatus] = useState<ScriptStatus>("rascunho");
+  const [isPublic, setIsPublic] = useState(false);
+  const [lockedForEditing, setLockedForEditing] = useState(false);
+
+  const { user, hasPermission } = useAuth();
+  const canEdit = hasPermission(["editor", "validador"]) && (!lockedForEditing || scriptStatus === "rascunho");
+  const canValidate = hasPermission(["validador"]);
+  const canSend = hasPermission(["validador"]) && scriptStatus === "aguardando_gravacao";
 
   // Controle de Visualização (Inversão de telas)
   const [viewMode, setViewMode] = useState<"redator" | "video">("redator");
   const [videoPage, setVideoPage] = useState(0);
   const scenesPerPage = 2;
   const totalPages = Math.ceil(scenes.length / scenesPerPage);
+  const [showSaveModal, setShowSaveModal] = useState(false);
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({
     message: "",
     visible: false,
@@ -116,6 +154,10 @@ function EditorContent({ id }: { id: string }) {
           const data = scriptSnap.data();
           setTitle(data.title || "");
           setProject(data.project || "Geral");
+          setProjectId(data.projectId || null);
+          setScriptStatus(data.status || "rascunho");
+          setIsPublic(data.isPublic || false);
+          setLockedForEditing(data.lockedForEditing || false);
 
           const vQ = query(
             collection(db, "scripts", id, "versions"),
@@ -139,9 +181,112 @@ function EditorContent({ id }: { id: string }) {
     loadScript();
   }, [id, isNew, searchParams]);
 
+  // Funções de Validação
+  const updateStatus = async (newStatus: ScriptStatus) => {
+    if (isNew) {
+      showToast("Salve o roteiro primeiro antes de mudar o status.");
+      return;
+    }
+    
+    try {
+      const updateData: Record<string, unknown> = {
+        status: newStatus,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (newStatus === "em_revisao" || newStatus === "revisao_realizada" || newStatus === "aguardando_gravacao") {
+        updateData.lockedForEditing = false;
+        setLockedForEditing(false);
+      } else if (newStatus === "rascunho") {
+        updateData.validatedBy = null;
+        updateData.validatedAt = null;
+        updateData.lockedForEditing = false;
+        setLockedForEditing(false);
+      } else if (newStatus === "gravado") {
+        updateData.sentAt = new Date().toISOString();
+      }
+
+      await updateDoc(doc(db, "scripts", id), updateData);
+      setScriptStatus(newStatus);
+      showToast(`Roteiro movido para ${statusConfig[newStatus].label}`);
+    } catch (e) {
+      console.error("Erro ao atualizar status:", e);
+      showToast("Erro ao atualizar status.");
+    }
+  };
+
+  const togglePublic = async () => {
+    if (isNew) return;
+    try {
+      const newIsPublic = !isPublic;
+      await updateDoc(doc(db, "scripts", id), {
+        isPublic: newIsPublic,
+        updatedAt: serverTimestamp(),
+      });
+      setIsPublic(newIsPublic);
+      showToast(newIsPublic ? "Link público ativado" : "Link público desativado");
+    } catch (e) {
+      console.error("Erro ao alternar visibilidade:", e);
+    }
+  };
+
+  const unlockForEditing = async () => {
+    if (isNew || !canValidate) return;
+    try {
+      await updateDoc(doc(db, "scripts", id), {
+        lockedForEditing: false,
+        updatedAt: serverTimestamp(),
+      });
+      setLockedForEditing(false);
+      showToast("Roteiro desbloqueado para edição");
+    } catch (e) {
+      console.error("Erro ao desbloquear:", e);
+    }
+  };
+
+  /* const sendToZecki = async () => {
+    if (!canValidate || scriptStatus !== "validado") return;
+    
+    setIsSaving(true);
+    try {
+      const scriptUrl = `${window.location.origin}/s/${id}`;
+      
+      const result = await addScriptLinkToZecki(
+        project,
+        project,
+        title,
+        scriptUrl,
+        id,
+        user?.displayName || user?.email || "Unknown"
+      );
+
+      if (result.success) {
+        await updateDoc(doc(db, "scripts", id), {
+          status: "enviado",
+          sentAt: new Date().toISOString(),
+          updatedAt: serverTimestamp(),
+        });
+        setScriptStatus("enviado");
+        showToast("Roteiro enviado para gravação no Zecki!");
+      } else {
+        showToast("Erro ao enviar para Zecki: " + (result.error || "Erro desconhecido"));
+      }
+    } catch (e) {
+      console.error("Erro ao enviar para Zecki:", e);
+      showToast("Erro ao enviar para Zecki");
+    } finally {
+      setIsSaving(false);
+    }
+  }; */
+
   // 2. Lógica de Salvamento
-  const handleSave = async () => {
+  const handleSaveClick = () => {
     if (scenes.length === 0) return alert("Processe o roteiro antes de salvar.");
+    setShowSaveModal(true);
+  };
+
+  const handleSave = async (saveStatus: ScriptStatus) => {
+    setShowSaveModal(false);
     setIsSaving(true);
     try {
       // Limpa campos undefined/null das cenas para evitar erro do Firestore
@@ -159,17 +304,26 @@ function EditorContent({ id }: { id: string }) {
         const docRef = await addDoc(collection(db, "scripts"), {
           title,
           project,
+          projectId,
+          status: saveStatus,
+          createdBy: user?.uid,
+          createdByName: user?.displayName || user?.email || "Unknown",
           createdAt: new Date().toISOString(),
           updatedAt: serverTimestamp(),
           isPublic: false,
+          lockedForEditing: false,
         });
         currentScriptId = docRef.id;
+        setScriptStatus(saveStatus);
       } else {
         await updateDoc(doc(db, "scripts", currentScriptId), {
           title,
           project,
+          projectId,
+          status: saveStatus,
           updatedAt: serverTimestamp(),
         });
+        setScriptStatus(saveStatus);
       }
 
       await addDoc(
@@ -257,16 +411,104 @@ function EditorContent({ id }: { id: string }) {
             </Link>
           </Button>
           <div className="flex-1 min-w-0">
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="h-7 font-bold bg-transparent border-none focus-visible:ring-0 p-0 text-lg shadow-none"
-            />
-            <Input
-              value={project}
-              onChange={(e) => setProject(e.target.value)}
-              className="h-5 bg-transparent border-none focus-visible:ring-0 p-0 text-[10px] text-blue-500 font-black uppercase tracking-widest shadow-none"
-            />
+            <div className="flex items-center gap-2">
+              <Input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="h-7 font-bold bg-transparent border-none focus-visible:ring-0 p-0 text-lg shadow-none"
+              />
+              <Badge className={`${statusConfig[scriptStatus]?.color} hover:${statusConfig[scriptStatus]?.color} text-white text-[10px] px-2 py-0.5`}>
+                {statusConfig[scriptStatus]?.label}
+              </Badge>
+              {isPublic && (
+                <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-green-500 text-green-600">
+                  <Eye className="w-3 h-3 mr-1" /> Público
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2 mt-0.5">
+              <Input
+                value={project}
+                onChange={(e) => setProject(e.target.value)}
+                className="h-5 bg-transparent border-none focus-visible:ring-0 p-0 text-[10px] text-blue-500 font-black uppercase tracking-widest shadow-none w-auto"
+              />
+              {lockedForEditing && scriptStatus !== "rascunho" && (
+                <span className="text-[10px] text-orange-500 flex items-center gap-1">
+                  <Lock className="w-3 h-3" /> Bloqueado
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Barra de Status no Topo */}
+        <div className="flex items-center justify-between gap-2 px-4 py-2 bg-zinc-100 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-700 shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-black uppercase text-zinc-500">Status:</span>
+            {canValidate && !isNew ? (
+              <div className="flex items-center gap-1">
+                {scriptStatus === "rascunho" && (
+                  <Button size="sm" onClick={() => updateStatus("em_revisao")} className="h-6 text-[10px] bg-yellow-500 hover:bg-yellow-600">
+                    <Clock className="w-3 h-3 mr-1" /> Enviar para Revisão
+                  </Button>
+                )}
+                {scriptStatus === "em_revisao" && (
+                  <>
+                    <Button size="sm" onClick={() => updateStatus("revisao_realizada")} className="h-6 text-[10px] bg-orange-500 hover:bg-orange-600">
+                      <CheckCircle2 className="w-3 h-3 mr-1" /> Revisão Realizada
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => updateStatus("rejeitado")} className="h-6 text-[10px] border-red-500 text-red-500 hover:bg-red-50">
+                      <XCircle className="w-3 h-3 mr-1" /> Rejeitar
+                    </Button>
+                  </>
+                )}
+                {scriptStatus === "revisao_realizada" && (
+                  <>
+                    <Button size="sm" onClick={() => updateStatus("aguardando_gravacao")} className="h-6 text-[10px] bg-green-500 hover:bg-green-600">
+                      <CheckCircle2 className="w-3 h-3 mr-1" /> Aguardando Gravação
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => updateStatus("rascunho")} className="h-6 text-[10px]">
+                      <FileText className="w-3 h-3 mr-1" /> Voltar
+                    </Button>
+                  </>
+                )}
+                {scriptStatus === "aguardando_gravacao" && (
+                  <>
+                    <Button size="sm" onClick={() => updateStatus("gravado")} className="h-6 text-[10px] bg-blue-500 hover:bg-blue-600">
+                      <Send className="w-3 h-3 mr-1" /> Marcar como Gravado
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => updateStatus("revisao_realizada")} className="h-6 text-[10px]">
+                      <FileText className="w-3 h-3 mr-1" /> Voltar
+                    </Button>
+                  </>
+                )}
+                {scriptStatus === "gravado" && (
+                  <Button size="sm" variant="outline" onClick={() => updateStatus("rascunho")} className="h-6 text-[10px]">
+                    <FileText className="w-3 h-3 mr-1" /> Voltar para Rascunho
+                  </Button>
+                )}
+                {scriptStatus === "rejeitado" && (
+                  <Button size="sm" onClick={() => updateStatus("rascunho")} className="h-6 text-[10px]">
+                    <FileText className="w-3 h-3 mr-1" /> Voltar para Rascunho
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <Badge className={`${statusConfig[scriptStatus]?.color} hover:${statusConfig[scriptStatus]?.color} text-white text-[10px] px-2 py-0.5`}>
+                {statusConfig[scriptStatus]?.label}
+              </Badge>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant={isPublic ? "default" : "outline"}
+              size="sm"
+              onClick={togglePublic}
+              className="h-6 text-[10px]"
+            >
+              <Eye className="w-3 h-3 mr-1" />
+              {isPublic ? "Público" : "Privado"}
+            </Button>
           </div>
         </div>
 
@@ -360,7 +602,7 @@ function EditorContent({ id }: { id: string }) {
               </div>
             )}
             <Button
-              onClick={handleSave}
+              onClick={handleSaveClick}
               disabled={isSaving || scenes.length === 0}
               size="sm"
               className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] tracking-widest px-4 rounded-lg"
@@ -441,7 +683,8 @@ function EditorContent({ id }: { id: string }) {
                       onChange={(e) =>
                         updateScene(index, { spokenText: e.target.value })
                       }
-                      className={`text-sm font-medium leading-relaxed min-h-[100px] border-none bg-zinc-50/50 dark:bg-zinc-900/50 p-3 resize-none w-full rounded shadow-inner dark:text-zinc-200 ${viewMode === "video" && scene.lettering ? "!min-h-[60px]" : ""}`}
+                      disabled={!canEdit}
+                      className={`text-sm font-medium leading-relaxed min-h-[100px] border-none bg-zinc-50/50 dark:bg-zinc-900/50 p-3 resize-none w-full rounded shadow-inner dark:text-zinc-200 ${viewMode === "video" && scene.lettering ? "!min-h-[60px]" : ""} ${!canEdit ? "opacity-60" : ""}`}
                     />
                   </div>
 
@@ -655,6 +898,77 @@ function EditorContent({ id }: { id: string }) {
           </div>
         </div>
       </div>
+
+      {/* Modal de Salvar */}
+      <Dialog open={showSaveModal} onOpenChange={setShowSaveModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Salvar Roteiro</DialogTitle>
+            <DialogDescription>
+              Escolha em qual status deseja salvar o roteiro.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 py-4">
+            {scriptStatus === "rascunho" ? (
+              <>
+                <Button
+                  onClick={() => handleSave("rascunho")}
+                  disabled={isSaving}
+                  className="w-full h-12 bg-zinc-600 hover:bg-zinc-700 text-white justify-start"
+                >
+                  <FileText className="w-5 h-5 mr-2" />
+                  <span className="font-bold">Salvar como Rascunho</span>
+                </Button>
+                <Button
+                  onClick={() => handleSave("em_revisao")}
+                  disabled={isSaving}
+                  className="w-full h-12 bg-yellow-500 hover:bg-yellow-600 text-white justify-start"
+                >
+                  <Clock className="w-5 h-5 mr-2" />
+                  <span className="font-bold">Enviar para Revisão</span>
+                </Button>
+              </>
+            ) : scriptStatus === "em_revisao" ? (
+              <>
+                <Button
+                  onClick={() => handleSave("em_revisao")}
+                  disabled={isSaving}
+                  className="w-full h-12 bg-yellow-500 hover:bg-yellow-600 text-white justify-start"
+                >
+                  <FileText className="w-5 h-5 mr-2" />
+                  <span className="font-bold">Salvar como Em Revisão</span>
+                </Button>
+                <Button
+                  onClick={() => handleSave("aguardando_gravacao")}
+                  disabled={isSaving}
+                  className="w-full h-12 bg-green-600 hover:bg-green-700 text-white justify-start"
+                >
+                  <Video className="w-5 h-5 mr-2" />
+                  <span className="font-bold">Enviar para Gravação</span>
+                </Button>
+              </>
+            ) : (
+              <Button
+                onClick={() => handleSave(scriptStatus)}
+                disabled={isSaving}
+                className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white justify-start"
+              >
+                <Save className="w-5 h-5 mr-2" />
+                <span className="font-bold">Salvar</span>
+              </Button>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowSaveModal(false)}
+              disabled={isSaving}
+            >
+              Cancelar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

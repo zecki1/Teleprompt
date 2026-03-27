@@ -3,44 +3,75 @@
 import { useEffect, useState } from "react";
 import { collection, query, orderBy, getDocs, deleteDoc, doc, updateDoc, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Copy, Plus, Play, Trash2, Edit2, Check, Folder, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Copy, Plus, Play, Trash2, Edit2, Check, Folder, X, FileText, Send, Eye, Clock, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+
+export type ScriptStatus = "rascunho" | "em_revisao" | "revisao_realizada" | "aguardando_gravacao" | "gravado" | "rejeitado";
 
 interface ScriptDoc {
   id: string;
   title: string;
   project?: string;
   projectName?: string;
+  projectId?: string;
   createdAt: string;
+  createdBy?: string;
+  createdByName?: string;
+  status: ScriptStatus;
   isPublic: boolean;
+  lockedForEditing?: boolean;
+  validatedBy?: string;
+  validatedAt?: string;
+  sentAt?: string;
 }
 
+const statusConfig: Record<ScriptStatus, { label: string; color: string; icon: React.ElementType }> = {
+  rascunho: { label: "Rascunho", color: "bg-zinc-500", icon: FileText },
+  em_revisao: { label: "Em Revisão", color: "bg-yellow-500", icon: Clock },
+  revisao_realizada: { label: "Revisão Realizada", color: "bg-orange-500", icon: CheckCircle2 },
+  aguardando_gravacao: { label: "Aguardando Gravação", color: "bg-green-500", icon: CheckCircle2 },
+  gravado: { label: "Gravado", color: "bg-blue-500", icon: Send },
+  rejeitado: { label: "Rejeitado", color: "bg-red-500", icon: X },
+};
+
 export default function DashboardPage() {
+  const { user, hasPermission } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  
   const [scripts, setScripts] = useState<ScriptDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const [statusFilter, setStatusFilter] = useState<ScriptStatus | "all">("all");
   
   // Estados para renomear projeto
   const [editingProjectName, setEditingProjectName] = useState<string | null>(null);
   const [newProjectTitle, setNewProjectTitle] = useState("");
 
-  const router = useRouter();
-
   useEffect(() => {
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
     async function fetchScripts() {
       try {
         const q = query(collection(db, "scripts"), orderBy("createdAt", "desc"));
         const snapshot = await getDocs(q);
         const fetched = snapshot.docs.map(doc => ({
           id: doc.id,
-          ...doc.data()
+          ...doc.data(),
+          status: doc.data().status || "rascunho"
         })) as ScriptDoc[];
         setScripts(fetched);
       } catch (err) {
@@ -50,7 +81,21 @@ export default function DashboardPage() {
       }
     }
     fetchScripts();
-  }, []);
+  }, [user, router]);
+
+  const filteredScripts = statusFilter === "all" 
+    ? scripts 
+    : scripts.filter(s => s.status === statusFilter);
+
+  const statusCounts = {
+    all: scripts.length,
+    rascunho: scripts.filter(s => s.status === "rascunho").length,
+    em_revisao: scripts.filter(s => s.status === "em_revisao").length,
+    revisao_realizada: scripts.filter(s => s.status === "revisao_realizada").length,
+    aguardando_gravacao: scripts.filter(s => s.status === "aguardando_gravacao").length,
+    gravado: scripts.filter(s => s.status === "gravado").length,
+    rejeitado: scripts.filter(s => s.status === "rejeitado").length,
+  };
 
   const handleDelete = async (id: string) => {
     if (!confirm("Tem certeza que deseja excluir este roteiro?")) return;
@@ -125,6 +170,34 @@ export default function DashboardPage() {
         </Button>
       </div>
 
+      {/* Filtros de Status */}
+      <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+        <Button
+          variant={statusFilter === "all" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setStatusFilter("all")}
+          className="gap-2"
+        >
+          Todos ({statusCounts.all})
+        </Button>
+        {(Object.keys(statusConfig) as ScriptStatus[]).map((status) => {
+          const config = statusConfig[status];
+          const Icon = config.icon;
+          return (
+            <Button
+              key={status}
+              variant={statusFilter === status ? "default" : "outline"}
+              size="sm"
+              onClick={() => setStatusFilter(status)}
+              className="gap-2"
+            >
+              <Icon className="w-4 h-4" />
+              {config.label} ({statusCounts[status]})
+            </Button>
+          );
+        })}
+      </div>
+
       {loading ? (
         <div className="flex items-center justify-center py-20">
           <p className="text-muted-foreground">Carregando seus roteiros...</p>
@@ -181,8 +254,13 @@ export default function DashboardPage() {
               <div className="relative">
                 <div className="flex gap-6 overflow-x-auto pb-6 pt-2 no-scrollbar snap-x snap-mandatory">
                   {projectScripts.map(script => (
-                    <div key={script.id} className="min-w-[85%] md:min-w-[45%] lg:min-w-[calc(33.333%-1rem)] snap-start">
-                      <Card className="h-full hover:shadow-md transition-shadow group flex flex-col pt-4">
+                    <div key={script.id} className="min-w-[85%] md:min-w-[45%] lg:min-w-[calc(33.333%-1rem)] snap-start relative">
+                      {script.status === "aguardando_gravacao" && (
+                        <div className="absolute top-0 right-0 z-10 bg-green-500 text-white px-3 py-1 rounded-br-lg rounded-tl-lg flex items-center gap-1 shadow-md">
+                          <CheckCircle2 className="w-4 h-4" />
+                        </div>
+                      )}
+                      <Card className={`h-full hover:shadow-md transition-shadow group flex flex-col pt-4 ${script.status === "aguardando_gravacao" ? "border-green-500 border-2" : ""}`}>
                         <CardHeader>
                           {editingId === script.id ? (
                             <div className="flex items-center gap-2">
@@ -209,7 +287,17 @@ export default function DashboardPage() {
                               </Button>
                             </div>
                           )}
-                          <p className="text-sm text-muted-foreground">
+                          <div className="flex items-center gap-2 mt-1">
+                            <Badge className={`${statusConfig[script.status]?.color || "bg-zinc-500"} hover:${statusConfig[script.status]?.color || "bg-zinc-500"}`}>
+                              {statusConfig[script.status]?.label || script.status}
+                            </Badge>
+                            {script.isPublic && (
+                              <Badge variant="outline" className="text-xs">
+                                <Eye className="w-3 h-3 mr-1" /> Público
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-2">
                             {script.createdAt ? format(new Date(script.createdAt), "dd 'de' MMMM, yyyy", { locale: ptBR }) : "Sem data"}
                           </p>
                         </CardHeader>
