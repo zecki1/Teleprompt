@@ -52,9 +52,28 @@ function TeleprompterContent({ id }: { id: string }) {
   const [textAlign, setTextAlign] = useState("text-left");
   const [fontFamily, setFontFamily] = useState("font-sans");
   const [fontWeight, setFontWeight] = useState("font-medium");
+  const [lineHeight, setLineHeight] = useState("leading-relaxed");
   const [maxWidth, setMaxWidth] = useState("max-w-4xl");
   const [bgColor, setBgColor] = useState("#000000");
   const [textColor, setTextColor] = useState("#ffffff");
+
+  // CSS para ocultar marcadores no TP
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      .tp-hidden-marker {
+        color: transparent !important;
+        background: transparent !important;
+        opacity: 0;
+        pointer-events: none;
+        user-select: none;
+        display: inline;
+        position: relative;
+      }
+    `;
+    document.head.appendChild(style);
+    return () => { document.head.removeChild(style); };
+  }, []);
 
   // --- 1. LÓGICA DE FULLSCREEN E SUPORTE ---
 
@@ -79,16 +98,77 @@ function TeleprompterContent({ id }: { id: string }) {
     return Math.max(10, Math.floor((wordCount / 130) * 60));
   };
 
+  const handleSceneBlur = (sceneId: string, newText: string) => {
+    const updatedScenes = scenes.map(scene => {
+      if (scene.id === sceneId) {
+        // Limpa labels e preserva o lettering original intacto
+        const cleanNewText = newText
+          .replace(/^\[?Locução\]?|^\[?Legenda\]?|^(Tempo|Cena|Descrição|GC|Texto em tela|Link|url|img|let)\s*[:\-]?\s*/gim, '')
+          .trim();
+        
+        // Preserva o lettering original - não tentamos extrair mais
+        return { ...scene, spokenText: cleanNewText };
+      }
+      return scene;
+    });
+    
+    setScenes(updatedScenes);
+    const rawContent = reconstructRawText(updatedScenes);
+    updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes: updatedScenes, content: rawContent });
+    updateDoc(doc(db, "scripts", id), { duration: calculateDuration(updatedScenes) });
+  };
+
+  // Texto para TP com marcadores ocultos mas preservados
+  const getTPDisplay = (text: string | null | undefined): string => {
+    if (!text) return '\u00A0';
+    
+    // Primeiro limpa as linhas de定义
+    let clean = text
+      .replace(/^\[(img|url|let)\d+\]:.*$/gim, '')
+      .replace(/^\[?Locução\]?:|^\[?Legenda\]?:/gim, '')
+      .trim();
+    
+    // Substitui marcadores por spans invisíveis que não interferem na edição
+    // O innerText ainda captura o texto, mas visualmente não aparece
+    clean = clean.replace(/(\[(?:let|img)\d+\])/g, 
+      '<span class="tp-hidden-marker" contenteditable="false">$1</span>'
+    );
+    
+    return clean || '\u00A0';
+  };
+
   const reconstructRawText = (scenesList: Scene[]): string => {
-    return scenesList.map(s => {
+    return scenesList.map((s) => {
       let sceneText = `Cena ${s.sceneNumber}\n`;
-      if (s.time) sceneText += `Tempo: ${s.time}\n`;
-      if (s.imageUrl) sceneText += `img: ${s.imageUrl}\n`;
-      if (s.sourceUrl) sceneText += `url: ${s.sourceUrl}\n`;
-      if (s.lettering) sceneText += `let: ${s.lettering}\n`;
-      if (s.spokenText) sceneText += `Locução: ${s.spokenText}\n`;
+      
+      // Imagens
+      const allImages = [s.imageUrl, ...(s.images || [])].filter(Boolean);
+      allImages.forEach((img) => {
+        sceneText += `[img${allImages.indexOf(img) + 1}]: ${img}\n`;
+      });
+
+      // URLs
+      const allUrls = [s.sourceUrl, ...(s.sources || [])].filter(Boolean);
+      allUrls.forEach((url) => {
+        sceneText += `[url${allUrls.indexOf(url) + 1}]: ${url}\n`;
+      });
+
+      // Lettering - cada um em uma linha
+      if (s.lettering) {
+        const letLines = s.lettering.split('\n').filter(l => l.trim());
+        letLines.forEach((letText, i) => {
+          sceneText += `[let${i + 1}]: ${letText.trim()}\n`;
+        });
+      }
+      
+      // Locução - mantém exatamente como está, só remove o prefixo se existir
+      let spokenText = s.spokenText || '';
+      // Remove prefixo [Locução]: ou Locução: mas mantém o resto intacto
+      spokenText = spokenText.replace(/^\[?Locução\]?:\s*/i, '');
+      
+      if (spokenText.trim()) sceneText += `[Locução]: ${spokenText}`;
       return sceneText;
-    }).join('\n');
+    }).join('\n\n');
   };
 
   const updateGlobalStyle = async (data: Record<string, string | number | boolean>) => {
@@ -138,6 +218,7 @@ function TeleprompterContent({ id }: { id: string }) {
         if (d.maxWidth) setMaxWidth(d.maxWidth);
         if (d.fontFamily) setFontFamily(d.fontFamily);
         if (d.fontWeight) setFontWeight(d.fontWeight);
+        if (d.lineHeight) setLineHeight(d.lineHeight);
 
         if (d.resetRequest && d.resetRequest !== lastProcessedReset.current) {
           if (containerRef.current) containerRef.current.scrollTop = 0;
@@ -152,6 +233,11 @@ function TeleprompterContent({ id }: { id: string }) {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Permite Ctrl+Z (undo) mesmo durante edição
+      if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
+        return; // Deixa o navegador lidar com o undo nativamente
+      }
+      
       if (e.target instanceof HTMLElement && e.target.isContentEditable) return;
       const currentScroll = containerRef.current?.scrollTop || 0;
 
@@ -237,6 +323,7 @@ function TeleprompterContent({ id }: { id: string }) {
            setMaxWidth(ev.data.styles.maxWidth);
            setFontFamily(ev.data.styles.fontFamily);
            setFontWeight(ev.data.styles.fontWeight);
+           setLineHeight(ev.data.styles.lineHeight);
         }
       };
     }
@@ -247,10 +334,10 @@ function TeleprompterContent({ id }: { id: string }) {
     if (!isMirrorWindow && bcRef.current) {
       bcRef.current.postMessage({ 
         type: 'syncStyles', 
-        styles: { fontSize, textAlign, fontFamily, fontWeight, maxWidth, bgColor, textColor } 
+        styles: { fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor } 
       });
     }
-  }, [fontSize, textAlign, fontFamily, fontWeight, maxWidth, bgColor, textColor, isMirrorWindow]);
+  }, [fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, isMirrorWindow]);
 
   if (loading) return <div className="fixed inset-0 bg-black flex items-center justify-center text-white font-bold animate-pulse">SINCRONIZANDO...</div>;
 
@@ -279,20 +366,15 @@ function TeleprompterContent({ id }: { id: string }) {
             <div 
               key={s.id} 
               ref={el => { sceneRefs.current[idx] = el; }} 
-              className={`mb-32 break-words outline-none whitespace-pre-wrap transition-opacity duration-700 ${textAlign} ${fontWeight} ${fontSize} ${isPlaying ? 'opacity-100' : 'opacity-30'}`} 
+              className={`mb-32 break-words outline-none whitespace-pre-wrap transition-opacity duration-700 ${textAlign} ${fontWeight} ${fontSize} ${lineHeight} ${isPlaying ? 'opacity-100' : 'opacity-30'}`} 
               contentEditable={!isMirrorWindow} 
               suppressContentEditableWarning={true}
               onBlur={(e) => {
-                 const rawText = e.currentTarget.innerText;
-                 const updatedScenes = scenes.map(scene => scene.id === s.id ? {...scene, spokenText: rawText} : scene);
-                 setScenes(updatedScenes);
-                 const rawContent = reconstructRawText(updatedScenes);
-                 updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes: updatedScenes, content: rawContent });
-                 updateDoc(doc(db, "scripts", id), { duration: calculateDuration(updatedScenes) });
+                const rawText = e.currentTarget.innerText;
+                handleSceneBlur(s.id, rawText);
               }}
-            >
-              {(s.spokenText || '').replace(/\[\d+\]/g, '') || '\u00A0'}
-            </div>
+              dangerouslySetInnerHTML={{ __html: getTPDisplay(s.spokenText) }}
+            />
           ))}
         </div>
       </div>
@@ -300,7 +382,7 @@ function TeleprompterContent({ id }: { id: string }) {
       {!isMirrorWindow && (
         <div className="w-[400px] shrink-0 h-full bg-zinc-950 border-l border-zinc-800 flex flex-col hidden lg:flex z-20 shadow-2xl overflow-hidden">
           <div className="p-4 border-b border-zinc-900 flex items-center justify-between">
-            <Link href="/dashboard" className="p-2 text-zinc-500 hover:text-white transition"><ChevronLeft size={20}/></Link>
+            <Link href={`/editor/${id}`} className="p-2 text-zinc-500 hover:text-white transition"><ChevronLeft size={20}/></Link>
             <span className="text-[10px] font-black tracking-[0.2em] text-zinc-400 uppercase font-mono">Master Control</span>
             <Settings2 size={18} className="text-zinc-700" />
           </div>
@@ -342,9 +424,9 @@ function TeleprompterContent({ id }: { id: string }) {
 
                   <div className="space-y-3">
                     <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><Type size={14}/> Tamanho Fonte</p>
-                    <div className="flex gap-1.5">
-                      {['text-5xl', 'text-7xl', 'text-9xl'].map(t => (
-                        <button key={t} onClick={() => updateGlobalStyle({fontSize: t})} className={`flex-1 py-3 rounded-lg text-xs font-bold border transition-all ${fontSize === t ? 'bg-white text-black border-white' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}>{t.replace('text-', '')}</button>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {['text-3xl', 'text-5xl', 'text-7xl', 'text-9xl', 'text-[5rem]', 'text-[7rem]', 'text-[9rem]', 'text-[12rem]'].map(t => (
+                        <button key={t} onClick={() => updateGlobalStyle({fontSize: t})} className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${fontSize === t ? 'bg-white text-black border-white' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}>{t.replace('text-', '').replace('[', '').replace('rem]', 'r').replace('rem', 'r')}</button>
                       ))}
                     </div>
                   </div>
@@ -356,6 +438,15 @@ function TeleprompterContent({ id }: { id: string }) {
                        <button onClick={() => updateGlobalStyle({fontFamily: "font-serif"})} className={`py-2 rounded-lg text-[10px] font-bold border font-serif ${fontFamily === 'font-serif' ? 'bg-zinc-200 text-black' : 'text-zinc-500 border-zinc-800'}`}>SERIF</button>
                        <button onClick={() => updateGlobalStyle({fontWeight: "font-normal"})} className={`py-2 rounded-lg text-[10px] font-normal border ${fontWeight === 'font-normal' ? 'bg-zinc-200 text-black' : 'text-zinc-500 border-zinc-800'}`}>NORMAL</button>
                        <button onClick={() => updateGlobalStyle({fontWeight: "font-black"})} className={`py-2 rounded-lg text-[10px] font-black border ${fontWeight === 'font-black' ? 'bg-zinc-200 text-black' : 'text-zinc-500 border-zinc-800'}`}>BLACK</button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest">↕ Espaçamento</p>
+                    <div className="grid grid-cols-4 gap-1.5">
+                       {['leading-tight', 'leading-normal', 'leading-relaxed', 'leading-loose'].map(lh => (
+                         <button key={lh} onClick={() => { setLineHeight(lh); updateGlobalStyle({lineHeight: lh}); }} className={`py-2 rounded-lg text-[9px] font-bold border transition-all ${lineHeight === lh ? 'bg-white text-black border-white' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}>{lh.replace('leading-', '')}</button>
+                       ))}
                     </div>
                   </div>
 

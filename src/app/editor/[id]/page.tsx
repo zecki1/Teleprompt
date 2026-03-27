@@ -45,15 +45,21 @@ import Link from "next/link";
 function formatEditorLettering(spokenText: string | null | undefined): React.ReactNode {
   if (!spokenText) return null;
   
-  const regex = /\[(\d+)\]/g;
+  // Regex para [let1], [img1], etc.
+  const regex = /(\[(?:let|img)\d+\]|\[\d+\])/g;
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
   let match;
   
   while ((match = regex.exec(spokenText)) !== null) {
     parts.push(spokenText.slice(lastIndex, match.index));
+    
+    // [let1] em vermelho, [img1] em roxo
+    const isImg = match[0].startsWith('[img');
+    const colorClass = isImg ? 'text-purple-600 dark:text-purple-400' : 'text-red-600 dark:text-red-400';
+    
     parts.push(
-      <span key={`let-${match[1]}`} className="text-red-500 font-black">
+      <span key={`marker-${match.index}`} className={`${colorClass} font-black`}>
         {match[0]}
       </span>
     );
@@ -138,6 +144,16 @@ function EditorContent({ id }: { id: string }) {
     if (scenes.length === 0) return alert("Processe o roteiro antes de salvar.");
     setIsSaving(true);
     try {
+      // Limpa campos undefined/null das cenas para evitar erro do Firestore
+      const cleanScenes = scenes.map(scene => ({
+        id: scene.id,
+        sceneNumber: scene.sceneNumber,
+        ...Object.fromEntries(
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          Object.entries(scene).filter(([_, value]) => value !== undefined && value !== null && value !== "")
+        )
+      }));
+
       let currentScriptId = id;
       if (isNew) {
         const docRef = await addDoc(collection(db, "scripts"), {
@@ -160,7 +176,7 @@ function EditorContent({ id }: { id: string }) {
         collection(db, "scripts", currentScriptId as string, "versions"),
         {
           content: text,
-          scenes: scenes,
+          scenes: cleanScenes,
           createdAt: new Date().toISOString(),
         }
       );
@@ -410,17 +426,17 @@ function EditorContent({ id }: { id: string }) {
                 </div>
 
                 <CardContent className="p-3 space-y-4 overflow-hidden">
-                  <div className="grid grid-cols-1 gap-2 min-w-0">
-                    {/* Imagens Múltiplas */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Imagem - Coluna 1 */}
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                        <ImageIcon className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                        <ImageIcon className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                         <Input
                           value={scene.imageUrl || ""}
                           onChange={(e) =>
                             updateScene(index, { imageUrl: e.target.value })
                           }
-                          placeholder="img principal:"
+                          placeholder="img:"
                           className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
                         />
                         {scene.imageUrl && (
@@ -457,37 +473,70 @@ function EditorContent({ id }: { id: string }) {
                           </button>
                         </div>
                       ))}
-                      <button
-                        onClick={() => {
-                          const newImages = [...(scene.images || []), ""];
-                          updateScene(index, { images: newImages });
-                        }}
-                        className="flex items-center gap-2 text-[9px] font-bold text-blue-500 hover:text-blue-600 transition px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"
-                      >
-                        <Plus size={12} /> ADICIONAR IMAGEM
-                      </button>
                     </div>
-                    {/* Link de Download */}
-                    <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                      <ExternalLink className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                      <Input
-                        value={scene.sourceUrl || ""}
-                        onChange={(e) =>
-                          updateScene(index, { sourceUrl: e.target.value })
-                        }
-                        placeholder="url:"
-                        className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
-                      />
-                      {scene.sourceUrl && (
-                        <button
-                          onClick={() => window.open(scene.sourceUrl!, "_blank")}
-                          className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-blue-500"
-                        >
-                          <ExternalLink size={14} />
-                        </button>
-                      )}
+
+                    {/* URL - Coluna 2 */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                        <ExternalLink className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <Input
+                          value={scene.sourceUrl || ""}
+                          onChange={(e) =>
+                            updateScene(index, { sourceUrl: e.target.value })
+                          }
+                          placeholder="url:"
+                          className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
+                        />
+                        {scene.sourceUrl && (
+                          <button
+                            onClick={() => window.open(scene.sourceUrl!, "_blank")}
+                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-emerald-500"
+                          >
+                            <ExternalLink size={14} />
+                          </button>
+                        )}
+                      </div>
+                      {/* URLs adicionais - mostra todos mesmo vazios */}
+                      {(scene.sources || []).length > 0 && (scene.sources || []).map((src, srcIdx) => (
+                        <div key={srcIdx} className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                          <ExternalLink className="w-3.5 h-3.5 text-zinc-400 shrink-0 opacity-50" />
+                          <Input
+                            value={src}
+                            onChange={(e) => {
+                              const newSources = [...(scene.sources || [])];
+                              newSources[srcIdx] = e.target.value;
+                              updateScene(index, { sources: newSources });
+                            }}
+                            placeholder={`url ${srcIdx + 2}:`}
+                            className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
+                          />
+                          <button
+                            onClick={() => {
+                              const newSources = (scene.sources || []).filter((_, i) => i !== srcIdx);
+                              updateScene(index, { sources: newSources });
+                            }}
+                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-red-500"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </div>
+
+                  {/* Botão adicionar par img+url */}
+                  <button
+                    onClick={() => {
+                      const newImages = [...(scene.images || []), ""];
+                      const newSources = [...(scene.sources || []), ""];
+                      updateScene(index, { images: newImages, sources: newSources });
+                    }}
+                    className="flex items-center gap-2 text-[9px] font-bold text-purple-500 hover:text-purple-600 transition px-2 py-1 rounded hover:bg-purple-50 dark:hover:bg-purple-900/20"
+                  >
+                    <Plus size={12} /> ADICIONAR IMG + URL
+                  </button>
+
+                  {/* LETTERING */}
 
                   {/* LETTERING (Clique para cópia limpa) */}
                   {scene.lettering && (
@@ -554,7 +603,7 @@ function EditorContent({ id }: { id: string }) {
                           />
                         </div>
                       )}
-                      {(scene.images || []).map((img, idx) => (
+                      {(scene.images || []).filter((img) => img && img.trim() !== "").map((img, idx) => (
                         <div key={idx} className="relative aspect-video rounded-2xl overflow-hidden border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-black shadow-lg">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
