@@ -16,6 +16,7 @@ interface ScriptDoc {
   id: string;
   title: string;
   project?: string;
+  projectName?: string;
   createdAt: string;
   isPublic: boolean;
 }
@@ -89,15 +90,15 @@ export default function DashboardPage() {
     }
     try {
       const batch = writeBatch(db);
-      const scriptsToUpdate = scripts.filter(s => (s.project || "Geral") === oldName);
+      const scriptsToUpdate = scripts.filter(s => (s.projectName || s.project || "Geral") === oldName);
       
       scriptsToUpdate.forEach(s => {
         const ref = doc(db, "scripts", s.id);
-        batch.update(ref, { project: newProjectTitle });
+        batch.update(ref, { projectName: newProjectTitle });
       });
 
       await batch.commit();
-      setScripts(scripts.map(s => (s.project || "Geral") === oldName ? { ...s, project: newProjectTitle } : s));
+      setScripts(scripts.map(s => (s.projectName || s.project || "Geral") === oldName ? { ...s, projectName: newProjectTitle } : s));
       setEditingProjectName(null);
     } catch (e) {
       console.error(e);
@@ -106,7 +107,7 @@ export default function DashboardPage() {
   };
 
   const groupedScripts = scripts.reduce((acc, script) => {
-    const projectName = script.project || "Geral";
+    const projectName = script.projectName || script.project || "Geral";
     if (!acc[projectName]) acc[projectName] = [];
     acc[projectName].push(script);
     return acc;
