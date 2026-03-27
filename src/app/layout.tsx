@@ -6,6 +6,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { AOSInit } from "@/components/providers/aos-init";
 import { ThemeProvider } from "next-themes";
+import { AuthProvider } from "@/contexts/AuthContext";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -69,16 +70,18 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <PreferencesProvider>
-            <AOSInit />
-            <SiteHeader />
-            {/* O main cresce para empurrar o footer, mas não força scroll interno */}
-            <main className="flex-1 w-full max-w-[100vw]">
-              {children}
-            </main>
-            <SiteFooter />
-            <VlibrasWidget />
-          </PreferencesProvider>
+          <AuthProvider>
+            <PreferencesProvider>
+              <AOSInit />
+              <SiteHeader />
+              {/* O main cresce para empurrar o footer, mas não força scroll interno */}
+              <main className="flex-1 w-full max-w-[100vw]">
+                {children}
+              </main>
+              <SiteFooter />
+              <VlibrasWidget />
+            </PreferencesProvider>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>
