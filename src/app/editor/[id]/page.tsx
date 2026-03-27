@@ -426,119 +426,26 @@ function EditorContent({ id }: { id: string }) {
                 </div>
 
                 <CardContent className="p-3 space-y-4 overflow-hidden">
-                  <div className="grid grid-cols-2 gap-3">
-                    {/* Imagem - Coluna 1 */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                        <ImageIcon className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                        <Input
-                          value={scene.imageUrl || ""}
-                          onChange={(e) =>
-                            updateScene(index, { imageUrl: e.target.value })
-                          }
-                          placeholder="img:"
-                          className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
-                        />
-                        {scene.imageUrl && (
-                          <button
-                            onClick={() => window.open(scene.imageUrl!, "_blank")}
-                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-blue-500"
-                          >
-                            <ExternalLink size={14} />
-                          </button>
-                        )}
+                  {/* TELEPROMPTER */}
+                  <div className="space-y-1">
+                    <Label className="text-[9px] uppercase font-black text-blue-500/70 tracking-widest">
+                      Teleprompter
+                    </Label>
+                    {viewMode === "video" && scene.lettering ? (
+                      <div className="min-h-[60px] p-3 bg-zinc-50 dark:bg-zinc-900/50 rounded border border-zinc-200 dark:border-zinc-700/50 text-sm font-medium leading-relaxed shadow-inner overflow-hidden">
+                        {formatEditorLettering(scene.spokenText) || <span className="text-zinc-400 italic">Sem texto...</span>}
                       </div>
-                      {/* Imagens adicionais */}
-                      {(scene.images || []).map((img, imgIdx) => (
-                        <div key={imgIdx} className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                          <ImageIcon className="w-3.5 h-3.5 text-zinc-400 shrink-0 opacity-50" />
-                          <Input
-                            value={img}
-                            onChange={(e) => {
-                              const newImages = [...(scene.images || [])];
-                              newImages[imgIdx] = e.target.value;
-                              updateScene(index, { images: newImages });
-                            }}
-                            placeholder={`img ${imgIdx + 2}:`}
-                            className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
-                          />
-                          <button
-                            onClick={() => {
-                              const newImages = (scene.images || []).filter((_, i) => i !== imgIdx);
-                              updateScene(index, { images: newImages });
-                            }}
-                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-red-500"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* URL - Coluna 2 */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                        <ExternalLink className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        <Input
-                          value={scene.sourceUrl || ""}
-                          onChange={(e) =>
-                            updateScene(index, { sourceUrl: e.target.value })
-                          }
-                          placeholder="url:"
-                          className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
-                        />
-                        {scene.sourceUrl && (
-                          <button
-                            onClick={() => window.open(scene.sourceUrl!, "_blank")}
-                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-emerald-500"
-                          >
-                            <ExternalLink size={14} />
-                          </button>
-                        )}
-                      </div>
-                      {/* URLs adicionais - mostra todos mesmo vazios */}
-                      {(scene.sources || []).length > 0 && (scene.sources || []).map((src, srcIdx) => (
-                        <div key={srcIdx} className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                          <ExternalLink className="w-3.5 h-3.5 text-zinc-400 shrink-0 opacity-50" />
-                          <Input
-                            value={src}
-                            onChange={(e) => {
-                              const newSources = [...(scene.sources || [])];
-                              newSources[srcIdx] = e.target.value;
-                              updateScene(index, { sources: newSources });
-                            }}
-                            placeholder={`url ${srcIdx + 2}:`}
-                            className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
-                          />
-                          <button
-                            onClick={() => {
-                              const newSources = (scene.sources || []).filter((_, i) => i !== srcIdx);
-                              updateScene(index, { sources: newSources });
-                            }}
-                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-red-500"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
+                    ) : null}
+                    <Textarea
+                      value={scene.spokenText || ""}
+                      onChange={(e) =>
+                        updateScene(index, { spokenText: e.target.value })
+                      }
+                      className={`text-sm font-medium leading-relaxed min-h-[100px] border-none bg-zinc-50/50 dark:bg-zinc-900/50 p-3 resize-none w-full rounded shadow-inner dark:text-zinc-200 ${viewMode === "video" && scene.lettering ? "!min-h-[60px]" : ""}`}
+                    />
                   </div>
 
-                  {/* Botão adicionar par img+url */}
-                  <button
-                    onClick={() => {
-                      const newImages = [...(scene.images || []), ""];
-                      const newSources = [...(scene.sources || []), ""];
-                      updateScene(index, { images: newImages, sources: newSources });
-                    }}
-                    className="flex items-center gap-2 text-[9px] font-bold text-purple-500 hover:text-purple-600 transition px-2 py-1 rounded hover:bg-purple-50 dark:hover:bg-purple-900/20"
-                  >
-                    <Plus size={12} /> ADICIONAR IMG + URL
-                  </button>
-
                   {/* LETTERING */}
-
-                  {/* LETTERING (Clique para cópia limpa) */}
                   {scene.lettering && (
                     <div className="space-y-1.5">
                       <Label className="text-[8px] uppercase font-black text-amber-600 dark:text-amber-500 tracking-tighter flex items-center gap-1">
@@ -569,24 +476,113 @@ function EditorContent({ id }: { id: string }) {
                     </div>
                   )}
 
-                  <div className="space-y-1">
-                    <Label className="text-[9px] uppercase font-black text-blue-500/70 tracking-widest">
-                      Teleprompter
-                    </Label>
-                    {viewMode === "video" && scene.lettering ? (
-                      <div className="min-h-[60px] p-3 bg-zinc-50 dark:bg-zinc-900/50 rounded border border-zinc-200 dark:border-zinc-700/50 text-sm font-medium leading-relaxed shadow-inner overflow-hidden">
-                        {formatEditorLettering(scene.spokenText) || <span className="text-zinc-400 italic">Sem texto...</span>}
+                  {/* IMG + URL */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                        <ImageIcon className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                        <Input
+                          value={scene.imageUrl || ""}
+                          onChange={(e) =>
+                            updateScene(index, { imageUrl: e.target.value })
+                          }
+                          placeholder="img:"
+                          className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
+                        />
+                        {scene.imageUrl && (
+                          <button
+                            onClick={() => window.open(scene.imageUrl!, "_blank")}
+                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-blue-500"
+                          >
+                            <ExternalLink size={14} />
+                          </button>
+                        )}
                       </div>
-                    ) : null}
-                    <Textarea
-                      value={scene.spokenText || ""}
-                      onChange={(e) =>
-                        updateScene(index, { spokenText: e.target.value })
-                      }
-                      className={`text-sm font-medium leading-relaxed min-h-[100px] border-none bg-zinc-50/50 dark:bg-zinc-900/50 p-3 resize-none w-full rounded shadow-inner dark:text-zinc-200 ${viewMode === "video" && scene.lettering ? "!min-h-[60px]" : ""}`}
-                    />
+                      {(scene.images || []).map((img, imgIdx) => (
+                        <div key={imgIdx} className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                          <ImageIcon className="w-3.5 h-3.5 text-zinc-400 shrink-0 opacity-50" />
+                          <Input
+                            value={img}
+                            onChange={(e) => {
+                              const newImages = [...(scene.images || [])];
+                              newImages[imgIdx] = e.target.value;
+                              updateScene(index, { images: newImages });
+                            }}
+                            placeholder={`img ${imgIdx + 2}:`}
+                            className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
+                          />
+                          <button
+                            onClick={() => {
+                              const newImages = (scene.images || []).filter((_, i) => i !== imgIdx);
+                              updateScene(index, { images: newImages });
+                            }}
+                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-red-500"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                        <ExternalLink className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <Input
+                          value={scene.sourceUrl || ""}
+                          onChange={(e) =>
+                            updateScene(index, { sourceUrl: e.target.value })
+                          }
+                          placeholder="url:"
+                          className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
+                        />
+                        {scene.sourceUrl && (
+                          <button
+                            onClick={() => window.open(scene.sourceUrl!, "_blank")}
+                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-emerald-500"
+                          >
+                            <ExternalLink size={14} />
+                          </button>
+                        )}
+                      </div>
+                      {(scene.sources || []).length > 0 && (scene.sources || []).map((src, srcIdx) => (
+                        <div key={srcIdx} className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                          <ExternalLink className="w-3.5 h-3.5 text-zinc-400 shrink-0 opacity-50" />
+                          <Input
+                            value={src}
+                            onChange={(e) => {
+                              const newSources = [...(scene.sources || [])];
+                              newSources[srcIdx] = e.target.value;
+                              updateScene(index, { sources: newSources });
+                            }}
+                            placeholder={`url ${srcIdx + 2}:`}
+                            className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
+                          />
+                          <button
+                            onClick={() => {
+                              const newSources = (scene.sources || []).filter((_, i) => i !== srcIdx);
+                              updateScene(index, { sources: newSources });
+                            }}
+                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-red-500"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
+                  <button
+                    onClick={() => {
+                      const newImages = [...(scene.images || []), ""];
+                      const newSources = [...(scene.sources || []), ""];
+                      updateScene(index, { images: newImages, sources: newSources });
+                    }}
+                    className="flex items-center gap-2 text-[9px] font-bold text-purple-500 hover:text-purple-600 transition px-2 py-1 rounded hover:bg-purple-50 dark:hover:bg-purple-900/20"
+                  >
+                    <Plus size={12} /> ADICIONAR IMG + URL
+                  </button>
+
+                  {/* OBSERVAÇÃO */}
                   <div className="space-y-1">
                     <Label className="text-[9px] uppercase font-black text-purple-500/70 tracking-widest">
                       Observação
@@ -601,6 +597,7 @@ function EditorContent({ id }: { id: string }) {
                     />
                   </div>
 
+                  {/* PRÉVIA DA IMAGEM */}
                   {(scene.imageUrl || (scene.images && scene.images.length > 0)) && (
                     <div className="grid grid-cols-2 gap-2 shrink-0 mt-2">
                       {scene.imageUrl && (
