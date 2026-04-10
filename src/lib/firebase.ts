@@ -11,6 +11,13 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
+console.log("[Firebase] Configured Project ID:", firebaseConfig.projectId);
+if (firebaseConfig.apiKey) {
+  console.log("[Firebase] API Key loaded (ends with):", firebaseConfig.apiKey.slice(-5));
+} else {
+  console.warn("[Firebase] API Key is MISSING!");
+}
+
 // Initialize Firebase default app
 let app;
 const apps = getApps();
