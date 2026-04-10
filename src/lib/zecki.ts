@@ -5,6 +5,7 @@ import {
   getDocs, 
   doc,
   setDoc,
+  addDoc,
 } from "firebase/firestore";
 import { db } from "./firebase";
 export interface ZeckiProject {

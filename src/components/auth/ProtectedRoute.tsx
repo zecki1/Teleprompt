@@ -2,12 +2,13 @@
 
 import { useEffect, ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { useAuth, UserRole } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { Role } from "@/services/schemas";
 import { Loader2 } from "lucide-react";
 
 interface ProtectedRouteProps {
   children: ReactNode;
-  requiredRoles?: UserRole[];
+  requiredRoles?: Role[];
   fallbackPath?: string;
 }
 

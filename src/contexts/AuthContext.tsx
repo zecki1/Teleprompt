@@ -37,7 +37,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const sanitizeData = (data: Record<string, unknown>) => {
-  const wsId = data.workspaceId || data.workspaces?.[0] || SENAI_WORKSPACE_ID;
+  const wsId = (data['workspaceId'] as string) || (data['workspaces'] as string[])?.[0] || SENAI_WORKSPACE_ID;
   return {
     ...data,
     workspaceId: typeof wsId === 'string' ? wsId.toLowerCase() : wsId

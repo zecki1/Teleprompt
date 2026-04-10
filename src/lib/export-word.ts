@@ -106,7 +106,7 @@ export const exportToWord = async (script: ExportScriptData, scenes: Scene[]) =>
                             spacing: { before: 120 },
                           }),
                           new Paragraph({
-                            children: [new TextRun({ text: scene.lettering, size: 18, italic: true })],
+                            children: [new TextRun({ text: scene.lettering, size: 18, italics: true })],
                             spacing: { after: 120 },
                           }),
                         ] : []),

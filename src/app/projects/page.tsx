@@ -39,15 +39,6 @@ export default function ProjectsPage() {
   const [creating, setCreating] = useState(false);
   const [newProject, setNewProject] = useState({ name: "", code: "" });
 
-  useEffect(() => {
-    if (!user) {
-      router.push("/login");
-      return;
-    }
-
-    loadProjects();
-  }, [user, router, loadProjects]);
-
   const loadProjects = useCallback(async () => {
     try {
       const workspaceId = user?.workspaceId || "senai";
@@ -59,6 +50,15 @@ export default function ProjectsPage() {
       setLoading(false);
     }
   }, [user?.workspaceId]);
+
+  useEffect(() => {
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    loadProjects();
+  }, [user, router, loadProjects]);
 
   const handleCreateProject = async () => {
     if (!newProject.name.trim() || !newProject.code.trim()) return;
