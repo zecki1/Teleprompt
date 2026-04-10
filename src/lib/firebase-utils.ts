@@ -4,7 +4,7 @@
  * Isso é essencial para o Firestore, que não aceita 'undefined'.
  */
 export function sanitizeData<T>(data: T): T {
-  if (data === undefined || data === null) return null;
+  if (data === undefined || data === null) return null as any;
 
   // Se for um FieldValue (ex: serverTimestamp) ou Timestamp do Firestore, não sanitizar
   const anyData = data as Record<string, unknown>;
@@ -13,7 +13,7 @@ export function sanitizeData<T>(data: T): T {
   }
 
   if (Array.isArray(data)) {
-    return data.map(item => sanitizeData(item));
+    return data.map(item => sanitizeData(item)) as any;
   }
 
   if (typeof data === 'object' && data !== null) {
@@ -29,7 +29,7 @@ export function sanitizeData<T>(data: T): T {
         sanitized[key] = sanitizeData(obj[key]);
       }
     }
-    return sanitized;
+    return sanitized as any;
   }
 
   return data;
