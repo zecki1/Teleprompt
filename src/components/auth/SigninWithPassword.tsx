@@ -23,13 +23,20 @@ const SigninWithPassword: React.FC<SigninWithPasswordProps> = () => {
 
   const onSigninSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log("[SigninWithPassword] Form submitted");
+    console.log("[SigninWithPassword] Email:", email);
+    // console.log("[SigninWithPassword] Password length:", password.length); // log length instead of plain password for security
     setLoading(true);
     try {
+      console.log("[SigninWithPassword] Calling signIn context function...");
       await signIn(email, password);
+      console.log("[SigninWithPassword] signIn returned successfully");
       toast.success("Login realizado com sucesso!");
-    } catch (err: unknown) {
-      console.error(err);
-      toast.error("Erro ao entrar. Verifique suas credenciais.");
+    } catch (err: any) {
+      console.error("[SigninWithPassword] Detailed error:", err);
+      console.error("[SigninWithPassword] Error code:", err?.code);
+      console.error("[SigninWithPassword] Error message:", err?.message);
+      toast.error(`Erro ao entrar: ${err?.message || "Verifique suas credenciais."}`);
     } finally {
       setLoading(false);
     }
