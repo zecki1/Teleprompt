@@ -565,7 +565,9 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-2">
                         <Avatar className="h-6 w-6">
                           <AvatarImage src={u.photoURL || undefined} />
-                          <AvatarFallback className="text-[10px]">{u.displayName?.slice(0, 2).toUpperCase()}</AvatarFallback>
+                          <AvatarFallback className="text-[10px]">
+                            {(u.displayName || u.name || "U").slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
                         </Avatar>
                         <span>{u.displayName || u.name}</span>
                       </div>
@@ -594,7 +596,9 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-2">
                         <Avatar className="h-6 w-6 text-purple-500">
                           <AvatarImage src={u.photoURL || undefined} />
-                          <AvatarFallback className="text-[10px]">{u.displayName?.slice(0, 2).toUpperCase()}</AvatarFallback>
+                          <AvatarFallback className="text-[10px]">
+                            {(u.displayName || u.name || "U").slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
                         </Avatar>
                         <span>{u.displayName || u.name}</span>
                       </div>
