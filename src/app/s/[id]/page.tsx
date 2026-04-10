@@ -1,18 +1,35 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import React, { useEffect, useState, use } from "react";
+import Image from "next/image";
 import { Scene } from "@/lib/parser";
-import { doc, getDoc, collection, query, orderBy, limit, getDocs } from "firebase/firestore";
+import { doc, getDoc, collection, query, orderBy, limit, getDocs, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Eye, Lock, Play, ImageIcon, ExternalLink, Type } from "lucide-react";
+import { 
+  Loader2, 
+  Lock, 
+  Play, 
+  ImageIcon, 
+  ExternalLink, 
+  Type, 
+  CheckCircle2, 
+  XCircle, 
+  Clock,
+  ChevronLeft,
+  FileText
+} from "lucide-react";
 import Link from "next/link";
+import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
+import { createRecordingTask } from "@/lib/zecki";
 
 interface ScriptData {
   id: string;
   title: string;
   project?: string;
+  projectId?: string;
   status: string;
   isPublic: boolean;
   lockedForEditing: boolean;
@@ -20,20 +37,27 @@ interface ScriptData {
   validatedAt?: string;
 }
 
-function formatEditorLettering(spokenText: string | null | undefined): React.ReactNode {
+const statusConfig: Record<string, { label: string; color: string }> = {
+  rascunho: { label: "Rascunho", color: "bg-zinc-500" },
+  em_revisao: { label: "Em Revisão", color: "bg-yellow-500" },
+  revisao_realizada: { label: "Revisão Realizada", color: "bg-orange-500" },
+  aguardando_gravacao: { label: "Aguardando Gravação", color: "bg-green-500" },
+  gravado: { label: "Gravado", color: "bg-blue-500" },
+  rejeitado: { label: "Rejeitado", color: "bg-red-500" },
+};
+
+function formatEditorMarkers(spokenText: string | null | undefined): React.ReactNode {
   if (!spokenText) return null;
-  
   const regex = /(\[(?:let|img)\d+\]|\[\d+\])/g;
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
   let match;
-  
   while ((match = regex.exec(spokenText)) !== null) {
-    parts.push(spokenText.slice(lastIndex, match.index));
-    
+    if (match.index > lastIndex) {
+      parts.push(spokenText.slice(lastIndex, match.index));
+    }
     const isImg = match[0].startsWith('[img');
     const colorClass = isImg ? 'text-purple-600 dark:text-purple-400' : 'text-red-600 dark:text-red-400';
-    
     parts.push(
       <span key={`marker-${match.index}`} className={`${colorClass} font-black`}>
         {match[0]}
@@ -41,9 +65,9 @@ function formatEditorLettering(spokenText: string | null | undefined): React.Rea
     );
     lastIndex = match.index + match[0].length;
   }
-  
-  parts.push(spokenText.slice(lastIndex));
-  
+  if (lastIndex < spokenText.length) {
+    parts.push(spokenText.slice(lastIndex));
+  }
   return parts.length > 0 ? parts : spokenText;
 }
 
@@ -53,10 +77,15 @@ export default function PublicScriptPage({
   params: Promise<{ id: string }>;
 }) {
   const resolvedParams = use(params);
+  const { user, hasPermission } = useAuth();
+  
   const [script, setScript] = useState<ScriptData | null>(null);
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const canValidate = hasPermission(["validador"]);
 
   useEffect(() => {
     async function loadScript() {
@@ -72,13 +101,13 @@ export default function PublicScriptPage({
 
         const data = scriptSnap.data() as ScriptData;
         
-        if (!data.isPublic) {
-          setError("Este roteiro não está disponível para acesso público");
+        if (!data.isPublic && !user) {
+          setError("Este roteiro não está disponível para acesso público. Faça login para visualizar.");
           setLoading(false);
           return;
         }
 
-        setScript({ ...data });
+        setScript({ ...data, id: resolvedParams.id });
 
         const vQ = query(
           collection(db, "scripts", resolvedParams.id, "versions"),
@@ -92,7 +121,7 @@ export default function PublicScriptPage({
           setScenes(vData.scenes || []);
         }
       } catch (e) {
-        console.error("Erro ao carregar roteiro:", e);
+        console.error(e);
         setError("Erro ao carregar roteiro");
       } finally {
         setLoading(false);
@@ -100,27 +129,54 @@ export default function PublicScriptPage({
     }
 
     loadScript();
-  }, [resolvedParams.id]);
+  }, [resolvedParams.id, user]);
+
+  const handleUpdateStatus = async (newStatus: string) => {
+    if (!script) return;
+    setIsUpdating(true);
+    try {
+      const scriptRef = doc(db, "scripts", script.id);
+      await updateDoc(scriptRef, {
+        status: newStatus,
+        updatedAt: serverTimestamp(),
+        validatedBy: user?.uid,
+        validatedAt: new Date().toISOString()
+      });
+      
+      setScript({ ...script, status: newStatus });
+
+      if (newStatus === "aguardando_gravacao" && script.projectId) {
+        await createRecordingTask(script.projectId, script.title, script.id, user?.uid || "system");
+      }
+
+      alert(`Roteiro movido para: ${statusConfig[newStatus]?.label}`);
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao atualizar status");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   if (loading) {
     return (
-      <div className="min-h-[calc(100vh-64px)] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+      <div className="min-h-screen flex items-center justify-center bg-zinc-950">
+        <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="min-h-[calc(100vh-64px)] flex items-center justify-center">
-        <Card className="w-full max-w-md m-4">
-          <CardContent className="pt-6 text-center">
-            <Lock className="w-12 h-12 mx-auto text-zinc-400 mb-4" />
-            <h2 className="text-xl font-bold mb-2">Acesso Negado</h2>
-            <p className="text-zinc-500">{error}</p>
-            <Link href="/" className="inline-block mt-4 text-blue-500 hover:underline">
-              Voltar para home
-            </Link>
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50 dark:bg-zinc-950 p-6">
+        <Card className="w-full max-w-md">
+          <CardContent className="pt-8 text-center">
+            <Lock className="w-16 h-16 mx-auto text-zinc-400 mb-6" />
+            <h2 className="text-2xl font-black mb-4">Acesso Restrito</h2>
+            <p className="text-zinc-500 mb-8">{error}</p>
+            <Button asChild className="w-full">
+              <Link href="/login">Fazer Login</Link>
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -128,159 +184,128 @@ export default function PublicScriptPage({
   }
 
   return (
-    <div className="container mx-auto py-8 px-4 max-w-4xl">
-      <div className="mb-6">
-        <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-2xl font-black">{script?.title}</h1>
-          <Badge variant="outline" className="gap-1">
-            <Eye className="w-3 h-3" />
-            Público
-          </Badge>
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans pb-20">
+      <div className="bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 sticky top-0 z-50">
+        <div className="container mx-auto px-4 h-16 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4 truncate">
+            {user && (
+              <Button variant="ghost" size="icon" asChild className="shrink-0 h-8 w-8">
+                <Link href="/dashboard"><ChevronLeft size={16} /></Link>
+              </Button>
+            )}
+            <div className="truncate">
+              <h1 className="text-lg font-black truncate">{script?.title}</h1>
+              <div className="flex items-center gap-2 mt-0.5">
+                <Badge className="text-[9px] uppercase tracking-tighter bg-blue-500/10 text-blue-500 border-blue-500/20">
+                  {script?.project || "Geral"}
+                </Badge>
+                <Badge className={`text-[9px] uppercase tracking-tighter ${statusConfig[script?.status || ""]?.color} text-white border-none`}>
+                  {statusConfig[script?.status || ""]?.label}
+                </Badge>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {!user && (
+              <Button variant="outline" size="sm" asChild className="h-8 text-[10px] font-black uppercase">
+                <Link href="/login">ENTRAR</Link>
+              </Button>
+            )}
+            <Button size="sm" asChild className="h-8 bg-blue-600 text-white font-black text-[10px] tracking-widest px-4 rounded-lg">
+              <Link href={`/tp/${resolvedParams.id}`} target="_blank">
+                <Play className="w-3.5 h-3.5 mr-2" /> TELEPROMPTER
+              </Link>
+            </Button>
+          </div>
         </div>
-        {script?.project && (
-          <p className="text-zinc-500 text-sm">Projeto: {script.project}</p>
-        )}
       </div>
 
-      {script?.lockedForEditing && (
-        <Card className="mb-6 bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900">
-          <CardContent className="py-3 flex items-center gap-2 text-amber-800 dark:text-amber-200">
-            <Lock className="w-4 h-4" />
-            <span className="text-sm font-medium">
-              Este roteiro está bloqueado para edição. Apenas visualização.
+      {canValidate && script?.status === "em_revisao" && (
+        <div className="bg-yellow-500/10 border-b border-yellow-500/20 p-4 sticky top-16 z-40 backdrop-blur-md">
+          <div className="container mx-auto flex flex-col sm:flex-row items-center justify-center gap-4">
+            <span className="text-xs font-black text-yellow-600 uppercase tracking-widest flex items-center gap-2">
+              <Clock size={16} /> AGUARDANDO SUA VALIDAÇÃO
             </span>
-          </CardContent>
-        </Card>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => handleUpdateStatus("aguardando_gravacao")} disabled={isUpdating} className="bg-green-600 text-white h-8 text-[10px]">
+                {isUpdating ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} className="mr-2" />} APROVAR
+              </Button>
+              <Button variant="outline" onClick={() => handleUpdateStatus("rejeitado")} disabled={isUpdating} className="text-red-500 h-8 text-[10px]">
+                <XCircle size={14} className="mr-2" /> REJEITAR
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
-      <div className="space-y-6">
-        {scenes.length === 0 ? (
-          <Card>
-            <CardContent className="py-12 text-center text-zinc-500">
-              Nenhuma cena encontrada neste roteiro.
-            </CardContent>
-          </Card>
-        ) : (
-          scenes.map((scene, index) => (
-            <Card key={scene.id} className="overflow-hidden">
-              <CardHeader className="bg-zinc-50 dark:bg-zinc-900/50 pb-4">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <span className="bg-zinc-800 text-white text-xs px-2 py-1 rounded-full">
+      <div className="container mx-auto py-8 px-4 max-w-4xl">
+        <div className="grid gap-8">
+          {scenes.length === 0 ? (
+            <div className="py-20 text-center opacity-30">
+              <FileText size={64} className="mx-auto mb-4" />
+              <p className="font-bold">Nenhuma cena processada.</p>
+            </div>
+          ) : (
+            scenes.map((scene) => (
+              <Card key={scene.id} className="border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden rounded-2xl">
+                <div className="bg-zinc-50 dark:bg-zinc-900/50 p-4 border-b border-zinc-100 flex justify-between items-center">
+                  <div className="flex items-center gap-3">
+                    <span className="bg-zinc-800 dark:bg-blue-600 text-white text-[10px] px-3 py-1 rounded-full font-black uppercase">
                       CENA {scene.sceneNumber}
                     </span>
-                    {scene.time && (
-                      <span className="text-zinc-500 text-sm font-normal">
-                        ({scene.time})
-                      </span>
-                    )}
-                  </CardTitle>
+                    {scene.time && <Badge className="text-[10px]">{scene.time}</Badge>}
+                  </div>
                   {scene.sourceUrl && (
-                    <a
-                      href={scene.sourceUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-500 hover:underline text-sm flex items-center gap-1"
-                    >
-                      Ver fonte
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
+                    <Button variant="ghost" size="sm" asChild className="h-7 text-[10px] text-blue-500 uppercase font-black">
+                      <a href={scene.sourceUrl} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink size={12} className="mr-1.5" /> FONTE
+                      </a>
+                    </Button>
                   )}
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-4">
-                {scene.spokenText && (
+                <CardContent className="p-6 space-y-6">
                   <div>
-                    <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest mb-2">
-                      Teleprompter
-                    </h3>
-                    <div className="p-4 bg-zinc-50 dark:bg-zinc-900/50 rounded-lg text-base leading-relaxed whitespace-pre-wrap">
-                      {formatEditorLettering(scene.spokenText)}
+                    <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-3">Locução</h3>
+                    <div className="text-lg md:text-xl font-medium leading-relaxed">
+                      {formatEditorMarkers(scene.spokenText)}
                     </div>
                   </div>
-                )}
-
-                {scene.lettering && (
-                  <div>
-                    <h3 className="text-xs font-black text-amber-600 uppercase tracking-widest mb-2 flex items-center gap-1">
-                      <Type className="w-3 h-3" />
-                      Lettering
-                    </h3>
-                    <div className="p-4 bg-amber-50 dark:bg-amber-950/20 rounded-lg text-sm leading-relaxed">
-                      <pre className="whitespace-pre-wrap font-medium">
-                        {scene.lettering}
-                      </pre>
-                    </div>
-                  </div>
-                )}
-
-                {(scene.imageUrl || (scene.images && scene.images.length > 0)) && (
-                  <div>
-                    <h3 className="text-xs font-black text-purple-500 uppercase tracking-widest mb-2 flex items-center gap-1">
-                      <ImageIcon className="w-3 h-3" />
-                      Imagens
-                    </h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      {scene.imageUrl && (
-                        <div className="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-700">
-                          <img
-                            src={scene.imageUrl}
-                            alt="Preview"
-                            className="w-full h-auto"
-                            onError={(e) =>
-                              (e.currentTarget.src =
-                                "https://placehold.co/400x225?text=Link+Invalido")
-                            }
-                          />
-                        </div>
-                      )}
-                      {(scene.images || [])
-                        .filter((img) => img && img.trim() !== "")
-                        .map((img, idx) => (
-                          <div
-                            key={idx}
-                            className="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-700"
-                          >
-                            <img
-                              src={img}
-                              alt={`Preview ${idx + 2}`}
-                              className="w-full h-auto"
-                              onError={(e) =>
-                                (e.currentTarget.src =
-                                  "https://placehold.co/400x225?text=Link+Invalido")
-                              }
-                            />
+                  {scene.lettering && (
+                    <div className="pt-4 border-t border-zinc-100">
+                      <h3 className="text-[10px] font-black text-amber-600 uppercase mb-3 flex items-center gap-2"><Type size={14} /> Lettering</h3>
+                      <div className="flex flex-col gap-1.5">
+                        {scene.lettering.split("\n").filter(l => l.trim()).map((line, i) => (
+                          <div key={i} className="bg-amber-100/30 text-amber-800 p-3 rounded-xl border border-amber-200 text-sm font-bold">
+                            <span className="opacity-40 mr-2 text-xs">{i+1}</span>{line}
                           </div>
                         ))}
+                      </div>
                     </div>
-                  </div>
-                )}
-
-                {scene.observation && (
-                  <div>
-                    <h3 className="text-xs font-black text-purple-500 uppercase tracking-widest mb-2">
-                      Observação
-                    </h3>
-                    <div className="p-4 bg-purple-50 dark:bg-purple-950/20 rounded-lg text-sm leading-relaxed">
+                  )}
+                  {scene.imageUrl && (
+                    <div className="pt-4 border-t border-zinc-100">
+                      <h3 className="text-[10px] font-black text-purple-500 uppercase mb-3 flex items-center gap-2"><ImageIcon size={14} /> Imagem</h3>
+                      <div className="rounded-2xl overflow-hidden bg-black aspect-video max-w-lg mx-auto border">
+                        <Image 
+                          src={scene.imageUrl} 
+                          alt="Cena" 
+                          fill 
+                          className="object-contain" 
+                          unoptimized={scene.imageUrl.startsWith('http')}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {scene.observation && (
+                    <div className="pt-4 border-t border-zinc-100 italic text-sm text-zinc-500 bg-zinc-50/50 p-3 rounded-lg">
                       {scene.observation}
                     </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ))
-        )}
-      </div>
-
-      <div className="mt-8 pt-6 border-t text-center">
-        <Link
-          href={`/tp/${resolvedParams.id}`}
-          target="_blank"
-          className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium"
-        >
-          <Play className="w-4 h-4" />
-          Abrir no Teleprompter
-        </Link>
+                  )}
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

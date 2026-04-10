@@ -62,13 +62,7 @@ function TeleprompterContent({ id }: { id: string }) {
     const style = document.createElement('style');
     style.textContent = `
       .tp-hidden-marker {
-        color: transparent !important;
-        background: transparent !important;
-        opacity: 0;
-        pointer-events: none;
-        user-select: none;
-        display: inline;
-        position: relative;
+        display: none !important;
       }
     `;
     document.head.appendChild(style);

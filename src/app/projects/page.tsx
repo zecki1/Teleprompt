@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getProjects, createProject, Project } from "@/services/projects";
+import { fetchZeckiProjects as getProjects, ZeckiProject as Project, createZeckiProject as createProject } from "@/lib/zecki";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,7 +31,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 export default function ProjectsPage() {
-  const { user, hasPermission } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,11 +46,11 @@ export default function ProjectsPage() {
     }
 
     loadProjects();
-  }, [user, router]);
+  }, [user, router, loadProjects]);
 
-  const loadProjects = async () => {
+  const loadProjects = useCallback(async () => {
     try {
-      const workspaceId = user?.workspaceIds?.[0] || "senai";
+      const workspaceId = user?.workspaceId || "senai";
       const projectsData = await getProjects(workspaceId);
       setProjects(projectsData);
     } catch (error) {
@@ -58,22 +58,20 @@ export default function ProjectsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.workspaceId]);
 
   const handleCreateProject = async () => {
     if (!newProject.name.trim() || !newProject.code.trim()) return;
     
     setCreating(true);
     try {
-      const workspaceId = user?.workspaceIds?.[0] || "senai";
+      const workspaceId = user?.workspaceId || "senai";
       
       const created = await createProject({
         name: newProject.name,
         code: newProject.code,
         workspaceId,
         status: "active",
-        createdBy: user!.uid,
-        createdByName: user!.displayName || user!.email || "Unknown",
       });
 
       setProjects([created, ...projects]);
@@ -126,7 +124,7 @@ export default function ProjectsPage() {
               Novo Projeto
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Criar Novo Projeto</DialogTitle>
               <DialogDescription>
@@ -211,7 +209,7 @@ export default function ProjectsPage() {
                 <div className="flex items-center gap-4 text-sm text-zinc-500">
                   <div className="flex items-center gap-1">
                     <Calendar className="w-4 h-4" />
-                    {format(project.createdAt, "dd/MM/yyyy", { locale: ptBR })}
+                    {project.createdAt ? format(new Date(project.createdAt), "dd/MM/yyyy", { locale: ptBR }) : "N/A"}
                   </div>
                 </div>
                 

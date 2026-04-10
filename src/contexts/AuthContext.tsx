@@ -2,92 +2,164 @@
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { 
-  User, 
+  User as FirebaseUser, 
   signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword,
   signInWithPopup, 
   signOut, 
   onAuthStateChanged 
 } from "firebase/auth";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, onSnapshot, getDoc, setDoc, updateDoc, collection, query, where, QuerySnapshot, DocumentData } from "firebase/firestore";
 import { auth, db, googleProvider } from "@/lib/firebase";
+import { ExtendedUser, ExtendedUserSchema, Workspace, Team, Role } from "@/services/schemas";
+import { getWorkspace } from "@/services/workspaceService";
+import { toast } from "sonner";
 
-export type UserRole = "editor" | "validador" | "publico";
-
-export interface TelepromptUser {
-  uid: string;
-  email: string | null;
-  displayName: string | null;
-  photoURL: string | null;
-  role: UserRole;
-  workspaceIds: string[];
-  createdAt: Date;
-}
+import { SENAI_WORKSPACE_ID } from "@/lib/constants";
 
 interface AuthContextType {
-  user: TelepromptUser | null;
-  firebaseUser: User | null;
+  user: ExtendedUser | null;
+  firebaseUser: FirebaseUser | null;
+  currentWorkspace: Workspace | null;
+  userWorkspacesDetailed: Workspace[];
+  allUsers: ExtendedUser[];
+  teams: Team[];
   loading: boolean;
+  isDataLoading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string, name: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   logOut: () => Promise<void>;
-  hasPermission: (requiredRoles: UserRole[]) => boolean;
+  switchWorkspace: (workspaceId: string) => Promise<void>;
+  hasPermission: (allowedRoles: Role[]) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<TelepromptUser | null>(null);
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+const sanitizeData = (data: Record<string, unknown>) => {
+  const wsId = data.workspaceId || data.workspaces?.[0] || SENAI_WORKSPACE_ID;
+  return {
+    ...data,
+    workspaceId: typeof wsId === 'string' ? wsId.toLowerCase() : wsId
+  };
+};
 
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<ExtendedUser | null>(null);
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
+  const [userWorkspacesDetailed, setUserWorkspacesDetailed] = useState<Workspace[]>([]);
+  const [allUsers, setAllUsers] = useState<ExtendedUser[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isDataLoading, setIsDataLoading] = useState(false);
+
+  // Listener principal do usuário e autenticação
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        setFirebaseUser(firebaseUser);
+    let unsubscribeUser: () => void;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
+      if (fbUser) {
+        setFirebaseUser(fbUser);
+        const userRef = doc(db, "users", fbUser.uid);
         
-        const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
-        
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          setUser({
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            displayName: firebaseUser.displayName || userData.displayName || firebaseUser.email?.split('@')[0] || null,
-            photoURL: firebaseUser.photoURL || userData.photoURL || null,
-            role: userData.role || "editor",
-            workspaceIds: userData.workspaceIds || ["senai"],
-            createdAt: userData.createdAt?.toDate() || new Date(),
-          });
-        } else {
-          await setDoc(doc(db, "users", firebaseUser.uid), {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || null,
-            photoURL: firebaseUser.photoURL || null,
-            role: "editor",
-            workspaceIds: ["senai"],
-            createdAt: serverTimestamp(),
-          });
-          
-          setUser({
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || null,
-            photoURL: firebaseUser.photoURL || null,
-            role: "editor",
-            workspaceIds: ["senai"],
-            createdAt: new Date(),
-          });
-        }
+        unsubscribeUser = onSnapshot(userRef, async (docSnap) => {
+          if (docSnap.exists()) {
+            try {
+              const rawData = docSnap.data();
+              const safeData = sanitizeData(rawData as Record<string, unknown>);
+              const userData = ExtendedUserSchema.parse({ uid: docSnap.id, ...safeData });
+              
+              setUser(userData);
+              
+              if (userData.workspaces && userData.workspaces.length > 0) {
+                try {
+                  const wsPromises = userData.workspaces.map(id => getWorkspace(id));
+                  const wsResults = await Promise.all(wsPromises);
+                  const validWs = wsResults.filter((ws): ws is Workspace => ws !== null);
+                  setUserWorkspacesDetailed(validWs);
+                  
+                  if (userData.workspaceId) {
+                    const currentWs = validWs.find((w) => w.id === userData.workspaceId);
+                    if (currentWs) {
+                      setCurrentWorkspace(currentWs);
+                    } else {
+                      const fallbackWs = await getWorkspace(userData.workspaceId);
+                      setCurrentWorkspace(fallbackWs);
+                      if (fallbackWs) setUserWorkspacesDetailed(prev => [...prev, fallbackWs]);
+                    }
+                  }
+                } catch (wsErr) {
+                  console.error("Erro ao carregar detalhes dos workspaces", wsErr);
+                  if (userData.workspaceId) {
+                    const ws = await getWorkspace(userData.workspaceId);
+                    setCurrentWorkspace(ws);
+                    if (ws) setUserWorkspacesDetailed([ws]);
+                  }
+                }
+              } else if (userData.workspaceId) {
+                const ws = await getWorkspace(userData.workspaceId);
+                setCurrentWorkspace(ws);
+                if (ws) setUserWorkspacesDetailed([ws]);
+              }
+              
+              setLoading(false);
+            } catch {
+              console.error("Erro ao validar dados do usuário");
+              setLoading(false);
+            }
+          } else {
+            setLoading(false);
+          }
+        });
       } else {
         setFirebaseUser(null);
         setUser(null);
+        setCurrentWorkspace(null);
+        setUserWorkspacesDetailed([]);
+        setAllUsers([]);
+        setTeams([]);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeUser) unsubscribeUser();
+    };
   }, []);
+
+  // Listeners de dados do Workspace (Usuários e Times)
+  useEffect(() => {
+    if (!user?.workspaceId) return;
+
+    // setIsDataLoading(true); // Removido para evitar cascading render warning
+    
+    // Listener de Usuários
+    const qUsers = query(collection(db, "users"), where("workspaceId", "==", user.workspaceId));
+    const unsubUsers = onSnapshot(qUsers, (snapshot: QuerySnapshot<DocumentData>) => {
+      const usersList = snapshot.docs.map(doc => {
+        try {
+          return ExtendedUserSchema.parse({ uid: doc.id, ...doc.data() });
+        } catch { return null; }
+      }).filter((u): u is ExtendedUser => u !== null);
+      
+      setAllUsers(usersList);
+      setIsDataLoading(false);
+    });
+
+    // Listener de Times
+    const qTeams = query(collection(db, "teams"), where("workspaceId", "==", user.workspaceId));
+    const unsubTeams = onSnapshot(qTeams, (snapshot: QuerySnapshot<DocumentData>) => {
+      const teamsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Team));
+      setTeams(teamsList);
+    });
+
+    return () => {
+      unsubUsers();
+      unsubTeams();
+    };
+  }, [user?.workspaceId]);
 
   const signIn = async (email: string, password: string) => {
     setLoading(true);
@@ -99,10 +171,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const signUp = async (email: string, password: string, name: string) => {
+    setLoading(true);
+    try {
+      const { user: fbUser } = await createUserWithEmailAndPassword(auth, email, password);
+      
+      const newUserDoc = {
+        uid: fbUser.uid,
+        email: fbUser.email,
+        name: name,
+        displayName: name,
+        role: "Docente",
+        status: "active",
+        workspaceId: "senai",
+        workspaces: ["senai"],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      
+      await setDoc(doc(db, "users", fbUser.uid), newUserDoc);
+    } catch (error) {
+      setLoading(false);
+      throw error;
+    }
+  };
+
   const signInWithGoogle = async () => {
     setLoading(true);
     try {
-      await signInWithPopup(auth, googleProvider);
+      const result = await signInWithPopup(auth, googleProvider);
+      const fbUser = result.user;
+      
+      const userRef = doc(db, "users", fbUser.uid);
+      const userSnap = await getDoc(userRef);
+      
+      if (!userSnap.exists()) {
+        const name = fbUser.displayName || fbUser.email?.split('@')[0] || "Usuário";
+        await setDoc(userRef, {
+          uid: fbUser.uid,
+          email: fbUser.email,
+          name: name,
+          displayName: name,
+          role: "Docente",
+          status: "active",
+          workspaceId: "senai",
+          workspaces: ["senai"],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
     } catch (error) {
       setLoading(false);
       throw error;
@@ -113,20 +230,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await signOut(auth);
   };
 
-  const hasPermission = (requiredRoles: UserRole[]): boolean => {
+  const switchWorkspace = async (workspaceId: string) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, "users", user.uid), { workspaceId });
+      toast.success("Workspace alterado!");
+    } catch {
+      toast.error("Erro ao alterar workspace.");
+    }
+  };
+
+  const hasPermission = (allowedRoles: Role[]): boolean => {
     if (!user) return false;
-    if (requiredRoles.includes("publico")) return true;
-    return requiredRoles.includes(user.role);
+    if (user.isSuperAdmin) return true;
+    return allowedRoles.includes(user.role);
   };
 
   return (
     <AuthContext.Provider value={{ 
       user, 
       firebaseUser,
+      currentWorkspace,
+      userWorkspacesDetailed,
+      allUsers,
+      teams,
       loading, 
+      isDataLoading,
       signIn, 
+      signUp,
       signInWithGoogle, 
       logOut,
+      switchWorkspace,
       hasPermission 
     }}>
       {children}
