@@ -10,7 +10,7 @@ import {
   onAuthStateChanged 
 } from "firebase/auth";
 import { doc, onSnapshot, getDoc, setDoc, updateDoc, collection, query, where, QuerySnapshot, DocumentData } from "firebase/firestore";
-import { auth, db, googleProvider } from "@/lib/firebase";
+import { auth, db, dbZecki, googleProvider } from "@/lib/firebase";
 import { ExtendedUser, ExtendedUserSchema, Workspace, Team, Role } from "@/services/schemas";
 import { getWorkspace } from "@/services/workspaceService";
 import { toast } from "sonner";
@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser) {
         setFirebaseUser(fbUser);
-        const userRef = doc(db, "users", fbUser.uid);
+        const userRef = doc(dbZecki, "users", fbUser.uid);
         
         unsubscribeUser = onSnapshot(userRef, async (docSnap) => {
           if (docSnap.exists()) {
@@ -144,7 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // setIsDataLoading(true); // Removido para evitar cascading render warning
     
     // Listener de Usuários
-    const qUsers = query(collection(db, "users"), where("workspaceId", "==", user.workspaceId));
+    const qUsers = query(collection(dbZecki, "users"), where("workspaceId", "==", user.workspaceId));
     const unsubUsers = onSnapshot(qUsers, (snapshot: QuerySnapshot<DocumentData>) => {
       const usersList = snapshot.docs.map(doc => {
         try {
@@ -157,7 +157,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     // Listener de Times
-    const qTeams = query(collection(db, "teams"), where("workspaceId", "==", user.workspaceId));
+    const qTeams = query(collection(dbZecki, "teams"), where("workspaceId", "==", user.workspaceId));
     const unsubTeams = onSnapshot(qTeams, (snapshot: QuerySnapshot<DocumentData>) => {
       const teamsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Team));
       setTeams(teamsList);
@@ -200,7 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         updatedAt: new Date().toISOString()
       };
       
-      await setDoc(doc(db, "users", fbUser.uid), newUserDoc);
+      await setDoc(doc(dbZecki, "users", fbUser.uid), newUserDoc);
     } catch (error) {
       setLoading(false);
       throw error;
@@ -213,7 +213,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const result = await signInWithPopup(auth, googleProvider);
       const fbUser = result.user;
       
-      const userRef = doc(db, "users", fbUser.uid);
+      const userRef = doc(dbZecki, "users", fbUser.uid);
       const userSnap = await getDoc(userRef);
       
       if (!userSnap.exists()) {
@@ -245,7 +245,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const switchWorkspace = async (workspaceId: string) => {
     if (!user) return;
     try {
-      await updateDoc(doc(db, "users", user.uid), { workspaceId });
+      await updateDoc(doc(dbZecki, "users", user.uid), { workspaceId });
       toast.success("Workspace alterado!");
     } catch {
       toast.error("Erro ao alterar workspace.");

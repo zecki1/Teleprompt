@@ -9,7 +9,7 @@ import {
   where,
   serverTimestamp 
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { dbZecki } from "@/lib/firebase";
 import { ExtendedUser, ExtendedUserSchema, Role } from "@/services/schemas";
 
 import { SENAI_WORKSPACE_ID, SENAI_SLUG } from "@/lib/constants";
@@ -27,7 +27,7 @@ export const getUsers = async (workspaceId?: string): Promise<ExtendedUser[]> =>
   
   // Buscamos usuários que tenham o ID oficial ou o slug legado
   const q = query(
-    collection(db, "users"), 
+    collection(dbZecki, "users"), 
     where("workspaceId", "in", [targetWorkspace, SENAI_SLUG])
   );
   
@@ -66,7 +66,7 @@ export const getUsers = async (workspaceId?: string): Promise<ExtendedUser[]> =>
 };
 
 export const getUserById = async (uid: string): Promise<ExtendedUser | null> => {
-  const docRef = doc(db, "users", uid);
+  const docRef = doc(dbZecki, "users", uid);
   const docSnap = await getDoc(docRef);
   
   if (!docSnap.exists()) return null;
@@ -91,7 +91,7 @@ export const getUserById = async (uid: string): Promise<ExtendedUser | null> => 
 };
 
 export const updateUserRole = async (uid: string, role: string): Promise<void> => {
-  const docRef = doc(db, "users", uid);
+  const docRef = doc(dbZecki, "users", uid);
   await updateDoc(docRef, {
     role,
     updatedAt: serverTimestamp(),
@@ -99,7 +99,7 @@ export const updateUserRole = async (uid: string, role: string): Promise<void> =
 };
 
 export const updateUserWorkspace = async (uid: string, workspaceId: string): Promise<void> => {
-  const docRef = doc(db, "users", uid);
+  const docRef = doc(dbZecki, "users", uid);
   await updateDoc(docRef, {
     workspaceId,
     updatedAt: serverTimestamp(),
@@ -107,7 +107,7 @@ export const updateUserWorkspace = async (uid: string, workspaceId: string): Pro
 };
 
 export const updateUserPermissions = async (uid: string, permissions: { isEditor?: boolean; isRevisor?: boolean }): Promise<void> => {
-  const docRef = doc(db, "users", uid);
+  const docRef = doc(dbZecki, "users", uid);
   await updateDoc(docRef, {
     ...permissions,
     updatedAt: serverTimestamp(),
@@ -115,5 +115,5 @@ export const updateUserPermissions = async (uid: string, permissions: { isEditor
 };
 
 export const deleteUser = async (uid: string): Promise<void> => {
-  await deleteDoc(doc(db, "users", uid));
+  await deleteDoc(doc(dbZecki, "users", uid));
 };

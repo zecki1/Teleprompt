@@ -52,8 +52,8 @@ export const UserSchema = z.object({
   status: z.enum(USER_STATUSES).default("active"),
   workspaceId: z.string().optional(),
   workspaces: z.array(z.string()).default([]),
-  createdAt: z.any().optional(),
-  updatedAt: z.any().optional(),
+  createdAt: z.union([z.string(), z.object({ toDate: z.function() })]).optional().nullable(),
+  updatedAt: z.union([z.string(), z.object({ toDate: z.function() })]).optional().nullable(),
 }).passthrough();
 
 export const ExtendedUserSchema = UserSchema.extend({
