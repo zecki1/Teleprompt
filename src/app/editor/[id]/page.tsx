@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, use, Suspense, useRef } from "react";
+import React, { useEffect, useState, use, Suspense, useRef, useMemo } from "react";
 import Image from "next/image";
 import { Scene, parseScript } from "@/lib/parser";
 import { sanitizeData } from "@/lib/firebase-utils";
@@ -155,6 +155,7 @@ function EditorContent({ id }: { id: string }) {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importText, setImportText] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({
     message: "",
     visible: false,
@@ -211,7 +212,7 @@ function EditorContent({ id }: { id: string }) {
           if (!vSnap.empty) {
             const vData = vSnap.docs[0].data();
             const rawContent = vData.content || "";
-            setText(rawContent);
+            // setText(rawContent); // Removido pois o estado text não é utilizado neste componente estruturado
             let loadedScenes = vData.scenes || [];
             
             // Se não houver cenas estruturadas, tenta parsear o conteúdo bruto
@@ -539,8 +540,12 @@ function EditorContent({ id }: { id: string }) {
              <Button variant={isEditingMode ? "outline" : "secondary"} size="sm" onClick={() => setIsEditingMode(!isEditingMode)} className="h-9 text-[10px] font-black uppercase tracking-widest gap-2 rounded-full border-2">
                 {isEditingMode ? <Eye size={16} /> : <EyeOff size={16} />} {isEditingMode ? "Ver Final" : "Editar"}
               </Button>
-              <Button onClick={handleSaveClick} className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] tracking-widest px-6 rounded-full shadow-lg">
-                <Save size={16} className="mr-2" /> SALVAR
+              <Button 
+                onClick={handleSaveClick} 
+                className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] tracking-widest px-6 rounded-full shadow-lg"
+                disabled={isSaving}
+              >
+                {isSaving ? "SALVANDO..." : <><Save size={16} className="mr-2" /> SALVAR</>}
               </Button>
           </div>
         </div>

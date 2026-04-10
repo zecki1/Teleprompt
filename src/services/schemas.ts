@@ -47,6 +47,7 @@ export const UserSchema = z.object({
   isEditor: z.boolean().default(false),
   isRevisor: z.boolean().default(false),
   avatarUrl: z.string().optional().default(""),
+  photoURL: z.string().nullable().optional(),
   status: z.enum(USER_STATUSES).default("active"),
   workspaceId: z.string().optional(),
   workspaces: z.array(z.string()).default([]),
