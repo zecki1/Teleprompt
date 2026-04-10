@@ -1,7 +1,7 @@
 import { 
   collection, query, where, getDocs, doc, setDoc, addDoc 
 } from "firebase/firestore";
-import { db, dbZecki } from "./firebase";
+import { dbZecki } from "./firebase";
 export interface ZeckiProject {
   id: string;
   name: string;

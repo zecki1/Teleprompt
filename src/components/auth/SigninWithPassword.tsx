@@ -32,11 +32,12 @@ const SigninWithPassword: React.FC<SigninWithPasswordProps> = () => {
       await signIn(email, password);
       console.log("[SigninWithPassword] signIn returned successfully");
       toast.success("Login realizado com sucesso!");
-    } catch (err: any) {
-      console.error("[SigninWithPassword] Detailed error:", err);
-      console.error("[SigninWithPassword] Error code:", err?.code);
-      console.error("[SigninWithPassword] Error message:", err?.message);
-      toast.error(`Erro ao entrar: ${err?.message || "Verifique suas credenciais."}`);
+    } catch (err: unknown) {
+      const error = err as { code?: string; message?: string };
+      console.error("[SigninWithPassword] Detailed error:", error);
+      console.error("[SigninWithPassword] Error code:", error?.code);
+      console.error("[SigninWithPassword] Error message:", error?.message);
+      toast.error(`Erro ao entrar: ${error?.message || "Verifique suas credenciais."}`);
     } finally {
       setLoading(false);
     }

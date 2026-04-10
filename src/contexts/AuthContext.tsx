@@ -10,7 +10,7 @@ import {
   onAuthStateChanged 
 } from "firebase/auth";
 import { doc, onSnapshot, getDoc, setDoc, updateDoc, collection, query, where, QuerySnapshot, DocumentData } from "firebase/firestore";
-import { auth, db, dbZecki, googleProvider } from "@/lib/firebase";
+import { auth, dbZecki, googleProvider } from "@/lib/firebase";
 import { ExtendedUser, ExtendedUserSchema, Workspace, Team, Role } from "@/services/schemas";
 import { getWorkspace } from "@/services/workspaceService";
 import { toast } from "sonner";
