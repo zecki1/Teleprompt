@@ -19,12 +19,13 @@ import {
 } from "@/components/ui/dialog";
 import { 
   Plus, 
+  PlusCircle,
   FolderOpen, 
   Loader2, 
-  ExternalLink, 
   Link2, 
   CheckCircle2,
-  Calendar
+  Calendar,
+  Eye
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
@@ -189,40 +190,59 @@ export default function ProjectsPage() {
           {projects.map((project) => (
             <Card 
               key={project.id} 
-              className="hover:shadow-lg transition-shadow cursor-pointer"
-              onClick={() => router.push(`/scripts?project=${project.id}`)}
+              className="hover:shadow-lg transition-all cursor-pointer group border-zinc-200 dark:border-zinc-800"
+              onClick={() => router.push(`/dashboard?projectId=${project.id}`)}
             >
-              <CardHeader className="pb-3">
+              <CardHeader className="pb-3 border-b border-zinc-100 dark:border-zinc-800/50 bg-zinc-50/50 dark:bg-zinc-900/50">
                 <div className="flex items-start justify-between">
                   <div>
-                    <CardTitle className="text-lg">{project.name}</CardTitle>
+                    <CardTitle className="text-lg group-hover:text-blue-600 transition-colors">{project.name}</CardTitle>
                     <CardDescription className="font-mono text-xs mt-1">
-                      {project.code}
+                      {project.code || "PB-000"}
                     </CardDescription>
                   </div>
-                  <Badge variant={project.status === "active" ? "default" : "secondary"}>
-                    {project.status === "active" ? "Ativo" : project.status}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Button 
+                      size="icon" 
+                      variant="ghost" 
+                      className="h-8 w-8 rounded-full hover:bg-emerald-100 hover:text-emerald-600 dark:hover:bg-emerald-900/30"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        router.push(`/editor/new?project=${encodeURIComponent(project.name)}&projectId=${project.id}`);
+                      }}
+                      title="Adicionar Novo Roteiro"
+                    >
+                      <PlusCircle className="w-5 h-5" />
+                    </Button>
+                    <Badge variant={project.status === "active" ? "default" : "secondary"}>
+                      {project.status === "active" ? "Ativo" : project.status}
+                    </Badge>
+                  </div>
                 </div>
               </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-4 text-sm text-zinc-500">
-                  <div className="flex items-center gap-1">
-                    <Calendar className="w-4 h-4" />
-                    {project.createdAt ? format(new Date(project.createdAt), "dd/MM/yyyy", { locale: ptBR }) : "N/A"}
+              <CardContent className="pt-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4 text-sm text-zinc-500">
+                    <div className="flex items-center gap-1">
+                      <Calendar className="w-4 h-4" />
+                      {project.createdAt ? format(new Date(project.createdAt), "dd/MM/yyyy", { locale: ptBR }) : "N/A"}
+                    </div>
+                  </div>
+                  
+                  <div className="text-[10px] font-bold text-blue-500 uppercase tracking-widest flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                    Ver Roteiros <Eye className="w-3 h-3" />
                   </div>
                 </div>
                 
                 {project.zeckiProjectId ? (
-                  <div className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Sincronizado com Zecki</span>
-                    <ExternalLink className="w-3 h-3 ml-auto" />
+                  <div className="mt-4 pt-4 border-t border-zinc-100 dark:border-zinc-800 flex items-center gap-2 text-[11px] text-emerald-600 font-medium">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Sincronizado com Dashboard Zecki</span>
                   </div>
                 ) : (
-                  <div className="mt-3 flex items-center gap-2 text-sm text-amber-600">
-                    <Link2 className="w-4 h-4" />
-                    <span>Pendente sincronização</span>
+                  <div className="mt-4 pt-4 border-t border-zinc-100 dark:border-zinc-800 flex items-center gap-2 text-[11px] text-zinc-400">
+                    <Link2 className="w-3.5 h-3.5" />
+                    <span>Local</span>
                   </div>
                 )}
               </CardContent>

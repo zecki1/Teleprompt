@@ -64,6 +64,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { toast as sonnerToast } from "sonner";
 import { exportToWord } from "@/lib/export-word";
 
 type ScriptStatus = "rascunho" | "em_revisao" | "revisao_realizada" | "aguardando_gravacao" | "gravado" | "rejeitado";
@@ -177,7 +178,12 @@ function EditorContent({ id }: { id: string }) {
   useEffect(() => {
     if (isNew) {
       const p = searchParams.get("project");
-      if (p) setProject(p);
+      const pid = searchParams.get("projectId");
+      console.log(`[Editor] Modo Novo Roteiro - Projeto: ${p}, ProjectID: ${pid}`);
+      if (p) {
+        setProject(p);
+        if (pid) setProjectId(pid);
+      }
       setLoading(false);
       return;
     }
@@ -189,6 +195,7 @@ function EditorContent({ id }: { id: string }) {
 
         if (scriptSnap.exists()) {
           const data = scriptSnap.data();
+          console.log("[Editor] Roteiro carregado:", data.title, "(ID:", id, ")");
           setTitle(data.title || "");
           setProject(data.project || "Geral");
           setProjectId(data.projectId || null);
@@ -210,23 +217,21 @@ function EditorContent({ id }: { id: string }) {
           const vSnap = await getDocs(vQ);
 
           if (!vSnap.empty) {
+            console.log("[Editor] Versão carregada:", vSnap.docs[0].id);
             const vData = vSnap.docs[0].data();
             const rawContent = vData.content || "";
-            // setText(rawContent); // Removido pois o estado text não é utilizado neste componente estruturado
             let loadedScenes = vData.scenes || [];
-            
-            // Se não houver cenas estruturadas, tenta parsear o conteúdo bruto
             if (loadedScenes.length === 0 && rawContent) {
               loadedScenes = parseScript(rawContent);
             }
-            
             const finalScenes = loadedScenes.map((s: Scene) => ({ ...s, observation: s.observation || "" }));
             setScenes(finalScenes);
           }
-
+        } else {
+          console.warn("[Editor] Roteiro não encontrado no Firestore:", id);
         }
       } catch (e) {
-        console.error("Erro ao carregar roteiro:", e);
+        console.error("[Editor] Erro ao carregar roteiro:", e);
       } finally {
         setLoading(false);
       }
@@ -266,7 +271,7 @@ function EditorContent({ id }: { id: string }) {
   };
 
   const handleSaveClick = () => {
-    if (scenes.length === 0) return alert("Adicione conteúdo antes de salvar.");
+    if (scenes.length === 0) return sonnerToast.warning("Adicione conteúdo antes de salvar.");
     setShowSaveModal(true);
   };
 
@@ -274,10 +279,12 @@ function EditorContent({ id }: { id: string }) {
     setShowSaveModal(false);
     setIsSaving(true);
     try {
+      console.log(`[Editor] Iniciando salvamento (${saveStatus})...`);
       const finalWorkspaceId = workspaceId || user?.workspaceId || "senai";
       let currentScriptId = id;
       const rawContent = generateRawTextFromBlocks(scenes);
       
+      console.log("[Editor] Sanitizando dados...");
       const saveData = sanitizeData({
         title,
         project,
@@ -293,8 +300,10 @@ function EditorContent({ id }: { id: string }) {
         editorId,
         editorName,
       });
+      console.log("[Editor] Dados sanitizados prontas:", saveData);
 
       if (isNew) {
+        console.log("[Editor] Criando NOVO roteiro no Teleprompt DB...");
         const docRef = await addDoc(collection(db, "scripts"), {
           ...saveData,
           createdBy: user?.uid,
@@ -303,23 +312,32 @@ function EditorContent({ id }: { id: string }) {
           lockedForEditing: false,
         });
         currentScriptId = docRef.id;
+        console.log("[Editor] Roteiro criado com ID:", currentScriptId);
       } else {
+        console.log("[Editor] Atualizando roteiro existente ID:", currentScriptId);
         await updateDoc(doc(db, "scripts", currentScriptId), saveData);
       }
 
+      console.log("[Editor] Criando nova versão...");
+      const versionPayload = sanitizeData({
+        content: rawContent,
+        scenes: scenes,
+        createdAt: new Date().toISOString(),
+      });
+      console.log("[Editor] Payload da versão:", versionPayload);
+
       await addDoc(
         collection(db, "scripts", currentScriptId as string, "versions"), 
-        sanitizeData({
-          content: rawContent,
-          scenes: scenes,
-          createdAt: new Date().toISOString(),
-        })
+        versionPayload
       );
-
-      // --- AUTOMAÇÃO DE TAREFAS KANBAN ---
+      console.log("[Editor] Versão salva com sucesso.");
+        // --- AUTOMAÇÃO DE TAREFAS KANBAN ---
+      console.log("[Editor] Iniciando automação de tarefas Zecki...");
+      
       // 1. Criar tarefa de Gravação quando a revisão é concluída
       if ((saveStatus === "revisao_realizada" || saveStatus === "aguardando_gravacao") && projectId) {
         try {
+          console.log("[Editor] Criando tarefa de Gravação no Dashboard DB...");
           await createRecordingTask(
             projectId, 
             title, 
@@ -329,16 +347,18 @@ function EditorContent({ id }: { id: string }) {
             category,
             `${window.location.origin}/editor/${currentScriptId}`
           );
+          console.log("[Editor] Tarefa de Gravação criada com sucesso.");
           showToast(`Tarefa de Gravação de ${category === "video" ? "Vídeo" : "Podcast"} criada!`);
         } catch (taskErr) {
-          console.error("Erro ao automatizar tarefa de gravação:", taskErr);
+          console.error("[Editor] Erro ao automatizar tarefa de gravação:", taskErr);
+          // Não paramos o fluxo se a tarefa falhar
         }
       }
 
       // 2. Criar tarefa de Edição quando o roteiro é marcado como Gravado
       if (saveStatus === "gravado" && projectId) {
         try {
-          // Importamos a função de edição que acabamos de adicionar
+          console.log("[Editor] Criando tarefa de Edição no Dashboard DB...");
           const { createEditingTask } = await import("@/lib/zecki");
           await createEditingTask(
             projectId, 
@@ -349,18 +369,20 @@ function EditorContent({ id }: { id: string }) {
             category,
             `${window.location.origin}/editor/${currentScriptId}`
           );
+          console.log("[Editor] Tarefa de Edição criada com sucesso.");
           showToast(`Tarefa de Edição de ${category === "video" ? "Vídeo" : "Podcast"} criada!`);
         } catch (taskErr) {
-          console.error("Erro ao automatizar tarefa de edição:", taskErr);
+          console.error("[Editor] Erro ao automatizar tarefa de edição:", taskErr);
         }
       }
       
+      console.log("[Editor] Salvamento finalizado com sucesso.");
       showToast("Roteiro salvo!");
       setIsEditingMode(false);
       if (isNew) router.push("/dashboard");
     } catch (e) {
-      console.error(e);
-      alert("Falha ao salvar roteiro.");
+      console.error("[Editor] ERRO CRÍTICO AO SALVAR:", e);
+      sonnerToast.error("Falha ao salvar roteiro. Verifique o console.");
     } finally {
       setIsSaving(false);
     }
@@ -460,8 +482,8 @@ function EditorContent({ id }: { id: string }) {
       await exportToWord({ title, projectName: project }, scenes);
       showToast("Backup Word gerado!");
     } catch (error) {
-      console.error(error);
-      alert("Falha ao gerar Word.");
+      console.error("Erro ao gerar documento Word:", error);
+      sonnerToast.error("Falha ao gerar arquivo Word.");
     }
   };
 

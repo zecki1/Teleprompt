@@ -11,9 +11,10 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Link2, Plus, Play, Trash2, Edit2, Check, Folder, X, FileText, Send, Clock, CheckCircle2, ChevronRight, Briefcase, Loader2, Users, UserPlus, Video, PlusCircle, ClipboardCheck } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { Suspense } from "react";
 import { fetchZeckiProjects, ZeckiProject, createRecordingTask, createEditingTask } from "@/lib/zecki";
 import { toDate } from "@/lib/firebase-utils";
 import { toast } from "sonner";
@@ -53,8 +54,17 @@ const statusConfig: Record<ScriptStatus, { label: string; color: string; icon: R
 };
 
 export default function DashboardPage() {
+  return (
+    <Suspense fallback={<div className="h-screen flex items-center justify-center font-black animate-pulse text-blue-500">CARREGANDO...</div>}>
+      <DashboardContent />
+    </Suspense>
+  );
+}
+
+function DashboardContent() {
   const { user, allUsers } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   
   const [scripts, setScripts] = useState<ScriptDoc[]>([]);
   const [projects, setProjects] = useState<ZeckiProject[]>([]);
@@ -70,6 +80,9 @@ export default function DashboardPage() {
   
   const [editingProjectName, setEditingProjectName] = useState<string | null>(null);
   const [newProjectTitle, setNewProjectTitle] = useState("");
+
+  const projectIdFilter = searchParams.get("projectId");
+  const selectedProject = projects.find(p => p.id === projectIdFilter);
 
   useEffect(() => {
     if (!user) {
@@ -126,9 +139,11 @@ export default function DashboardPage() {
     fetchData();
   }, [user?.workspaceId, router, user]);
 
-  const filteredScripts = statusFilter === "all" 
-    ? scripts 
-    : scripts.filter(s => s.status === statusFilter);
+  const filteredScripts = scripts.filter(s => {
+    const matchesStatus = statusFilter === "all" || s.status === statusFilter;
+    const matchesProject = !projectIdFilter || s.projectId === projectIdFilter;
+    return matchesStatus && matchesProject;
+  });
 
   const statusCounts = {
     all: scripts.length,
@@ -237,7 +252,7 @@ export default function DashboardPage() {
       setEditingId(null);
     } catch (e) {
       console.error(e);
-      alert("Erro ao renomear.");
+      toast.error("Erro ao renomear.");
     }
   };
 
@@ -260,7 +275,7 @@ export default function DashboardPage() {
       setEditingProjectName(null);
     } catch (e) {
       console.error(e);
-      alert("Erro ao renomear projeto.");
+      toast.error("Erro ao renomear projeto.");
     }
   };
 
@@ -276,13 +291,38 @@ export default function DashboardPage() {
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-3xl font-black tracking-tight flex items-center gap-3">
-             Meus Roteiros
+             {selectedProject ? `Projeto: ${selectedProject.name}` : "Meus Roteiros"}
           </h1>
-          <p className="text-muted-foreground mt-1">Gerencie seus Roteiros do Teleprompter aqui.</p>
+          <p className="text-muted-foreground mt-1">
+            {selectedProject 
+              ? `Gerenciando roteiros do projeto ${selectedProject.name}.` 
+              : "Gerencie seus Roteiros do Teleprompter aqui."}
+          </p>
         </div>
-        <Button onClick={() => router.push("/editor/new")} size="lg" className="rounded-full shadow-lg hover:shadow-xl transition-all">
-          <Plus className="w-5 h-5 mr-2" /> Novo Roteiro
-        </Button>
+        <div className="flex gap-3">
+          {selectedProject && (
+            <Button 
+              variant="outline" 
+              onClick={() => router.push("/dashboard")} 
+              className="rounded-full border-blue-500 text-blue-500 hover:bg-blue-50"
+            >
+              Ver Todos
+            </Button>
+          )}
+          <Button 
+            onClick={() => {
+              const url = selectedProject 
+                ? `/editor/new?project=${encodeURIComponent(selectedProject.name)}&projectId=${selectedProject.id}`
+                : "/editor/new";
+              router.push(url);
+            }} 
+            size="lg" 
+            className={`rounded-full shadow-lg hover:shadow-xl transition-all ${selectedProject ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
+          >
+            <Plus className="w-5 h-5 mr-2" /> 
+            {selectedProject ? `Novo Roteiro em ${selectedProject.name}` : "Novo Roteiro"}
+          </Button>
+        </div>
       </div>
 
       <div className="mb-10">
@@ -306,25 +346,38 @@ export default function DashboardPage() {
                <p className="text-sm text-zinc-500">Nenhum projeto vinculado a este workspace.</p>
             </div>
           ) : (
-            projects.map(project => (
-              <Card 
-                key={project.id} 
-                className="min-w-[220px] max-w-[220px] flex-shrink-0 cursor-pointer hover:border-primary transition-colors border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900"
-                onClick={() => {
-                  const el = document.getElementById(`project-section-${project.name}`);
-                  if (el) el.scrollIntoView({ behavior: 'smooth' });
-                }}
-              >
-                <CardHeader className="p-4 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <Badge variant="outline" className="text-[10px] uppercase font-mono px-1.5 py-0 h-5">
-                      {project.code || "PRJ"}
-                    </Badge>
-                  </div>
-                  <CardTitle className="text-sm line-clamp-1">{project.name}</CardTitle>
-                </CardHeader>
-              </Card>
-            ))
+            projects.map(project => {
+              const isActive = projectIdFilter === project.id;
+              return (
+                <Card 
+                  key={project.id} 
+                  className={`min-w-[220px] max-w-[220px] flex-shrink-0 cursor-pointer transition-all border-2 ${
+                    isActive 
+                      ? 'border-blue-500 ring-4 ring-blue-500/10 scale-105 shadow-lg bg-blue-50/30' 
+                      : 'hover:border-blue-300 border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
+                  }`}
+                  onClick={() => {
+                    if (isActive) {
+                      router.push("/dashboard");
+                    } else {
+                      router.push(`/dashboard?projectId=${project.id}`);
+                    }
+                  }}
+                >
+                  <CardHeader className="p-4 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <Badge variant={isActive ? "default" : "outline"} className="text-[10px] uppercase font-mono px-1.5 py-0 h-5">
+                        {project.code || "PRJ"}
+                      </Badge>
+                      {isActive && <CheckCircle2 className="w-4 h-4 text-blue-500" />}
+                    </div>
+                    <CardTitle className={`text-sm line-clamp-1 ${isActive ? 'text-blue-700 dark:text-blue-400 font-bold' : ''}`}>
+                      {project.name}
+                    </CardTitle>
+                  </CardHeader>
+                </Card>
+              );
+            })
           )}
         </div>
       </div>
@@ -361,12 +414,14 @@ export default function DashboardPage() {
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
       ) : scripts.length === 0 ? (
-        <div className="text-center py-20 bg-muted/20 rounded-2xl border border-dashed">
-          <h3 className="text-xl font-medium mb-2">Nenhum roteiro encontrado</h3>
-          <p className="text-muted-foreground mb-6">Crie seu primeiro roteiro colando o texto do Word.</p>
-          <Button onClick={() => router.push("/editor/new")}>
-            <Plus className="w-4 h-4 mr-2" /> Criar Agora
-          </Button>
+        <div className="text-center py-16 px-4 bg-zinc-50 dark:bg-zinc-900/40 rounded-3xl border border-dashed border-zinc-200 dark:border-zinc-800">
+          <div className="bg-zinc-100 dark:bg-zinc-800 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FileText className="w-8 h-8 text-zinc-400" />
+          </div>
+          <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-2">Você não tem nenhum roteiro</h3>
+          <p className="text-zinc-500 max-w-xs mx-auto mb-8">
+            Clique em um projeto e crie agora seu primeiro roteiro para começar a gravar!
+          </p>
         </div>
       ) : (
         <div className="space-y-16">
@@ -408,7 +463,10 @@ export default function DashboardPage() {
                     variant="ghost" 
                     size="sm" 
                     className="h-8 text-xs text-zinc-500 hover:text-blue-500"
-                    onClick={() => router.push(`/editor/new?project=${encodeURIComponent(projectName)}`)}
+                    onClick={() => {
+                      console.log(`[Dashboard] Navegando para novo roteiro no projeto: ${projectName} (${projectScripts[0]?.projectId || "N/A"})`);
+                      router.push(`/editor/new?project=${encodeURIComponent(projectName)}&projectId=${projectScripts[0]?.projectId || ""}`);
+                    }}
                   >
                     <Plus className="w-3 h-3 mr-1" /> Adicionar
                   </Button>
@@ -419,12 +477,20 @@ export default function DashboardPage() {
                 <div className="flex gap-6 overflow-x-auto pb-6 pt-2 no-scrollbar snap-x snap-mandatory">
                   {projectScripts.map(script => (
                     <div key={script.id} className="min-w-[300px] md:min-w-[350px] snap-start relative">
-                      {script.status === "aguardando_gravacao" && (
+                      {(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") && (
                         <div className="absolute -top-1 -right-1 z-20 bg-green-500 text-white px-3 py-1 rounded-full flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
-                          <CheckCircle2 className="w-3 h-3" /> Pronto
+                          <CheckCircle2 className="w-3 h-3" /> {script.status === "revisao_realizada" ? "Revisado" : "Pronto"}
                         </div>
                       )}
-                      <Card className={`h-full border-zinc-200 dark:border-zinc-800 hover:shadow-xl transition-all group flex flex-col ${script.status === "aguardando_gravacao" ? "ring-2 ring-green-500/20" : ""}`}>
+                      {script.status === "em_revisao" && (
+                        <div className="absolute -top-1 -right-1 z-20 bg-yellow-500 text-white px-3 py-1 rounded-full flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
+                          <Clock className="w-3 h-3" /> Em Revisão
+                        </div>
+                      )}
+                      <Card className={`h-full border-zinc-200 dark:border-zinc-800 hover:shadow-xl transition-all group flex flex-col 
+                        ${(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") ? "ring-2 ring-green-500/30 border-green-500/50" : ""}
+                        ${script.status === "em_revisao" ? "ring-2 ring-yellow-500/30 border-yellow-500/50" : ""}
+                      `}>
                         <CardHeader className="p-5 pb-2">
                           {editingId === script.id ? (
                             <div className="flex items-center gap-2">

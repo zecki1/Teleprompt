@@ -53,7 +53,7 @@ import {
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { updateDoc, doc, serverTimestamp } from "firebase/firestore";
-import { db, dbZecki } from "@/lib/firebase";
+import { dbZecki } from "@/lib/firebase";
 import { toDate } from "@/lib/firebase-utils";
 
 const roleConfig: Record<Role, { label: string; color: string; icon: React.ElementType }> = {

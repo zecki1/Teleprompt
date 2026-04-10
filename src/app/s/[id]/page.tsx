@@ -24,6 +24,7 @@ import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { createRecordingTask } from "@/lib/zecki";
+import { toast } from "sonner";
 
 interface ScriptData {
   id: string;
@@ -156,10 +157,10 @@ export default function PublicScriptPage({
         );
       }
 
-      alert(`Roteiro movido para: ${statusConfig[newStatus]?.label}`);
+      toast.success(`Roteiro movido para: ${statusConfig[newStatus]?.label}`);
     } catch (e) {
       console.error(e);
-      alert("Erro ao atualizar status");
+      toast.error("Erro ao atualizar status");
     } finally {
       setIsUpdating(false);
     }
