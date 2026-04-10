@@ -53,7 +53,8 @@ import {
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { updateDoc, doc, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { db, dbZecki } from "@/lib/firebase";
+import { toDate } from "@/lib/firebase-utils";
 
 const roleConfig: Record<Role, { label: string; color: string; icon: React.ElementType }> = {
   "SuperAdmin": { label: "Super Admin", color: "bg-red-600", icon: ShieldAlert },
@@ -123,7 +124,7 @@ export default function AdminPage() {
   const togglePermission = async (uid: string, field: 'isEditor' | 'isRevisor', value: boolean) => {
     setUpdating(uid);
     try {
-      const userRef = doc(db, "users", uid);
+      const userRef = doc(dbZecki, "users", uid);
       await updateDoc(userRef, {
         [field]: value,
         updatedAt: serverTimestamp()
@@ -273,7 +274,7 @@ export default function AdminPage() {
                         <TableCell className="text-right px-8">
                            <div className="flex items-center justify-end gap-1.5 text-sm font-medium text-zinc-600 dark:text-zinc-400">
                               <Calendar className="w-3.5 h-3.5" />
-                              {userItem.createdAt ? new Date(userItem.createdAt).toLocaleDateString("pt-BR") : "N/A"}
+                              {userItem.createdAt ? toDate(userItem.createdAt).toLocaleDateString("pt-BR") : "N/A"}
                            </div>
                         </TableCell>
                       </TableRow>

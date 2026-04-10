@@ -14,7 +14,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { fetchZeckiProjects, ZeckiProject, createRecordingTask } from "@/lib/zecki";
+import { fetchZeckiProjects, ZeckiProject, createRecordingTask, createEditingTask } from "@/lib/zecki";
+import { toDate } from "@/lib/firebase-utils";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -104,7 +105,7 @@ export default function DashboardPage() {
             id: doc.id,
             ...data,
             status: data.status || "rascunho",
-            createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt
+            createdAt: toDate(data.createdAt).toISOString()
           };
         }) as ScriptDoc[];
 
@@ -181,9 +182,20 @@ export default function DashboardPage() {
           user?.uid || "",
           user?.workspaceId || SENAI_WORKSPACE_ID,
           selectedCategory,
-          `${window.location.origin}/editor/${reviewingScript.id}`
+          `${window.location.origin}/tp/${reviewingScript.id}`
         );
-        toast.success(`Tarefa de Gravação de ${selectedCategory === "video" ? "Vídeo" : "Podcast"} criada!`);
+        
+        await createEditingTask(
+          reviewingScript.projectId,
+          reviewingScript.title,
+          reviewingScript.id,
+          user?.uid || "",
+          user?.workspaceId || SENAI_WORKSPACE_ID,
+          selectedCategory,
+          `${window.location.origin}/tp/${reviewingScript.id}`
+        );
+        
+        toast.success(`Tarefas de Gravação e Edição de ${selectedCategory === "video" ? "Vídeo" : "Podcast"} criadas!`);
       }
       
       setScripts(scripts.map(s => s.id === reviewingScript.id ? { ...s, ...updateData } : s));

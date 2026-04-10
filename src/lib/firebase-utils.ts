@@ -34,3 +34,13 @@ export function sanitizeData<T>(data: T): T {
 
   return data;
 }
+
+/**
+ * Converte data do Firestore (Timestamp ou string ISO) para objeto Date
+ */
+export function toDate(date: any): Date {
+  if (!date) return new Date();
+  if (typeof date.toDate === 'function') return date.toDate();
+  if (typeof date === 'string') return new Date(date);
+  return new Date();
+}

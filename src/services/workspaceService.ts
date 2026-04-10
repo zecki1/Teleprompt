@@ -4,7 +4,7 @@ import {
   collection, doc, getDoc, getDocs, 
   query, where, arrayUnion, writeBatch 
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { dbZecki } from "@/lib/firebase";
 import { Workspace, WorkspaceSchema, Role } from "@/services/schemas";
 import { DateTime } from "luxon";
 import { toast } from "sonner";
@@ -14,7 +14,7 @@ import { toast } from "sonner";
  */
 export const getWorkspace = async (workspaceId: string): Promise<Workspace | null> => {
   try {
-    const docRef = doc(db, "workspaces", workspaceId);
+    const docRef = doc(dbZecki, "workspaces", workspaceId);
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
@@ -38,7 +38,7 @@ export const joinWorkspaceByToken = async (
 ): Promise<{ success: boolean; workspaceName?: string }> => {
   try {
     const q = query(
-      collection(db, "workspaces"),
+      collection(dbZecki, "workspaces"),
       where("inviteToken", "==", token)
     );
     const snap = await getDocs(q);
@@ -56,9 +56,9 @@ export const joinWorkspaceByToken = async (
       return { success: true, workspaceName: wsData.name };
     }
 
-    const batch = writeBatch(db);
-    const wsRef = doc(db, "workspaces", wsDoc.id);
-    const userRef = doc(db, "users", userUid);
+    const batch = writeBatch(dbZecki);
+    const wsRef = doc(dbZecki, "workspaces", wsDoc.id);
+    const userRef = doc(dbZecki, "users", userUid);
 
     batch.update(wsRef, { 
       members: arrayUnion(userUid), 

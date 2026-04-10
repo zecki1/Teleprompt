@@ -1,13 +1,7 @@
 import { 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  doc,
-  setDoc,
-  addDoc,
+  collection, query, where, getDocs, doc, setDoc, addDoc 
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db, dbZecki } from "./firebase";
 export interface ZeckiProject {
   id: string;
   name: string;
@@ -28,16 +22,22 @@ export async function fetchZeckiProjects(workspaceId: string): Promise<ZeckiProj
   if (!workspaceId) return [];
   
   try {
-    const projectsRef = collection(db, "projects");
-    // Filtro idêntico ao dashboard (projects.ts)
-    // Simplificamos a query para garantir que trazemos projetos mesmo que não tenham o campo deletedAt (Firestore exige o campo para queries de igualdade)
+    const projectsRef = collection(dbZecki, "projects");
+    console.log(`[ZeckiService] Buscando projetos no Firebase Project: ${dbZecki.app.options.projectId}`);
+    // Para maior resiliência, buscamos tanto pelo ID do workspace quanto pelo slug (caso seja SENAI)
+    const SENAI_ID = "38028901-c72f-4ca1-b887-1d6683923403";
+    const workspaceIds = [workspaceId];
+    if (workspaceId === SENAI_ID || workspaceId === "senai") {
+      workspaceIds.push(SENAI_ID, "senai");
+    }
+
     const q = query(
       projectsRef, 
-      where("workspaceId", "==", workspaceId)
+      where("workspaceId", "in", Array.from(new Set(workspaceIds)))
     );
     
     const querySnapshot = await getDocs(q);
-    console.log(`[ZeckiService] Projetos encontrados para workspace ${workspaceId}: ${querySnapshot.size}`);
+    console.log(`[ZeckiService] Projetos encontrados para workspace ${workspaceId}: ${querySnapshot.size} no projeto ${dbZecki.app.options.projectId}`);
     
     const projects: ZeckiProject[] = [];
     
@@ -88,7 +88,7 @@ export async function createRecordingTask(
   try {
     const taskId = crypto.randomUUID();
     const taskPath = `projects/${projectId}/modules/audiovisual/tasks/${taskId}`;
-    const taskRef = doc(db, taskPath);
+    const taskRef = doc(dbZecki, taskPath);
 
     const categoryLabel = category === "podcast" ? "Podcast" : "Vídeo";
     const taskType = category === "podcast" ? "gravacaoPodcast" : "gravacaoVideo";
@@ -141,7 +141,7 @@ export async function createEditingTask(
   try {
     const taskId = crypto.randomUUID();
     const taskPath = `projects/${projectId}/modules/audiovisual/tasks/${taskId}`;
-    const taskRef = doc(db, taskPath);
+    const taskRef = doc(dbZecki, taskPath);
 
     const categoryLabel = category === "podcast" ? "Podcast" : "Vídeo";
     const taskType = category === "podcast" ? "edicaoPodcast" : "edicaoVideo";
@@ -184,7 +184,7 @@ export async function createEditingTask(
  */
 export async function createZeckiProject(projectData: Partial<ZeckiProject>) {
   try {
-    const projectsRef = collection(db, "projects");
+    const projectsRef = collection(dbZecki, "projects");
     const payload = {
       ...projectData,
       createdAt: new Date().toISOString(),
