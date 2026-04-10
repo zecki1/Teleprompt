@@ -1,10 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Terminal, Menu, Maximize, LogOut, User, Settings, LayoutDashboard, FolderOpen, Users } from "lucide-react";
+import { Terminal, Menu, Maximize, LogOut, User, LayoutDashboard, FolderOpen, Users } from "lucide-react";
 import { SettingsMenu } from "@/components/settings-menu";
-import { LanguageSwitcher } from "@/components/language-switcher";
-import { Text } from "@/components/providers/preferences-provider";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -25,13 +23,22 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select";
+import { Briefcase } from "lucide-react";
 
 const navItems = [
-  { href: "/dashboard", pt: "Dashboard", en: "Dashboard", es: "Dashboard" },
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/projects", label: "Projetos" },
 ];
 
 export function SiteHeader() {
-  const { user, logOut } = useAuth();
+  const { user, currentWorkspace, userWorkspacesDetailed, switchWorkspace, logOut } = useAuth();
   const router = useRouter();
 
   const handleLogout = async () => {
@@ -43,6 +50,8 @@ export function SiteHeader() {
     if (!name) return "U";
     return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
   };
+
+  const isAdmin = user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br" || user?.role === "SuperAdmin";
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
@@ -68,13 +77,21 @@ export function SiteHeader() {
               href={item.href}
               className="hover:text-primary transition-colors whitespace-nowrap"
             >
-              <Text pt={item.pt} en={item.en} es={item.es} />
+              {item.label}
             </Link>
           ))}
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className="hover:text-primary transition-colors whitespace-nowrap font-bold text-blue-500"
+            >
+              Administração
+            </Link>
+          )}
           {user && (
-            <Button variant="default" size="sm" asChild>
+            <Button variant="default" size="sm" asChild className="ml-2">
               <Link href="/editor/new">
-                <Text pt="Novo Roteiro" en="New Script" es="Nuevo Guion" />
+                Novo Roteiro
               </Link>
             </Button>
           )}
@@ -89,26 +106,54 @@ export function SiteHeader() {
              <Maximize className="h-5 w-5 text-muted-foreground" />
           </Button>
           <div className="hidden sm:flex items-center gap-2">
-            <LanguageSwitcher />
             <SettingsMenu />
           </div>
           
-          <Separator orientation="vertical" className="h-6 mx-2 hidden sm:block" />
+          {user && (
+            <>
+              <div className="hidden md:flex items-center gap-2">
+                <Select
+                  value={user.workspaceId}
+                  onValueChange={(val) => switchWorkspace(val)}
+                >
+                  <SelectTrigger className="w-[180px] h-8 bg-zinc-900/50 border-zinc-700 text-xs text-white">
+                    <Briefcase className="h-3 w-3 mr-2 text-primary" />
+                    <SelectValue placeholder="Workspace">
+                      {currentWorkspace?.name || "Workspace"}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent className="bg-zinc-950 border-zinc-800 text-white">
+                    {userWorkspacesDetailed && userWorkspacesDetailed.map((ws) => (
+                      <SelectItem key={ws.id} value={ws.id} className="text-xs">
+                        {ws.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Separator orientation="vertical" className="h-6 mx-2 hidden sm:block" />
+            </>
+          )}
           
           {user ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Avatar className="h-8 w-8 cursor-pointer border hover:border-primary transition-colors">
-                  <AvatarImage src={user.photoURL || undefined} />
-                  <AvatarFallback>{getInitials(user.displayName)}</AvatarFallback>
-                </Avatar>
+                <div className="flex items-center gap-2 cursor-pointer group">
+                  <div className="hidden flex-col items-end mr-1 md:flex">
+                     <span className="text-[10px] font-bold text-zinc-400 group-hover:text-primary transition-colors">{user.displayName}</span>
+                     <span className="text-[9px] text-zinc-500">{user.role}</span>
+                  </div>
+                  <Avatar className="h-8 w-8 border hover:border-primary transition-colors">
+                    <AvatarImage src={user.photoURL || undefined} />
+                    <AvatarFallback>{getInitials(user.displayName)}</AvatarFallback>
+                  </Avatar>
+                </div>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>
                   <div className="flex flex-col space-y-1">
                     <p className="text-sm font-medium">{user.displayName}</p>
                     <p className="text-xs text-zinc-500">{user.email}</p>
-                    <p className="text-xs font-semibold text-blue-500 uppercase">{user.role}</p>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -116,21 +161,21 @@ export function SiteHeader() {
                   <LayoutDashboard className="mr-2 h-4 w-4" />
                   Dashboard
                 </DropdownMenuItem>
-                {user.email === "zecki1@hotmail.com" && (
+                <DropdownMenuItem onClick={() => router.push("/projects")}>
+                  <FolderOpen className="mr-2 h-4 w-4" />
+                  Projetos
+                </DropdownMenuItem>
+                {isAdmin && (
                   <DropdownMenuItem onClick={() => router.push("/admin")}>
                     <Users className="mr-2 h-4 w-4" />
-                    Admin
+                    Painel Admin
                   </DropdownMenuItem>
                 )}
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => router.push("/profile")}>
                   <User className="mr-2 h-4 w-4" />
                   Perfil
                 </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Settings className="mr-2 h-4 w-4" />
-                  Configurações
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout} className="text-red-500">
                   <LogOut className="mr-2 h-4 w-4" />
                   Sair
@@ -166,20 +211,21 @@ export function SiteHeader() {
                       href={item.href}
                       className="text-lg font-medium hover:text-primary transition-colors"
                     >
-                      <Text pt={item.pt} en={item.en} es={item.es} />
+                      {item.label}
                     </Link>
                   ))}
+                  {isAdmin && (
+                    <Link href="/admin" className="text-lg font-bold text-blue-500 hover:text-primary transition-colors">
+                      Administração
+                    </Link>
+                  )}
                   {user && (
                     <Link href="/editor/new" className="text-lg font-medium hover:text-primary transition-colors">
-                      <Text pt="Novo Roteiro" en="New Script" es="Nuevo Guion" />
+                      Novo Roteiro
                     </Link>
                   )}
                   <Separator className="my-2" />
                   <div className="flex flex-col gap-4">
-                    <div className="flex items-center justify-between px-2">
-                      <span className="text-sm font-medium">Idioma</span>
-                      <LanguageSwitcher />
-                    </div>
                     <div className="flex items-center justify-between px-2">
                       <span className="text-sm font-medium">Configurações</span>
                       <SettingsMenu />

@@ -8,8 +8,7 @@ import {
   deleteDoc,
   query,
   orderBy,
-  serverTimestamp,
-  writeBatch 
+  serverTimestamp
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 

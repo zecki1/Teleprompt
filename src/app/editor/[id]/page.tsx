@@ -1,7 +1,10 @@
 "use client";
 
-import React, { useEffect, useState, use, Suspense } from "react";
+import React, { useEffect, useState, use, Suspense, useRef } from "react";
+import Image from "next/image";
 import { Scene, parseScript } from "@/lib/parser";
+import { sanitizeData } from "@/lib/firebase-utils";
+
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,29 +21,25 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Play,
   Save,
-  Settings2,
   ImageIcon,
   Trash2,
   Plus,
   ChevronLeft,
-  ChevronRight,
   Scissors,
-  ExternalLink,
-  Loader2,
   Copy,
-  CheckCircle2,
   FileText,
   Video,
-  MonitorPlay,
   Type,
-  Send,
   Clock,
-  XCircle,
-  Lock,
-  Unlock,
+  MessageSquare,
+  Import,
+  PlusSquare,
+  Pin,
   Eye,
+  EyeOff,
+  ClipboardCheck,
+  FileDown
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -56,47 +55,76 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-// import { addScriptLinkToZecki } from "@/services/zecki";
+import { fetchZeckiProjects, createRecordingTask, ZeckiProject } from "@/lib/zecki";
 import Link from "next/link";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { exportToWord } from "@/lib/export-word";
 
 type ScriptStatus = "rascunho" | "em_revisao" | "revisao_realizada" | "aguardando_gravacao" | "gravado" | "rejeitado";
 
-const statusConfig: Record<ScriptStatus, { label: string; color: string; icon: React.ElementType }> = {
-  rascunho: { label: "Rascunho", color: "bg-zinc-500", icon: FileText },
-  em_revisao: { label: "Em Revisão", color: "bg-yellow-500", icon: Clock },
-  revisao_realizada: { label: "Revisão Realizada", color: "bg-orange-500", icon: CheckCircle2 },
-  aguardando_gravacao: { label: "Aguardando Gravação", color: "bg-green-500", icon: CheckCircle2 },
-  gravado: { label: "Gravado", color: "bg-blue-500", icon: Send },
-  rejeitado: { label: "Rejeitado", color: "bg-red-500", icon: XCircle },
-};
 
-function formatEditorLettering(spokenText: string | null | undefined): React.ReactNode {
-  if (!spokenText) return null;
-  
-  // Regex para [let1], [img1], etc.
-  const regex = /(\[(?:let|img)\d+\]|\[\d+\])/g;
-  const parts: React.ReactNode[] = [];
-  let lastIndex = 0;
-  let match;
-  
-  while ((match = regex.exec(spokenText)) !== null) {
-    parts.push(spokenText.slice(lastIndex, match.index));
-    
-    // [let1] em vermelho, [img1] em roxo
-    const isImg = match[0].startsWith('[img');
-    const colorClass = isImg ? 'text-purple-600 dark:text-purple-400' : 'text-red-600 dark:text-red-400';
-    
-    parts.push(
-      <span key={`marker-${match.index}`} className={`${colorClass} font-black`}>
-        {match[0]}
-      </span>
-    );
-    lastIndex = match.index + match[0].length;
-  }
-  
-  parts.push(spokenText.slice(lastIndex));
-  
-  return parts.length > 0 ? parts : spokenText;
+// Componente para renderizar o texto com destaque para as tags (Apenas no modo Visualização)
+function HighlightedSpokenText({ 
+  text, 
+  onChange, 
+  textareaRef, 
+  disabled,
+  isEditing
+}: { 
+  text: string; 
+  onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  textareaRef: (el: HTMLTextAreaElement | null) => void;
+  disabled?: boolean;
+  isEditing: boolean;
+}) {
+  const highlights = useMemo(() => {
+    if (!text || isEditing) return null;
+    const regex = /(\[(?:let|img)\d+\]|\[\d+\])/g;
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(text.slice(lastIndex, match.index));
+      }
+      const isImg = match[0].startsWith('[img');
+      const bgClass = isImg ? 'bg-purple-500 text-white shadow-[0_0_10px_purple] px-1.5' : 'bg-red-600 text-white shadow-[0_0_10px_red] px-1.5';
+      parts.push(
+        <span key={`highlight-${match.index}`} className={`${bgClass} font-black rounded mx-0.5 inline-block text-[10px] leading-none py-0.5`}>
+          {match[0]}
+        </span>
+      );
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < text.length) {
+      parts.push(text.slice(lastIndex));
+    }
+    return parts;
+  }, [text, isEditing]);
+
+  return (
+    <div className="relative w-full group/textarea">
+      {!isEditing && (
+        <div className="absolute inset-0 pointer-events-none p-4 font-medium text-[14px] leading-relaxed whitespace-pre-wrap break-words z-20 bg-zinc-50 dark:bg-zinc-950 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-y-auto">
+          {highlights}
+        </div>
+      )}
+      <Textarea
+        ref={textareaRef}
+        value={text}
+        onChange={onChange}
+        disabled={disabled || !isEditing}
+        placeholder="Escreva o que será dito..."
+        className={`text-[14px] font-medium leading-relaxed min-h-[120px] p-4 resize-none w-full rounded-xl focus-visible:ring-blue-500 bg-zinc-50/50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 ${!isEditing ? 'opacity-0' : 'opacity-100 placeholder:opacity-40'}`}
+      />
+    </div>
+  );
 }
 
 function EditorContent({ id }: { id: string }) {
@@ -104,39 +132,47 @@ function EditorContent({ id }: { id: string }) {
   const router = useRouter();
   const isNew = !id || id === "new";
 
-  const [text, setText] = useState("");
   const [title, setTitle] = useState("Novo Roteiro");
   const [project, setProject] = useState("Geral");
   const [projectId, setProjectId] = useState<string | null>(null);
   const [scenes, setScenes] = useState<Scene[]>([]);
-  const [isSaving, setIsSaving] = useState(false);
   const [loading, setLoading] = useState(!isNew);
   const [scriptStatus, setScriptStatus] = useState<ScriptStatus>("rascunho");
+  const [category, setCategory] = useState<"video" | "podcast">("video");
   const [isPublic, setIsPublic] = useState(false);
   const [lockedForEditing, setLockedForEditing] = useState(false);
+  const [zeckiProjects, setZeckiProjects] = useState<ZeckiProject[]>([]);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [reviewerId, setReviewerId] = useState<string | null>(null);
+  const [reviewerName, setReviewerName] = useState<string | null>(null);
+  const [editorId, setEditorId] = useState<string | null>(null);
+  const [editorName, setEditorName] = useState<string | null>(null);
 
   const { user, hasPermission } = useAuth();
-  const canEdit = hasPermission(["editor", "validador"]) && (!lockedForEditing || scriptStatus === "rascunho");
-  const canValidate = hasPermission(["validador"]);
-  const canSend = hasPermission(["validador"]) && scriptStatus === "aguardando_gravacao";
+  const canEdit = hasPermission(["Docente", "Especialista", "Coordenador", "SuperAdmin"]) && (!lockedForEditing || scriptStatus === "rascunho");
 
-  // Controle de Visualização (Inversão de telas)
-  const [viewMode, setViewMode] = useState<"redator" | "video">("redator");
-  const [videoPage, setVideoPage] = useState(0);
-  const scenesPerPage = 2;
-  const totalPages = Math.ceil(scenes.length / scenesPerPage);
+  const [isEditingMode, setIsEditingMode] = useState(true);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importText, setImportText] = useState("");
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({
     message: "",
     visible: false,
   });
+
+  const textareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
 
   const showToast = (message: string) => {
     setToast({ message, visible: true });
     setTimeout(() => setToast({ message: "", visible: false }), 3000);
   };
 
-  // 1. Carregar dados do Firestore
+  useEffect(() => {
+    if (user?.workspaceId) {
+      setWorkspaceId(user.workspaceId);
+    }
+  }, [user]);
+
   useEffect(() => {
     if (isNew) {
       const p = searchParams.get("project");
@@ -156,8 +192,14 @@ function EditorContent({ id }: { id: string }) {
           setProject(data.project || "Geral");
           setProjectId(data.projectId || null);
           setScriptStatus(data.status || "rascunho");
+          setCategory(data.category || "video");
           setIsPublic(data.isPublic || false);
           setLockedForEditing(data.lockedForEditing || false);
+          setWorkspaceId(data.workspaceId || user?.workspaceId || "senai");
+          setReviewerId(data.reviewerId || null);
+          setReviewerName(data.reviewerName || null);
+          setEditorId(data.editorId || null);
+          setEditorName(data.editorName || null);
 
           const vQ = query(
             collection(db, "scripts", id, "versions"),
@@ -168,9 +210,19 @@ function EditorContent({ id }: { id: string }) {
 
           if (!vSnap.empty) {
             const vData = vSnap.docs[0].data();
-            setText(vData.content || "");
-            setScenes(vData.scenes || []);
+            const rawContent = vData.content || "";
+            setText(rawContent);
+            let loadedScenes = vData.scenes || [];
+            
+            // Se não houver cenas estruturadas, tenta parsear o conteúdo bruto
+            if (loadedScenes.length === 0 && rawContent) {
+              loadedScenes = parseScript(rawContent);
+            }
+            
+            const finalScenes = loadedScenes.map((s: Scene) => ({ ...s, observation: s.observation || "" }));
+            setScenes(finalScenes);
           }
+
         }
       } catch (e) {
         console.error("Erro ao carregar roteiro:", e);
@@ -179,109 +231,41 @@ function EditorContent({ id }: { id: string }) {
       }
     }
     loadScript();
-  }, [id, isNew, searchParams]);
+  }, [id, isNew, searchParams, user]);
 
-  // Funções de Validação
-  const updateStatus = async (newStatus: ScriptStatus) => {
-    if (isNew) {
-      showToast("Salve o roteiro primeiro antes de mudar o status.");
-      return;
+  useEffect(() => {
+    if (user?.workspaceId) {
+      fetchZeckiProjects(user.workspaceId).then(setZeckiProjects);
     }
-    
-    try {
-      const updateData: Record<string, unknown> = {
-        status: newStatus,
-        updatedAt: serverTimestamp(),
-      };
+  }, [user]);
 
-      if (newStatus === "em_revisao" || newStatus === "revisao_realizada" || newStatus === "aguardando_gravacao") {
-        updateData.lockedForEditing = false;
-        setLockedForEditing(false);
-      } else if (newStatus === "rascunho") {
-        updateData.validatedBy = null;
-        updateData.validatedAt = null;
-        updateData.lockedForEditing = false;
-        setLockedForEditing(false);
-      } else if (newStatus === "gravado") {
-        updateData.sentAt = new Date().toISOString();
-      }
-
-      await updateDoc(doc(db, "scripts", id), updateData);
-      setScriptStatus(newStatus);
-      showToast(`Roteiro movido para ${statusConfig[newStatus].label}`);
-    } catch (e) {
-      console.error("Erro ao atualizar status:", e);
-      showToast("Erro ao atualizar status.");
-    }
-  };
-
-  const togglePublic = async () => {
-    if (isNew) return;
-    try {
-      const newIsPublic = !isPublic;
-      await updateDoc(doc(db, "scripts", id), {
-        isPublic: newIsPublic,
-        updatedAt: serverTimestamp(),
-      });
-      setIsPublic(newIsPublic);
-      showToast(newIsPublic ? "Link público ativado" : "Link público desativado");
-    } catch (e) {
-      console.error("Erro ao alternar visibilidade:", e);
-    }
-  };
-
-  const unlockForEditing = async () => {
-    if (isNew || !canValidate) return;
-    try {
-      await updateDoc(doc(db, "scripts", id), {
-        lockedForEditing: false,
-        updatedAt: serverTimestamp(),
-      });
-      setLockedForEditing(false);
-      showToast("Roteiro desbloqueado para edição");
-    } catch (e) {
-      console.error("Erro ao desbloquear:", e);
-    }
-  };
-
-  /* const sendToZecki = async () => {
-    if (!canValidate || scriptStatus !== "validado") return;
-    
-    setIsSaving(true);
-    try {
-      const scriptUrl = `${window.location.origin}/s/${id}`;
-      
-      const result = await addScriptLinkToZecki(
-        project,
-        project,
-        title,
-        scriptUrl,
-        id,
-        user?.displayName || user?.email || "Unknown"
-      );
-
-      if (result.success) {
-        await updateDoc(doc(db, "scripts", id), {
-          status: "enviado",
-          sentAt: new Date().toISOString(),
-          updatedAt: serverTimestamp(),
+  const generateRawTextFromBlocks = (currentScenes: Scene[]) => {
+    let newText = "";
+    currentScenes.forEach((scene) => {
+      newText += `Cena ${scene.sceneNumber}\n`;
+      if (scene.time) newText += `Tempo: ${scene.time}\n`;
+      if (scene.imageUrl) newText += `[img1]: ${scene.imageUrl}\n`;
+      if (scene.images) {
+        scene.images.forEach((img, idx) => {
+          if (img) newText += `[img${idx + 2}]: ${img}\n`;
         });
-        setScriptStatus("enviado");
-        showToast("Roteiro enviado para gravação no Zecki!");
-      } else {
-        showToast("Erro ao enviar para Zecki: " + (result.error || "Erro desconhecido"));
       }
-    } catch (e) {
-      console.error("Erro ao enviar para Zecki:", e);
-      showToast("Erro ao enviar para Zecki");
-    } finally {
-      setIsSaving(false);
-    }
-  }; */
+      if (scene.lettering != null) {
+        const letters = scene.lettering.split('\n');
+        letters.forEach((l, idx) => {
+          if (l.trim()) newText += `[let${idx + 1}]: ${l.trim()}\n`;
+        });
+      }
+      if (scene.sourceUrl) newText += `[url1]: ${scene.sourceUrl}\n`;
+      if (scene.observation) newText += `OBS: ${scene.observation}\n`;
+      if (scene.spokenText) newText += `Locução: ${scene.spokenText}\n`;
+      newText += "\n";
+    });
+    return newText.trim();
+  };
 
-  // 2. Lógica de Salvamento
   const handleSaveClick = () => {
-    if (scenes.length === 0) return alert("Processe o roteiro antes de salvar.");
+    if (scenes.length === 0) return alert("Adicione conteúdo antes de salvar.");
     setShowSaveModal(true);
   };
 
@@ -289,53 +273,89 @@ function EditorContent({ id }: { id: string }) {
     setShowSaveModal(false);
     setIsSaving(true);
     try {
-      // Limpa campos undefined/null das cenas para evitar erro do Firestore
-      const cleanScenes = scenes.map(scene => ({
-        id: scene.id,
-        sceneNumber: scene.sceneNumber,
-        ...Object.fromEntries(
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          Object.entries(scene).filter(([_, value]) => value !== undefined && value !== null && value !== "")
-        )
-      }));
-
+      const finalWorkspaceId = workspaceId || user?.workspaceId || "senai";
       let currentScriptId = id;
+      const rawContent = generateRawTextFromBlocks(scenes);
+      
+      const saveData = sanitizeData({
+        title,
+        project,
+        projectName: project, // Sincronia com Dashboard
+        projectId,
+        category,
+        workspaceId: finalWorkspaceId,
+        status: saveStatus,
+        updatedAt: serverTimestamp(),
+        isPublic: isPublic,
+        reviewerId,
+        reviewerName,
+        editorId,
+        editorName,
+      });
+
       if (isNew) {
         const docRef = await addDoc(collection(db, "scripts"), {
-          title,
-          project,
-          projectId,
-          status: saveStatus,
+          ...saveData,
           createdBy: user?.uid,
           createdByName: user?.displayName || user?.email || "Unknown",
           createdAt: new Date().toISOString(),
-          updatedAt: serverTimestamp(),
-          isPublic: false,
           lockedForEditing: false,
         });
         currentScriptId = docRef.id;
-        setScriptStatus(saveStatus);
       } else {
-        await updateDoc(doc(db, "scripts", currentScriptId), {
-          title,
-          project,
-          projectId,
-          status: saveStatus,
-          updatedAt: serverTimestamp(),
-        });
-        setScriptStatus(saveStatus);
+        await updateDoc(doc(db, "scripts", currentScriptId), saveData);
       }
 
       await addDoc(
-        collection(db, "scripts", currentScriptId as string, "versions"),
-        {
-          content: text,
-          scenes: cleanScenes,
+        collection(db, "scripts", currentScriptId as string, "versions"), 
+        sanitizeData({
+          content: rawContent,
+          scenes: scenes,
           createdAt: new Date().toISOString(),
-        }
+        })
       );
 
-      showToast("Roteiro salvo com sucesso!");
+      // --- AUTOMAÇÃO DE TAREFAS KANBAN ---
+      // 1. Criar tarefa de Gravação quando a revisão é concluída
+      if ((saveStatus === "revisao_realizada" || saveStatus === "aguardando_gravacao") && projectId) {
+        try {
+          await createRecordingTask(
+            projectId, 
+            title, 
+            currentScriptId as string, 
+            user?.uid || "", 
+            finalWorkspaceId,
+            category,
+            `${window.location.origin}/editor/${currentScriptId}`
+          );
+          showToast(`Tarefa de Gravação de ${category === "video" ? "Vídeo" : "Podcast"} criada!`);
+        } catch (taskErr) {
+          console.error("Erro ao automatizar tarefa de gravação:", taskErr);
+        }
+      }
+
+      // 2. Criar tarefa de Edição quando o roteiro é marcado como Gravado
+      if (saveStatus === "gravado" && projectId) {
+        try {
+          // Importamos a função de edição que acabamos de adicionar
+          const { createEditingTask } = await import("@/lib/zecki");
+          await createEditingTask(
+            projectId, 
+            title, 
+            currentScriptId as string, 
+            user?.uid || "", 
+            finalWorkspaceId,
+            category,
+            `${window.location.origin}/editor/${currentScriptId}`
+          );
+          showToast(`Tarefa de Edição de ${category === "video" ? "Vídeo" : "Podcast"} criada!`);
+        } catch (taskErr) {
+          console.error("Erro ao automatizar tarefa de edição:", taskErr);
+        }
+      }
+      
+      showToast("Roteiro salvo!");
+      setIsEditingMode(false);
       if (isNew) router.push("/dashboard");
     } catch (e) {
       console.error(e);
@@ -345,627 +365,404 @@ function EditorContent({ id }: { id: string }) {
     }
   };
 
+
   const updateScene = (index: number, data: Partial<Scene>) => {
     const ns = [...scenes];
     ns[index] = { ...ns[index], ...data };
     setScenes(ns);
   };
 
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    showToast(`${label} copiado!`);
+  };
+
+  const addBlockToScene = (index: number, type: 'spokenText' | 'imageUrl' | 'lettering' | 'observation') => {
+    const ns = [...scenes];
+    const scene = ns[index];
+    if (type === 'spokenText') scene.spokenText = "";
+    if (type === 'imageUrl') {
+       if (!scene.imageUrl) scene.imageUrl = "";
+       else scene.images = [...(scene.images || []), ""];
+    }
+    if (type === 'lettering') {
+       if (scene.lettering == null) scene.lettering = "";
+       else scene.lettering += "\n";
+    }
+    if (type === 'observation') scene.observation = "";
+    setScenes(ns);
+  };
+
+  const removeBlockFromScene = (index: number, type: 'spokenText' | 'imageUrl' | 'lettering' | 'observation', subIndex?: number) => {
+    const ns = [...scenes];
+    const scene = ns[index];
+    if (type === 'spokenText') scene.spokenText = null;
+    if (type === 'imageUrl') {
+      if (subIndex === undefined) {
+        if (scene.images && scene.images.length > 0) { scene.imageUrl = scene.images[0]; scene.images = scene.images.slice(1); }
+        else { scene.imageUrl = null; }
+      } else { scene.images = scene.images?.filter((_, i) => i !== subIndex); }
+    }
+    if (type === 'lettering') {
+      const letters = scene.lettering?.split('\n') || [];
+      if (subIndex !== undefined) {
+        const filtered = letters.filter((_, i) => i !== subIndex);
+        scene.lettering = filtered.length > 0 ? filtered.join('\n') : null;
+      } else { scene.lettering = null; }
+    }
+    if (type === 'observation') scene.observation = null;
+    setScenes(ns);
+  };
+
+  const insertTagAtCursor = (sceneIndex: number, tag: string) => {
+    const sceneId = scenes[sceneIndex].id;
+    const textarea = textareaRefs.current[sceneId];
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const currentText = scenes[sceneIndex].spokenText || "";
+    const newText = currentText.substring(0, start) + `[${tag}]` + currentText.substring(end);
+    updateScene(sceneIndex, { spokenText: newText });
+    setTimeout(() => { textarea.focus(); const newPos = start + tag.length + 2; textarea.setSelectionRange(newPos, newPos); }, 0);
+  };
+
+  const addEmptyScene = (index?: number) => {
+    const newScene: Scene = { id: crypto.randomUUID(), sceneNumber: String(scenes.length + 1), spokenText: "", observation: "" };
+    if (index !== undefined) { const ns = [...scenes]; ns.splice(index + 1, 0, newScene); setScenes(ns); }
+    else { setScenes([...scenes, newScene]); }
+  };
+
+  const handleImport = () => {
+    if (!importText.trim()) return;
+    const importedScenes = parseScript(importText).map(s => ({ ...s, observation: s.observation || "" }));
+    setScenes([...scenes, ...importedScenes]);
+    setShowImportModal(false);
+    setImportText("");
+    showToast("Roteiro importado!");
+  };
+
   const splitScene = (index: number) => {
-    const s = scenes[index];
-    const mid = Math.floor((s.spokenText?.length || 0) / 2);
-    const sceneA = { ...s, spokenText: s.spokenText?.substring(0, mid) };
-    const sceneB: Scene = {
-      id: crypto.randomUUID(),
-      sceneNumber: `${s.sceneNumber}.1`,
-      spokenText: s.spokenText?.substring(mid) || "",
-      time: "",
-      imageUrl: "",
-      sourceUrl: "",
-      lettering: "",
-    };
-    const updated = [...scenes];
-    updated.splice(index + 1, 0, sceneB);
-    updated[index] = sceneA;
-    setScenes(updated);
+    const scene = scenes[index];
+    const textarea = textareaRefs.current[scene.id];
+    if (!textarea) return;
+    const cursor = textarea.selectionStart;
+    const fullText = scene.spokenText || "";
+    const ns = [...scenes];
+    ns[index] = { ...scene, spokenText: fullText.substring(0, cursor) };
+    ns.splice(index + 1, 0, { id: crypto.randomUUID(), sceneNumber: String(index + 2), spokenText: fullText.substring(cursor), lettering: null, imageUrl: null, observation: "" });
+    setScenes(ns);
+    showToast("Cena dividida!");
   };
 
-  const copyLettering = (rawText: string) => {
-    // Remove marcações como [1], [2], etc e limpa espaços
-    const cleanText = rawText.replace(/\[\d+\]/g, "").trim();
-    navigator.clipboard.writeText(cleanText);
-    showToast("Lettering copiado com sucesso!");
+  const handleDownloadWord = async () => {
+    try {
+      await exportToWord({ title, projectName: project }, scenes);
+      showToast("Backup Word gerado!");
+    } catch (error) {
+      console.error(error);
+      alert("Falha ao gerar Word.");
+    }
   };
 
-  if (loading)
-    return (
-      <div className="h-screen flex items-center justify-center dark:bg-zinc-950">
-        <Loader2 className="animate-spin text-blue-500 w-10 h-10" />
-      </div>
-    );
+  if (loading) return <div className="h-screen flex items-center justify-center bg-zinc-950 font-black text-blue-500 animate-pulse">CARREGANDO...</div>;
 
   return (
-    <div className="flex flex-col md:flex-row h-[calc(100vh-64px)] overflow-hidden bg-zinc-50 dark:bg-zinc-950 transition-all text-zinc-900 dark:text-zinc-100 font-sans">
-      {/* TOAST DE FEEDBACK */}
-      {toast.visible && (
-        <div className="fixed top-10 left-1/2 -translate-x-1/2 z-[100] bg-zinc-900 dark:bg-white text-white dark:text-black px-8 py-3 rounded-full shadow-2xl flex items-center gap-3 animate-in slide-in-from-top-10">
-          <CheckCircle2 size={18} className="text-emerald-500" />
-          <span className="text-xs font-black uppercase tracking-widest">
-            {toast.message}
-          </span>
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans pb-32 transition-colors duration-500">
+      {/* HEADER FIXO */}
+      <div className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800 sticky top-0 z-[10] shadow-sm">
+        <div className="container mx-auto px-4 h-16 flex items-center justify-between gap-4">
+          <div className="flex flex-col min-w-0 flex-1">
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" size="icon" asChild className="h-8 w-8 shrink-0"><Link href="/dashboard"><ChevronLeft size={16} /></Link></Button>
+              <Input 
+                value={title} 
+                onChange={(e) => setTitle(e.target.value)} 
+                className="h-7 font-black bg-transparent border-none focus-visible:ring-0 p-0 text-lg md:text-xl truncate" 
+                placeholder="Título do Roteiro"
+              />
+            </div>
+            
+            <div className="flex items-center gap-4 mt-0.5 ml-11">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter shrink-0">Projeto:</span>
+                <Select 
+                  value={projectId || "geral"} 
+                  onValueChange={(val) => {
+                    if (val === "geral") {
+                      setProjectId(null);
+                      setProject("Geral");
+                    } else {
+                      const selected = zeckiProjects.find(p => p.id === val);
+                      if (selected) {
+                        setProjectId(selected.id);
+                        setProject(selected.name);
+                      }
+                    }
+                  }}
+                >
+                  <SelectTrigger className="h-5 py-0 px-2 w-fit border-none shadow-none text-[10px] font-black text-blue-600 dark:text-blue-500 bg-blue-50/50 dark:bg-blue-900/20 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors gap-1.5 focus:ring-0">
+                    <SelectValue placeholder="Selecionar Projeto" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-2xl border-none shadow-2xl bg-white dark:bg-zinc-900 p-2">
+                    <SelectItem value="geral" className="text-[11px] font-bold rounded-xl focus:bg-zinc-100 dark:focus:bg-zinc-800">Geral</SelectItem>
+                    {zeckiProjects.map((p) => (
+                      <SelectItem key={p.id} value={p.id} className="text-[11px] font-bold rounded-xl focus:bg-zinc-100 dark:focus:bg-zinc-800">
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex items-center gap-1.5 border-l border-zinc-200 dark:border-zinc-800 pl-4">
+                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter shrink-0">Tipo:</span>
+                <Select value={category} onValueChange={(val: "video" | "podcast") => setCategory(val)}>
+                  <SelectTrigger className="h-5 py-0 px-2 w-fit border-none shadow-none text-[10px] font-black text-purple-600 dark:text-purple-400 bg-purple-50/50 dark:bg-purple-900/20 rounded-full hover:bg-purple-100 dark:hover:bg-purple-900/40 transition-colors gap-1.5 focus:ring-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-2xl border-none shadow-2xl bg-white dark:bg-zinc-900 p-2">
+                    <SelectItem value="video" className="text-[11px] font-bold rounded-xl focus:bg-zinc-100 dark:focus:bg-zinc-800 flex items-center gap-2">
+                      Vídeo
+                    </SelectItem>
+                    <SelectItem value="podcast" className="text-[11px] font-bold rounded-xl focus:bg-zinc-100 dark:focus:bg-zinc-800 flex items-center gap-2">
+                      Podcast
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={handleDownloadWord} className="h-9 text-[10px] font-black uppercase tracking-widest gap-2 rounded-full border-2 hidden md:flex">
+                <FileDown size={16} /> Backup Word
+              </Button>
+             <Button variant={isEditingMode ? "outline" : "secondary"} size="sm" onClick={() => setIsEditingMode(!isEditingMode)} className="h-9 text-[10px] font-black uppercase tracking-widest gap-2 rounded-full border-2">
+                {isEditingMode ? <Eye size={16} /> : <EyeOff size={16} />} {isEditingMode ? "Ver Final" : "Editar"}
+              </Button>
+              <Button onClick={handleSaveClick} className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] tracking-widest px-6 rounded-full shadow-lg">
+                <Save size={16} className="mr-2" /> SALVAR
+              </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="container mx-auto max-w-4xl py-10 px-4 space-y-12">
+        {scenes.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-24 border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-[40px] bg-white dark:bg-zinc-900/50">
+            <PlusSquare size={48} className="text-zinc-300 mb-4" />
+            <h3 className="font-black text-zinc-500 uppercase tracking-widest mb-6">Seu roteiro está vazio</h3>
+            <div className="flex gap-4">
+              <Button onClick={() => addEmptyScene()} className="bg-blue-600 text-[10px] font-black uppercase tracking-widest px-8 h-12 rounded-full shadow-xl">Nova Cena</Button>
+              <Button variant="outline" onClick={() => setShowImportModal(true)} className="text-[10px] font-black uppercase tracking-widest px-8 h-12 rounded-full shadow-xl">Importar Texto</Button>
+            </div>
+          </div>
+        ) : (
+          scenes.map((scene, index) => (
+            <div key={scene.id} className="relative group/scene">
+              <Card className={`transition-all duration-500 border-zinc-200 dark:border-zinc-800 shadow-2xl rounded-[32px] overflow-hidden ${isEditingMode ? 'bg-white dark:bg-zinc-900' : 'bg-white/50 dark:bg-zinc-900/50 shadow-none scale-[0.98]'}`}>
+                <div className="bg-zinc-50/50 dark:bg-zinc-800/20 px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 flex justify-between items-center group-focus-within/scene:bg-blue-50/20">
+                  <div className="flex items-center gap-4">
+                    <span className="bg-zinc-900 dark:bg-blue-600 text-white text-[11px] px-4 py-1.5 rounded-full font-black tracking-tighter shadow-md">CENA {scene.sceneNumber}</span>
+                    {isEditingMode ? (
+                      <Input placeholder="Tempo" value={scene.time || ""} onChange={(e) => updateScene(index, { time: e.target.value })} className="h-7 w-20 text-[10px] bg-transparent border-dashed border-zinc-300 py-0" />
+                    ) : (
+                      <Badge variant="secondary" className="text-[10px] font-bold">{scene.time || "--:--"}</Badge>
+                    )}
+
+                    {/* NOVOS BOTÕES DE ADIÇÃO RÁPIDA (ACIMA) */}
+                    {isEditingMode && (
+                      <div className="flex items-center gap-1 border-l pl-4 ml-2 border-zinc-200 dark:border-zinc-800">
+                        <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'spokenText')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-blue-500 transition-colors">
+                           <MessageSquare size={14} className="text-blue-500" /> Loc
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'lettering')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-amber-500 transition-colors">
+                           <Type size={14} className="text-amber-500" /> Let
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'imageUrl')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-purple-500 transition-colors">
+                           <ImageIcon size={14} className="text-purple-500" /> Img
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                  {isEditingMode && (
+                    <div className="flex items-center gap-1 opacity-0 group-hover/scene:opacity-100 transition-opacity">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" onClick={() => splitScene(index)}><Scissors size={14} /></Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full text-red-500" onClick={() => setScenes(scenes.filter((_, i) => i !== index))}><Trash2 size={14} /></Button>
+                    </div>
+                  )}
+                </div>
+
+                <CardContent className="p-6 md:p-8 space-y-8">
+                  {/* LOCUÇÃO */}
+                  {(scene.spokenText != null) && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                         <Label className="text-[10px] uppercase font-black text-blue-500 tracking-widest flex items-center gap-2"><MessageSquare size={16} /> Locução</Label>
+                         <div className="flex gap-2">
+                            <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100" onClick={() => copyToClipboard(scene.spokenText || "", "Locução")}><Copy size={12} /></Button>
+                            {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'spokenText')}><Trash2 size={12} /></Button>}
+                         </div>
+                      </div>
+                      <HighlightedSpokenText text={scene.spokenText || ""} onChange={(e) => updateScene(index, { spokenText: e.target.value })} textareaRef={(el) => { if (el) textareaRefs.current[scene.id] = el; }} disabled={!canEdit} isEditing={isEditingMode} />
+                    </div>
+                  )}
+
+                  {/* LETTERINGS */}
+                  {(scene.lettering != null) && (
+                    <div className="space-y-4 pt-6 border-t border-zinc-100 dark:border-zinc-800">
+                      <Label className="text-[10px] uppercase font-black text-amber-600 tracking-widest flex items-center gap-2"><Type size={16} /> Letterings</Label>
+                      <div className="grid gap-3">
+                        {scene.lettering.split('\n').map((letLine, lIdx) => (
+                          <div key={lIdx} className="bg-amber-50/30 dark:bg-amber-950/5 p-4 rounded-2xl border border-amber-100 dark:border-amber-900/20 group/let flex items-center gap-4 transition-all hover:shadow-md">
+                            <span className="text-[9px] font-black text-amber-600 bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 rounded shrink-0">let{lIdx+1}</span>
+                            <div className="flex-1">
+                              {isEditingMode ? (
+                                <Input value={letLine} onChange={(e) => { const letters = scene.lettering?.split('\n') || []; letters[lIdx] = e.target.value; updateScene(index, { lettering: letters.join('\n') }); }} className="text-[12px] font-bold border-none bg-transparent p-0 focus-visible:ring-0 shadow-none h-auto" placeholder="Texto do lettering..." />
+                              ) : (
+                                <p className="text-[13px] font-bold text-amber-800 dark:text-amber-400">{letLine}</p>
+                              )}
+                            </div>
+                            <div className="flex gap-2 opacity-0 group-hover/let:opacity-100 transition-opacity">
+                               <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600" onClick={() => copyToClipboard(letLine, `Let ${lIdx+1}`)}><Copy size={12} /></Button>
+                               {isEditingMode && (
+                                 <><Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600" onClick={() => insertTagAtCursor(index, `let${lIdx+1}`)}><Pin size={12} /></Button><Button variant="ghost" size="icon" className="h-6 w-6 text-red-500" onClick={() => removeBlockFromScene(index, 'lettering', lIdx)}><Trash2 size={12} /></Button></>
+                               )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* IMAGENS */}
+                  {(scene.imageUrl != null) && (
+                    <div className="space-y-4 pt-6 border-t border-zinc-100 dark:border-zinc-800">
+                       <Label className="text-[10px] uppercase font-black text-purple-500 tracking-widest flex items-center gap-2"><ImageIcon size={16} /> Imagens</Label>
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="bg-zinc-100/30 dark:bg-zinc-950/20 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 group/img space-y-3">
+                             <div className="flex justify-between items-center">
+                               <span className="text-[9px] font-black text-purple-500 bg-purple-50/50 px-2 py-0.5 rounded">img1</span>
+                               {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover/img:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'imageUrl')}><Trash2 size={12} /></Button>}
+                             </div>
+                             {isEditingMode && <Input value={scene.imageUrl || ""} onChange={(e) => updateScene(index, { imageUrl: e.target.value })} className="h-8 text-[11px] bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800" placeholder="URL da imagem..." />}
+                             <div className="flex items-center gap-3">
+                                {isEditingMode && <Button onClick={() => insertTagAtCursor(index, `img1`)} variant="outline" size="sm" className="h-7 text-[10px] font-black flex-1 border-2">MARCAR</Button>}
+                                {scene.imageUrl && (
+                                  <div className="h-16 w-16 relative rounded-xl border overflow-hidden bg-black shrink-0 shadow-lg">
+                                    <Image 
+                                      src={scene.imageUrl} 
+                                      fill 
+                                      className="object-contain" 
+                                      alt="Cena" 
+                                      unoptimized={scene.imageUrl.startsWith('http')}
+                                    />
+                                  </div>
+                                )}
+                             </div>
+                          </div>
+                          {scene.images?.map((extraImg, eiIdx) => (
+                            <div key={eiIdx} className="bg-zinc-100/30 dark:bg-zinc-950/20 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 group/img space-y-3">
+                               <div className="flex justify-between items-center"><span className="text-[9px] font-black text-purple-500 bg-purple-50/50 px-2 py-0.5 rounded">img{eiIdx+2}</span>{isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover/img:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'imageUrl', eiIdx)}><Trash2 size={12} /></Button>}</div>
+                               {isEditingMode && <Input value={extraImg} onChange={(e) => { const extra = [...(scene.images || [])]; extra[eiIdx] = e.target.value; updateScene(index, { images: extra }); }} className="h-8 text-[11px] bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800" placeholder="URL da imagem..." />}
+                               <div className="flex items-center gap-3">
+                                 {isEditingMode && <Button onClick={() => insertTagAtCursor(index, `img${eiIdx+2}`)} variant="outline" size="sm" className="h-7 text-[10px] font-black flex-1 border-2">MARCAR</Button>}
+                                 {extraImg && (
+                                   <div className="h-16 w-16 relative rounded-xl border overflow-hidden bg-black shrink-0 shadow-lg">
+                                     <Image 
+                                       src={extraImg} 
+                                       fill 
+                                       className="object-contain" 
+                                       alt="Cena Extra" 
+                                       unoptimized={extraImg.startsWith('http')}
+                                     />
+                                   </div>
+                                 )}
+                               </div>
+                            </div>
+                          ))}
+                       </div>
+                    </div>
+                  )}
+
+                  {/* NOTAS (Sempre presente) */}
+                  <div className="pt-6 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
+                    <Label className="text-[10px] uppercase font-black text-zinc-500 tracking-widest flex items-center gap-2">Notas do Editor</Label>
+                    {isEditingMode ? (
+                      <Textarea value={scene.observation || ""} onChange={(e) => updateScene(index, { observation: e.target.value })} placeholder="Adicione observações..." className="text-[12px] bg-zinc-50/50 dark:bg-zinc-950/30 border-none italic min-h-[60px] resize-none focus-visible:ring-0" />
+                    ) : (
+                      <p className="text-[12px] italic text-zinc-600 dark:text-zinc-400 p-3 bg-zinc-100/50 dark:bg-zinc-800/30 rounded-xl">{scene.observation || "Nenhuma observação."}</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Adicionar Cena entre cenas */}
+              {isEditingMode && (
+                <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 z-10 opacity-0 group-hover/scene:opacity-100 transition-all">
+                  <Button onClick={() => addEmptyScene(index)} className="h-10 w-10 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-xl p-0 hover:scale-110"><Plus size={20} /></Button>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+
+        {isEditingMode && (
+          <Button variant="outline" className="w-full border-dashed border-2 py-12 text-zinc-400 dark:border-zinc-800 hover:text-blue-500 hover:border-blue-500 transition-all rounded-[32px] gap-4 text-[13px] font-black bg-white/30" onClick={() => addEmptyScene()}>
+            <PlusSquare size={32} /> ADICIONAR NOVA CENA AO FINAL
+          </Button>
+        )}
+      </div>
+
+      {/* FOOTER FIXO */}
+      {isEditingMode && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3">
+          <Button onClick={() => setShowImportModal(true)} variant="outline" className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl shadow-2xl rounded-full h-12 px-6 border-2 font-black text-[10px] tracking-widest uppercase"><Import size={18} className="mr-2" /> Importar Roteiro</Button>
+          <Button onClick={handleSaveClick} className="bg-zinc-900 border-2 dark:bg-zinc-100 text-white dark:text-black shadow-2xl rounded-full h-12 px-8 font-black text-[10px] tracking-widest uppercase hover:scale-105 transition-all"><Save size={18} className="mr-2" /> Salvar Tudo</Button>
         </div>
       )}
 
-      {/* PAINEL: TEXTO BRUTO (REDATOR / SIDEBAR NA EDIÇÃO) */}
-      <div
-        className={`flex flex-col p-6 space-y-4 overflow-y-auto border-zinc-200 dark:border-zinc-800 transition-all duration-500 ${
-          viewMode === "redator"
-            ? "flex-1 border-r"
-            : "w-[380px] border-r bg-zinc-100/50 dark:bg-zinc-900/30 order-first"
-        }`}
-      >
-        <div className="flex items-center gap-4 mb-2 shrink-0">
-          <Button variant="ghost" size="icon" asChild className="shrink-0">
-            <Link href="/dashboard">
-              <ChevronLeft />
-            </Link>
-          </Button>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="h-7 font-bold bg-transparent border-none focus-visible:ring-0 p-0 text-lg shadow-none"
-              />
-              <Badge className={`${statusConfig[scriptStatus]?.color} hover:${statusConfig[scriptStatus]?.color} text-white text-[10px] px-2 py-0.5`}>
-                {statusConfig[scriptStatus]?.label}
-              </Badge>
-              {isPublic && (
-                <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-green-500 text-green-600">
-                  <Eye className="w-3 h-3 mr-1" /> Público
-                </Badge>
-              )}
-            </div>
-            <div className="flex items-center gap-2 mt-0.5">
-              <Input
-                value={project}
-                onChange={(e) => setProject(e.target.value)}
-                className="h-5 bg-transparent border-none focus-visible:ring-0 p-0 text-[10px] text-blue-500 font-black uppercase tracking-widest shadow-none w-auto"
-              />
-              {lockedForEditing && scriptStatus !== "rascunho" && (
-                <span className="text-[10px] text-orange-500 flex items-center gap-1">
-                  <Lock className="w-3 h-3" /> Bloqueado
-                </span>
-              )}
-            </div>
-          </div>
+      {toast.visible && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] bg-zinc-900 dark:bg-zinc-100 text-white dark:text-black px-8 py-3 rounded-full shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4">
+          <ClipboardCheck size={18} className="text-emerald-500" />
+          <span className="text-[10px] font-black uppercase tracking-widest">{toast.message}</span>
         </div>
+      )}
 
-        {/* Barra de Status no Topo */}
-        <div className="flex items-center justify-between gap-2 px-4 py-2 bg-zinc-100 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-700 shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-black uppercase text-zinc-500">Status:</span>
-            {canValidate && !isNew ? (
-              <div className="flex items-center gap-1">
-                {scriptStatus === "rascunho" && (
-                  <Button size="sm" onClick={() => updateStatus("em_revisao")} className="h-6 text-[10px] bg-yellow-500 hover:bg-yellow-600">
-                    <Clock className="w-3 h-3 mr-1" /> Enviar para Revisão
-                  </Button>
-                )}
-                {scriptStatus === "em_revisao" && (
-                  <>
-                    <Button size="sm" onClick={() => updateStatus("revisao_realizada")} className="h-6 text-[10px] bg-orange-500 hover:bg-orange-600">
-                      <CheckCircle2 className="w-3 h-3 mr-1" /> Revisão Realizada
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => updateStatus("rejeitado")} className="h-6 text-[10px] border-red-500 text-red-500 hover:bg-red-50">
-                      <XCircle className="w-3 h-3 mr-1" /> Rejeitar
-                    </Button>
-                  </>
-                )}
-                {scriptStatus === "revisao_realizada" && (
-                  <>
-                    <Button size="sm" onClick={() => updateStatus("aguardando_gravacao")} className="h-6 text-[10px] bg-green-500 hover:bg-green-600">
-                      <CheckCircle2 className="w-3 h-3 mr-1" /> Aguardando Gravação
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => updateStatus("rascunho")} className="h-6 text-[10px]">
-                      <FileText className="w-3 h-3 mr-1" /> Voltar
-                    </Button>
-                  </>
-                )}
-                {scriptStatus === "aguardando_gravacao" && (
-                  <>
-                    <Button size="sm" onClick={() => updateStatus("gravado")} className="h-6 text-[10px] bg-blue-500 hover:bg-blue-600">
-                      <Send className="w-3 h-3 mr-1" /> Marcar como Gravado
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => updateStatus("revisao_realizada")} className="h-6 text-[10px]">
-                      <FileText className="w-3 h-3 mr-1" /> Voltar
-                    </Button>
-                  </>
-                )}
-                {scriptStatus === "gravado" && (
-                  <Button size="sm" variant="outline" onClick={() => updateStatus("rascunho")} className="h-6 text-[10px]">
-                    <FileText className="w-3 h-3 mr-1" /> Voltar para Rascunho
-                  </Button>
-                )}
-                {scriptStatus === "rejeitado" && (
-                  <Button size="sm" onClick={() => updateStatus("rascunho")} className="h-6 text-[10px]">
-                    <FileText className="w-3 h-3 mr-1" /> Voltar para Rascunho
-                  </Button>
-                )}
-              </div>
-            ) : (
-              <Badge className={`${statusConfig[scriptStatus]?.color} hover:${statusConfig[scriptStatus]?.color} text-white text-[10px] px-2 py-0.5`}>
-                {statusConfig[scriptStatus]?.label}
-              </Badge>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant={isPublic ? "default" : "outline"}
-              size="sm"
-              onClick={togglePublic}
-              className="h-6 text-[10px]"
-            >
-              <Eye className="w-3 h-3 mr-1" />
-              {isPublic ? "Público" : "Privado"}
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between gap-2 bg-white dark:bg-zinc-900 p-2 rounded border border-zinc-200 dark:border-zinc-800 shrink-0 shadow-sm">
-          <div className="flex bg-zinc-100 dark:bg-zinc-800 p-1 rounded-lg gap-1">
-            <button
-              onClick={() => setViewMode("redator")}
-              className={`px-4 py-1.5 rounded-md text-[10px] font-black flex items-center gap-2 transition-all ${
-                viewMode === "redator"
-                  ? "bg-white dark:bg-zinc-700 shadow-sm text-blue-600 dark:text-blue-400"
-                  : "text-zinc-500"
-              }`}
-            >
-              <FileText size={14} /> REDATOR
-            </button>
-            <button
-              onClick={() => setViewMode("video")}
-              className={`px-4 py-1.5 rounded-md text-[10px] font-black flex items-center gap-2 transition-all ${
-                viewMode === "video"
-                  ? "bg-white dark:bg-zinc-700 shadow-sm text-blue-600 dark:text-blue-400"
-                  : "text-zinc-500"
-              }`}
-            >
-              <Video size={14} /> EDIÇÃO
-            </button>
-          </div>
-          <Button
-            size="sm"
-            onClick={() => setScenes(parseScript(text))}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] px-4 rounded-lg"
-          >
-            <Settings2 className="w-3.5 h-3.5 mr-2" /> PROCESSAR
-          </Button>
-        </div>
-
-        <Textarea
-          placeholder={`Cena 1\nlet: [1] Nome [2] Cargo\nLocução: Seu texto aqui...`}
-          className="flex-1 min-h-[300px] font-mono text-sm p-4 bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 leading-relaxed resize-none focus-visible:ring-blue-500 shadow-inner rounded-2xl"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-      </div>
-
-      {/* PAINEL: BLOCOS (PRINCIPAL NA EDIÇÃO / SIDEBAR NO REDATOR) */}
-      <div
-        className={`flex flex-col bg-white dark:bg-zinc-900 overflow-hidden shadow-2xl transition-all duration-500 ${
-          viewMode === "video"
-            ? "flex-1"
-            : "w-[500px] border-l border-zinc-200 dark:border-zinc-800"
-        }`}
-      >
-        <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50/50 dark:bg-zinc-800/50 backdrop-blur shrink-0">
-          <div className="flex items-center gap-3">
-            <h2 className="font-black text-xs uppercase tracking-widest text-zinc-500 flex items-center gap-2">
-              <Play className="w-4 h-4 text-blue-500" /> Cenas ({scenes.length})
-            </h2>
-            {!isNew && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-[9px] font-black border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
-                asChild
-              >
-                <Link href={`/tp/${id}`} target="_blank">
-                  <MonitorPlay className="w-3 h-3 mr-1.5 text-blue-500" /> PLAY
-                  TP
-                </Link>
-              </Button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {viewMode === "video" && totalPages > 1 && (
-              <div className="flex items-center gap-1 mr-2">
-                <button
-                  onClick={() => setVideoPage(Math.max(0, videoPage - 1))}
-                  disabled={videoPage === 0}
-                  className="p-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed transition"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <span className="text-[10px] font-bold text-zinc-500 px-2">
-                  {videoPage + 1}/{totalPages}
-                </span>
-                <button
-                  onClick={() => setVideoPage(Math.min(totalPages - 1, videoPage + 1))}
-                  disabled={videoPage >= totalPages - 1}
-                  className="p-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed transition"
-                >
-                  <ChevronRight size={14} />
-                </button>
-              </div>
-            )}
-            <Button
-              onClick={handleSaveClick}
-              disabled={isSaving || scenes.length === 0}
-              size="sm"
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] tracking-widest px-4 rounded-lg"
-            >
-              {isSaving ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" />
-              ) : (
-                <Save className="w-3.5 h-3.5 mr-2" />
-              )}
-              SALVAR NO BANCO
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex-1 h-full w-full [&>div]:!block overflow-x-hidden">
-          <div
-            className={`p-4 space-y-4 pb-32 flex flex-col w-full min-w-0 ${
-              viewMode === "video"
-                ? "grid grid-cols-1 xl:grid-cols-2 gap-6 space-y-0"
-                : ""
-            }`}
-          >
-            {(viewMode === "video" 
-              ? scenes.slice(videoPage * scenesPerPage, (videoPage + 1) * scenesPerPage)
-              : scenes
-            ).map((scene, index) => (
-              <Card
-                key={scene.id}
-                className="group bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 shadow-sm hover:border-blue-500/50 transition-all w-full min-w-0 overflow-hidden rounded-2xl"
-              >
-                <div className="bg-zinc-50 dark:bg-zinc-900/50 p-2 border-b border-zinc-100 dark:border-zinc-700 flex justify-between items-center shrink-0">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="bg-zinc-800 dark:bg-blue-600 text-white text-[9px] px-2 py-0.5 rounded-full font-black shrink-0 uppercase tracking-tighter">
-                      CENA {scene.sceneNumber}
-                    </span>
-                    <Input
-                      value={scene.time || ""}
-                      onChange={(e) => updateScene(index, { time: e.target.value })}
-                      placeholder="Tempo"
-                      className="h-6 w-20 text-[10px] bg-transparent border-dashed border-zinc-300 dark:border-zinc-600 p-1 rounded w-full"
-                    />
-                  </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-zinc-400 hover:text-blue-500"
-                      onClick={() => splitScene(index)}
-                    >
-                      <Scissors className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-zinc-400 hover:text-red-500"
-                      onClick={() =>
-                        setScenes(scenes.filter((_, i) => i !== index))
-                      }
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </div>
-
-                <CardContent className="p-3 space-y-4 overflow-hidden">
-                  {/* TELEPROMPTER */}
-                  <div className="space-y-1">
-                    <Label className="text-[9px] uppercase font-black text-blue-500/70 tracking-widest">
-                      Teleprompter
-                    </Label>
-                    {viewMode === "video" && scene.lettering ? (
-                      <div className="min-h-[60px] p-3 bg-zinc-50 dark:bg-zinc-900/50 rounded border border-zinc-200 dark:border-zinc-700/50 text-sm font-medium leading-relaxed shadow-inner overflow-hidden">
-                        {formatEditorLettering(scene.spokenText) || <span className="text-zinc-400 italic">Sem texto...</span>}
-                      </div>
-                    ) : null}
-                    <Textarea
-                      value={scene.spokenText || ""}
-                      onChange={(e) =>
-                        updateScene(index, { spokenText: e.target.value })
-                      }
-                      disabled={!canEdit}
-                      className={`text-sm font-medium leading-relaxed min-h-[100px] border-none bg-zinc-50/50 dark:bg-zinc-900/50 p-3 resize-none w-full rounded shadow-inner dark:text-zinc-200 ${viewMode === "video" && scene.lettering ? "!min-h-[60px]" : ""} ${!canEdit ? "opacity-60" : ""}`}
-                    />
-                  </div>
-
-                  {/* LETTERING */}
-                  {scene.lettering && (
-                    <div className="space-y-1.5">
-                      <Label className="text-[8px] uppercase font-black text-amber-600 dark:text-amber-500 tracking-tighter flex items-center gap-1">
-                        <Type size={10} /> Lettering (Clique p/ copiar)
-                      </Label>
-                      <div className="flex flex-col gap-1">
-                        {scene.lettering
-                          .split("\n")
-                          .filter((l) => l.trim())
-                          .map((line, i) => (
-                            <button
-                              key={i}
-                              onClick={() => copyLettering(line)}
-                              title="Clique para copiar apenas o texto limpo"
-                              className="text-left bg-amber-50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400 text-[10px] px-3 py-2 rounded border border-amber-200 dark:border-amber-900/50 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-all flex items-center justify-between group/let shadow-sm"
-                            >
-                              <span className="truncate flex-1 font-bold">
-                                <span className="opacity-40 mr-2 font-mono">{i + 1}.</span>
-                                {line}
-                              </span>
-                              <Copy
-                                size={12}
-                                className="ml-2 opacity-30 group-hover/let:opacity-100"
-                              />
-                            </button>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* IMG + URL */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                        <ImageIcon className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                        <Input
-                          value={scene.imageUrl || ""}
-                          onChange={(e) =>
-                            updateScene(index, { imageUrl: e.target.value })
-                          }
-                          placeholder="img:"
-                          className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
-                        />
-                        {scene.imageUrl && (
-                          <button
-                            onClick={() => window.open(scene.imageUrl!, "_blank")}
-                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-blue-500"
-                          >
-                            <ExternalLink size={14} />
-                          </button>
-                        )}
-                      </div>
-                      {(scene.images || []).map((img, imgIdx) => (
-                        <div key={imgIdx} className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                          <ImageIcon className="w-3.5 h-3.5 text-zinc-400 shrink-0 opacity-50" />
-                          <Input
-                            value={img}
-                            onChange={(e) => {
-                              const newImages = [...(scene.images || [])];
-                              newImages[imgIdx] = e.target.value;
-                              updateScene(index, { images: newImages });
-                            }}
-                            placeholder={`img ${imgIdx + 2}:`}
-                            className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
-                          />
-                          <button
-                            onClick={() => {
-                              const newImages = (scene.images || []).filter((_, i) => i !== imgIdx);
-                              updateScene(index, { images: newImages });
-                            }}
-                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-red-500"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                        <ExternalLink className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        <Input
-                          value={scene.sourceUrl || ""}
-                          onChange={(e) =>
-                            updateScene(index, { sourceUrl: e.target.value })
-                          }
-                          placeholder="url:"
-                          className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
-                        />
-                        {scene.sourceUrl && (
-                          <button
-                            onClick={() => window.open(scene.sourceUrl!, "_blank")}
-                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-emerald-500"
-                          >
-                            <ExternalLink size={14} />
-                          </button>
-                        )}
-                      </div>
-                      {(scene.sources || []).length > 0 && (scene.sources || []).map((src, srcIdx) => (
-                        <div key={srcIdx} className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                          <ExternalLink className="w-3.5 h-3.5 text-zinc-400 shrink-0 opacity-50" />
-                          <Input
-                            value={src}
-                            onChange={(e) => {
-                              const newSources = [...(scene.sources || [])];
-                              newSources[srcIdx] = e.target.value;
-                              updateScene(index, { sources: newSources });
-                            }}
-                            placeholder={`url ${srcIdx + 2}:`}
-                            className="h-6 text-[10px] border-none bg-transparent focus-visible:ring-0 p-0 min-w-0 flex-1 dark:text-zinc-300"
-                          />
-                          <button
-                            onClick={() => {
-                              const newSources = (scene.sources || []).filter((_, i) => i !== srcIdx);
-                              updateScene(index, { sources: newSources });
-                            }}
-                            className="p-1 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded text-red-500"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      const newImages = [...(scene.images || []), ""];
-                      const newSources = [...(scene.sources || []), ""];
-                      updateScene(index, { images: newImages, sources: newSources });
-                    }}
-                    className="flex items-center gap-2 text-[9px] font-bold text-purple-500 hover:text-purple-600 transition px-2 py-1 rounded hover:bg-purple-50 dark:hover:bg-purple-900/20"
-                  >
-                    <Plus size={12} /> ADICIONAR IMG + URL
-                  </button>
-
-                  {/* OBSERVAÇÃO */}
-                  <div className="space-y-1">
-                    <Label className="text-[9px] uppercase font-black text-purple-500/70 tracking-widest">
-                      Observação
-                    </Label>
-                    <Textarea
-                      value={scene.observation || ""}
-                      onChange={(e) =>
-                        updateScene(index, { observation: e.target.value })
-                      }
-                      placeholder="Notas e observações..."
-                      className="text-xs font-medium leading-relaxed min-h-[60px] border-none bg-purple-50/50 dark:bg-purple-900/20 p-3 resize-none w-full rounded shadow-inner dark:text-purple-200 placeholder:text-purple-300/50"
-                    />
-                  </div>
-
-                  {/* PRÉVIA DA IMAGEM */}
-                  {(scene.imageUrl || (scene.images && scene.images.length > 0)) && (
-                    <div className="grid grid-cols-2 gap-2 shrink-0 mt-2">
-                      {scene.imageUrl && (
-                        <div className="relative aspect-video rounded-2xl overflow-hidden border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-black shadow-lg">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={scene.imageUrl}
-                            alt="Preview"
-                            className="w-full h-full object-contain"
-                            onError={(e) =>
-                              (e.currentTarget.src =
-                                "https://placehold.co/400x225?text=Link+Invalido")
-                            }
-                          />
-                        </div>
-                      )}
-                      {(scene.images || []).filter((img) => img && img.trim() !== "").map((img, idx) => (
-                        <div key={idx} className="relative aspect-video rounded-2xl overflow-hidden border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-black shadow-lg">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={img}
-                            alt={`Preview ${idx + 2}`}
-                            className="w-full h-full object-contain"
-                            onError={(e) =>
-                              (e.currentTarget.src =
-                                "https://placehold.co/400x225?text=Link+Invalido")
-                            }
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-
-            <Button
-              variant="outline"
-              className={`w-full border-dashed border-2 py-12 text-zinc-400 dark:border-zinc-700 hover:text-blue-500 hover:border-blue-500 transition-all bg-transparent shrink-0 rounded-2xl ${
-                viewMode === "video" ? "col-span-full" : ""
-              }`}
-              onClick={() =>
-                setScenes([
-                  ...scenes,
-                  {
-                    id: crypto.randomUUID(),
-                    sceneNumber: String(scenes.length + 1),
-                    spokenText: "",
-                  },
-                ])
-              }
-            >
-              <Plus className="w-5 h-5 mr-2" /> NOVO BLOCO MANUAL
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Modal de Salvar */}
+      {/* MODALS */}
       <Dialog open={showSaveModal} onOpenChange={setShowSaveModal}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Salvar Roteiro</DialogTitle>
-            <DialogDescription>
-              Escolha em qual status deseja salvar o roteiro.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-3 py-4">
-            {scriptStatus === "rascunho" ? (
-              <>
-                <Button
-                  onClick={() => handleSave("rascunho")}
-                  disabled={isSaving}
-                  className="w-full h-12 bg-zinc-600 hover:bg-zinc-700 text-white justify-start"
-                >
-                  <FileText className="w-5 h-5 mr-2" />
-                  <span className="font-bold">Salvar como Rascunho</span>
-                </Button>
-                <Button
-                  onClick={() => handleSave("em_revisao")}
-                  disabled={isSaving}
-                  className="w-full h-12 bg-yellow-500 hover:bg-yellow-600 text-white justify-start"
-                >
-                  <Clock className="w-5 h-5 mr-2" />
-                  <span className="font-bold">Enviar para Revisão</span>
-                </Button>
-              </>
-            ) : scriptStatus === "em_revisao" ? (
-              <>
-                <Button
-                  onClick={() => handleSave("em_revisao")}
-                  disabled={isSaving}
-                  className="w-full h-12 bg-yellow-500 hover:bg-yellow-600 text-white justify-start"
-                >
-                  <FileText className="w-5 h-5 mr-2" />
-                  <span className="font-bold">Salvar como Em Revisão</span>
-                </Button>
-                <Button
-                  onClick={() => handleSave("aguardando_gravacao")}
-                  disabled={isSaving}
-                  className="w-full h-12 bg-green-600 hover:bg-green-700 text-white justify-start"
-                >
-                  <Video className="w-5 h-5 mr-2" />
-                  <span className="font-bold">Enviar para Gravação</span>
-                </Button>
-              </>
-            ) : (
-              <Button
-                onClick={() => handleSave(scriptStatus)}
-                disabled={isSaving}
-                className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white justify-start"
-              >
-                <Save className="w-5 h-5 mr-2" />
-                <span className="font-bold">Salvar</span>
-              </Button>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowSaveModal(false)}
-              disabled={isSaving}
-            >
-              Cancelar
+        <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded-[40px] p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)] overflow-y-auto">
+          <DialogHeader><DialogTitle className="text-2xl font-black text-center mb-6">Salvar Roteiro</DialogTitle></DialogHeader>
+          <div className="flex flex-col gap-4">
+            <Button onClick={() => handleSave("rascunho")} className="h-16 rounded-2xl bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-200 font-black text-xs uppercase tracking-widest gap-3">
+              <FileText size={20} /> Salvar como Rascunho
             </Button>
+            
+            <Button onClick={() => handleSave("em_revisao")} className="h-16 rounded-2xl bg-yellow-500 text-white hover:bg-yellow-600 font-black text-xs uppercase tracking-widest gap-3">
+              <Clock size={20} /> Enviar para Revisão
+            </Button>
+
+            <Button onClick={() => handleSave("revisao_realizada")} className="h-16 rounded-2xl bg-emerald-600 text-white hover:bg-emerald-700 font-black text-xs uppercase tracking-widest gap-3">
+              <ClipboardCheck size={20} /> Concluir Revisão
+            </Button>
+
+            <Button onClick={() => handleSave("gravado")} className="h-16 rounded-2xl bg-blue-600 text-white hover:bg-blue-700 font-black text-xs uppercase tracking-widest gap-3">
+              <Video size={20} /> Marcar como Gravado
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      
+      <Dialog open={showImportModal} onOpenChange={setShowImportModal}>
+        <DialogContent className="sm:max-w-3xl bg-white dark:bg-zinc-950 border-none rounded-[40px] p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-black">Importar Roteiro Bruto</DialogTitle>
+            <DialogDescription className="text-zinc-500 font-medium pt-2">Cole seu texto aqui para converter em blocos.</DialogDescription>
+          </DialogHeader>
+          <div className="py-6  overflow-y-auto">
+            <Textarea value={importText} onChange={(e) => setImportText(e.target.value)} className="min-h-[400px] font-mono text-xs bg-zinc-50 dark:bg-zinc-900 rounded-2xl p-6 border-zinc-200 dark:border-zinc-800" placeholder="Cena 1&#10;..." />
+          </div>
+          <DialogFooter className="sm:justify-center">
+            <Button onClick={handleImport} className="bg-blue-600 hover:bg-blue-700 text-white font-black rounded-full px-12 h-14 text-xs uppercase tracking-widest shadow-xl">PROCESSAR E IMPORTAR</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -973,22 +770,7 @@ function EditorContent({ id }: { id: string }) {
   );
 }
 
-// Wrapper Principal
-export default function EditorPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default function EditorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  return (
-    <Suspense
-      fallback={
-        <div className="h-screen flex items-center justify-center dark:bg-zinc-950 text-blue-500 font-bold tracking-widest animate-pulse uppercase">
-          <Loader2 className="animate-spin mr-2" /> Carregando Interface...
-        </div>
-      }
-    >
-      <EditorContent id={id} />
-    </Suspense>
-  );
+  return <Suspense fallback={<div className="h-screen flex items-center justify-center text-blue-500 font-bold animate-pulse">CARREGANDO...</div>}><EditorContent id={id} /></Suspense>;
 }
