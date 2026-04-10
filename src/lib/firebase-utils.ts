@@ -3,7 +3,7 @@
  * substituindo-os por 'null' ou removendo a chave.
  * Isso é essencial para o Firestore, que não aceita 'undefined'.
  */
-export function sanitizeData(data: unknown): unknown {
+export function sanitizeData<T>(data: T): T {
   if (data === undefined || data === null) return null;
 
   // Se for um FieldValue (ex: serverTimestamp) ou Timestamp do Firestore, não sanitizar

@@ -40,7 +40,8 @@ import {
   UserCog,
   Mail,
   Calendar,
-  Shield
+  Shield,
+  Eye
 } from "lucide-react";
 import { 
   Select, 
@@ -67,6 +68,9 @@ const roleConfig: Record<Role, { label: string; color: string; icon: React.Eleme
   "Monitor": { label: "Monitor", color: "bg-violet-500", icon: Activity },
   "Técnico": { label: "Técnico", color: "bg-zinc-600", icon: Wrench },
   "Estagiário": { label: "Estagiário", color: "bg-zinc-400", icon: User },
+  "editor": { label: "Editor", color: "bg-blue-600", icon: UserCog },
+  "validador": { label: "Validador", color: "bg-purple-600", icon: ShieldCheck },
+  "publico": { label: "Público", color: "bg-zinc-500", icon: Eye },
 };
 
 export default function AdminPage() {

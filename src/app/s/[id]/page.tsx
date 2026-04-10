@@ -35,6 +35,7 @@ interface ScriptData {
   lockedForEditing: boolean;
   createdAt?: string;
   validatedAt?: string;
+  workspaceId?: string;
 }
 
 const statusConfig: Record<string, { label: string; color: string }> = {
@@ -146,7 +147,13 @@ export default function PublicScriptPage({
       setScript({ ...script, status: newStatus });
 
       if (newStatus === "aguardando_gravacao" && script.projectId) {
-        await createRecordingTask(script.projectId, script.title, script.id, user?.uid || "system");
+        await createRecordingTask(
+          script.projectId, 
+          script.title, 
+          script.id, 
+          user?.uid || "system",
+          script.workspaceId || user?.workspaceId || "senai"
+        );
       }
 
       alert(`Roteiro movido para: ${statusConfig[newStatus]?.label}`);

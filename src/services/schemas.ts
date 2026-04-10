@@ -3,6 +3,7 @@ import { z } from "zod";
 export const ROLES = [
   "SuperAdmin", "Diretor", "Coordenador", "Orientador", "Docente",
   "Especialista", "Assistente", "Analista", "Tutor", "Monitor", "Técnico", "Estagiário",
+  "editor", "validador", "publico"
 ] as const;
 export type Role = typeof ROLES[number];
 
