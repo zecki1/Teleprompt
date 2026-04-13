@@ -9,8 +9,9 @@ import PageTransitionLoader from "@/components/PageTransitionLoader";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTheme } from "next-themes";
-import { Sun, Moon } from "lucide-react";
+import { Sun, Moon, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const ThemeSwitcher = () => {
   const { theme, setTheme } = useTheme();
@@ -37,18 +38,25 @@ const ThemeSwitcher = () => {
 };
 
 export default function LoginPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, joinWorkspace } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const redirectPath = searchParams.get("redirect") || "/dashboard";
   const inviteWorkspaceId = searchParams.get("workspaceId") || undefined;
   
   const [isSignup, setIsSignup] = useState(false);
 
   useEffect(() => {
     if (!loading && user) {
-      router.replace("/dashboard");
+      if (inviteWorkspaceId && !user.workspaces?.includes(inviteWorkspaceId)) {
+        joinWorkspace(inviteWorkspaceId).then(() => {
+          router.replace(redirectPath);
+        });
+      } else {
+        router.replace(redirectPath);
+      }
     }
-  }, [user, loading]);
+  }, [user, loading, router, redirectPath, inviteWorkspaceId, joinWorkspace]);
 
   if (loading) {
     return <PageTransitionLoader />;
@@ -76,6 +84,21 @@ export default function LoginPage() {
         <div className="z-10">
           <Card className="w-full h-full bg-background/80 dark:bg-background/70 backdrop-blur-sm border-0 rounded-2xl px-4">
             <CardHeader className="text-center pt-8">
+              {inviteWorkspaceId && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="mb-6 text-left"
+                >
+                  <Alert className="bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400">
+                    <Info className="h-4 w-4" />
+                    <AlertTitle className="font-bold uppercase tracking-widest text-[10px]">Convite Recebido</AlertTitle>
+                    <AlertDescription className="text-xs">
+                      Você foi convidado para participar de um workspace! Faça login ou crie sua conta para aceitar.
+                    </AlertDescription>
+                  </Alert>
+                </motion.div>
+              )}
               <CardTitle className="text-3xl font-bold">{isSignup ? "Crie sua Conta" : "Bem-vindo(a)!"}</CardTitle>
               <CardDescription>{isSignup ? "Preencha os campos para começar." : "Faça login para acessar seu painel."}</CardDescription>
             </CardHeader>

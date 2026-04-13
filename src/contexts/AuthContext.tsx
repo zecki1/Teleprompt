@@ -31,6 +31,7 @@ interface AuthContextType {
   signInWithGoogle: (inviteWorkspaceId?: string) => Promise<void>;
   logOut: () => Promise<void>;
   switchWorkspace: (workspaceId: string) => Promise<void>;
+  joinWorkspace: (workspaceId: string) => Promise<void>;
   hasPermission: (allowedRoles: Role[]) => boolean;
 }
 
@@ -300,6 +301,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const joinWorkspace = async (workspaceId: string) => {
+    if (!user) return;
+    try {
+      const userRef = doc(dbZecki, "users", user.uid);
+      const wsRef = doc(dbZecki, "workspaces", workspaceId);
+      
+      const currentWorkspaces = user.workspaces || [];
+      if (!currentWorkspaces.includes(workspaceId)) {
+        await updateDoc(userRef, {
+          workspaces: arrayUnion(workspaceId),
+          workspaceId: workspaceId
+        });
+        await updateDoc(wsRef, {
+          members: arrayUnion(user.uid)
+        });
+        toast.success("Bem-vindo ao novo workspace!");
+      }
+    } catch (error) {
+      console.error("[AuthContext] Erro ao entrar no workspace:", error);
+      toast.error("Erro ao entrar no workspace.");
+    }
+  };
+
   const hasPermission = (allowedRoles: Role[]): boolean => {
     if (!user) return false;
     if (user.isSuperAdmin) return true;
@@ -321,6 +345,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signInWithGoogle, 
       logOut,
       switchWorkspace,
+      joinWorkspace,
       hasPermission 
     }}>
       {children}
