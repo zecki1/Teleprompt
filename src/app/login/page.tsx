@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import SigninWithPassword from "@/components/auth/SigninWithPassword";
 import SignupWithPassword from "@/components/auth/SignupWithPassword";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import PageTransitionLoader from "@/components/PageTransitionLoader";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, AnimatePresence } from "framer-motion";
@@ -39,13 +39,16 @@ const ThemeSwitcher = () => {
 export default function LoginPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteWorkspaceId = searchParams.get("workspaceId") || undefined;
+  
   const [isSignup, setIsSignup] = useState(false);
 
   useEffect(() => {
     if (!loading && user) {
       router.replace("/dashboard");
     }
-  }, [user, loading, router]);
+  }, [user, loading]);
 
   if (loading) {
     return <PageTransitionLoader />;
@@ -80,11 +83,11 @@ export default function LoginPage() {
               <AnimatePresence mode="wait">
                 {isSignup ? (
                   <motion.div key="signup" variants={formVariants} initial="initial" animate="animate" exit="exit" transition={{ duration: 0.25 }}>
-                    <SignupWithPassword onSwitchToLogin={() => setIsSignup(false)} />
+                    <SignupWithPassword onSwitchToLogin={() => setIsSignup(false)} inviteWorkspaceId={inviteWorkspaceId} />
                   </motion.div>
                 ) : (
                   <motion.div key="signin" variants={formVariants} initial="initial" animate="animate" exit="exit" transition={{ duration: 0.25 }}>
-                    <SigninWithPassword onSwitchToSignup={() => setIsSignup(true)} />
+                    <SigninWithPassword onSwitchToSignup={() => setIsSignup(true)} inviteWorkspaceId={inviteWorkspaceId} />
                   </motion.div>
                 )}
               </AnimatePresence>

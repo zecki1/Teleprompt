@@ -12,9 +12,10 @@ import { useAuth } from "@/contexts/AuthContext";
 
 interface SigninWithPasswordProps {
   onSwitchToSignup: () => void;
+  inviteWorkspaceId?: string;
 }
  
-const SigninWithPassword: React.FC<SigninWithPasswordProps> = () => {
+const SigninWithPassword: React.FC<SigninWithPasswordProps> = ({ inviteWorkspaceId }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -29,7 +30,7 @@ const SigninWithPassword: React.FC<SigninWithPasswordProps> = () => {
     setLoading(true);
     try {
       console.log("[SigninWithPassword] Calling signIn context function...");
-      await signIn(email, password);
+      await signIn(email, password, inviteWorkspaceId);
       console.log("[SigninWithPassword] signIn returned successfully");
       toast.success("Login realizado com sucesso!");
     } catch (err: unknown) {

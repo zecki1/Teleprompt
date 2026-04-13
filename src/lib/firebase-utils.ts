@@ -27,7 +27,6 @@ export function sanitizeData<T>(data: T): T {
     for (const key in obj) {
       if (Object.prototype.hasOwnProperty.call(obj, key)) {
         try {
-          console.log(`Sanitizing key: ${key}`);
           sanitized[key] = sanitizeData(obj[key]);
         } catch (e) {
           console.error(`[Sanitize] Erro ao sanitizar chave ${key}:`, e);

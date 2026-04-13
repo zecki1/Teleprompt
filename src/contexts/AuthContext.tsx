@@ -26,9 +26,9 @@ interface AuthContextType {
   teams: Team[];
   loading: boolean;
   isDataLoading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, name: string) => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
+  signIn: (email: string, password: string, inviteWorkspaceId?: string) => Promise<void>;
+  signUp: (email: string, password: string, name: string, inviteWorkspaceId?: string) => Promise<void>;
+  signInWithGoogle: (inviteWorkspaceId?: string) => Promise<void>;
   logOut: () => Promise<void>;
   switchWorkspace: (workspaceId: string) => Promise<void>;
   hasPermission: (allowedRoles: Role[]) => boolean;
@@ -169,12 +169,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [user?.workspaceId]);
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string, inviteWorkspaceId?: string) => {
     console.log("[AuthContext] Attempting signIn with:", email);
     setLoading(true);
     try {
       const result = await signInWithEmailAndPassword(auth, email, password);
       console.log("[AuthContext] signIn success:", result.user.uid);
+      
+      if (inviteWorkspaceId) {
+        const userRef = doc(dbZecki, "users", result.user.uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          const currentWorkspaces = userData.workspaces || [];
+          if (!currentWorkspaces.includes(inviteWorkspaceId)) {
+            await updateDoc(userRef, {
+              workspaces: [...currentWorkspaces, inviteWorkspaceId],
+              workspaceId: inviteWorkspaceId
+            });
+          }
+        }
+      }
     } catch (error) {
       console.error("[AuthContext] signIn error:", error);
       setLoading(false);
@@ -182,10 +197,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signUp = async (email: string, password: string, name: string) => {
+  const signUp = async (email: string, password: string, name: string, inviteWorkspaceId?: string) => {
     setLoading(true);
     try {
       const { user: fbUser } = await createUserWithEmailAndPassword(auth, email, password);
+      
+      const defaultWorkspace = inviteWorkspaceId || "senai";
+      const workspaces = [defaultWorkspace];
       
       const newUserDoc = {
         uid: fbUser.uid,
@@ -194,8 +212,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         displayName: name,
         role: "Docente",
         status: "active",
-        workspaceId: "senai",
-        workspaces: ["senai"],
+        workspaceId: defaultWorkspace,
+        workspaces: workspaces,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -207,7 +225,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = async (inviteWorkspaceId?: string) => {
     setLoading(true);
     try {
       const result = await signInWithPopup(auth, googleProvider);
@@ -218,6 +236,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       if (!userSnap.exists()) {
         const name = fbUser.displayName || fbUser.email?.split('@')[0] || "Usuário";
+        const defaultWorkspace = inviteWorkspaceId || "senai";
         await setDoc(userRef, {
           uid: fbUser.uid,
           email: fbUser.email,
@@ -225,11 +244,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           displayName: name,
           role: "Docente",
           status: "active",
-          workspaceId: "senai",
-          workspaces: ["senai"],
+          workspaceId: defaultWorkspace,
+          workspaces: [defaultWorkspace],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         });
+      } else if (inviteWorkspaceId) {
+        // Se já existe mas veio por link de convite, adicionamos o workspace se não tiver
+        const userData = userSnap.data();
+        const currentWorkspaces = userData.workspaces || [];
+        if (!currentWorkspaces.includes(inviteWorkspaceId)) {
+          await updateDoc(userRef, {
+            workspaces: [...currentWorkspaces, inviteWorkspaceId],
+            workspaceId: inviteWorkspaceId // Opcional: muda para o workspace do convite
+          });
+        }
       }
     } catch (error) {
       setLoading(false);

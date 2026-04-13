@@ -41,7 +41,8 @@ import {
   Mail,
   Calendar,
   Shield,
-  Eye
+  Eye,
+  Link2 as LinkIcon
 } from "lucide-react";
 import { 
   Select, 
@@ -80,6 +81,16 @@ export default function AdminPage() {
   const [usersList, setUsersList] = useState<ExtendedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
+  
+  const handleCopyInvite = () => {
+    if (!user?.workspaceId) {
+      toast.error("Você não está vinculado a um workspace.");
+      return;
+    }
+    const inviteUrl = `${window.location.origin}/login?workspaceId=${user.workspaceId}`;
+    navigator.clipboard.writeText(inviteUrl);
+    toast.success("Link de convite copiado para a área de transferência!");
+  };
 
   useEffect(() => {
     // Apenas zecki1@hotmail.com ou ezequiel.rmoncao@sp.senai.br têm acesso ao painel de admin global por enquanto
@@ -162,14 +173,24 @@ export default function AdminPage() {
           </h1>
           <p className="text-muted-foreground mt-2 text-lg">Gerencie usuários, cargos e permissões de todos os Workspaces.</p>
         </div>
-        <div className="flex items-center gap-4 bg-zinc-100 dark:bg-zinc-900 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-800">
-           <div className="bg-primary/10 p-3 rounded-xl">
-              <UsersIcon className="w-6 h-6 text-primary" />
-           </div>
-           <div>
-              <p className="text-sm font-medium text-muted-foreground">Total de Usuários</p>
-              <p className="text-2xl font-black">{usersList.length}</p>
-           </div>
+        <div className="flex items-center gap-4">
+          <Button 
+            variant="outline" 
+            onClick={handleCopyInvite}
+            className="h-14 rounded-2xl font-bold border-zinc-200 dark:border-zinc-800 flex gap-2 hover:bg-zinc-50 dark:hover:bg-zinc-900 px-6 shadow-sm"
+          >
+            <LinkIcon className="w-4 h-4 text-blue-500" />
+            Convidar Equipe
+          </Button>
+          <div className="flex items-center gap-4 bg-zinc-100 dark:bg-zinc-900 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 h-14">
+             <div className="bg-primary/10 p-2 rounded-lg">
+                <UsersIcon className="w-5 h-5 text-primary" />
+             </div>
+             <div>
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Usuários</p>
+                <p className="text-xl font-black leading-none">{usersList.length}</p>
+             </div>
+          </div>
         </div>
       </div>
 
