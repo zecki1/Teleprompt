@@ -351,22 +351,35 @@ function EditorContent({ id }: { id: string }) {
       );
       console.log("[Editor] Versão salva com sucesso.");
 
-      // --- AUTOMAÇÃO DE TAREFAS KANBAN (COM TIMEOUT DE SEGURANÇA) ---
-      // Wrapper que limita cada tarefa a no máximo 10 segundos
-      const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
-        Promise.race([
-          promise,
-          new Promise<T>((_, reject) =>
-            setTimeout(() => reject(new Error(`Timeout após ${ms}ms`)), ms)
-          ),
-        ]);
+      // --- FINALIZAÇÃO SÍNCRONA (NÃO BLOQUEIA UI) ---
+      console.log("[Editor] Salvamento finalizado com sucesso.");
+      showToast("Roteiro salvo!");
+      setIsEditingMode(false);
+      setIsSaving(false);
+      clearTimeout(safetyTimer);
 
-      if (projectId) {
+      if (isNew) {
+        router.push("/dashboard");
+      }
+
+      // --- AUTOMAÇÃO DE TAREFAS KANBAN (PROCESSO EM BACKGROUND) ---
+      const runAutomations = async () => {
+        if (!projectId) return;
+
+        // Wrapper que limita cada tarefa a no máximo 10 segundos
+        const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
+          Promise.race([
+            promise,
+            new Promise<T>((_, reject) =>
+              setTimeout(() => reject(new Error(`Timeout após ${ms}ms`)), ms)
+            ),
+          ]);
+
         const tasks: Promise<void>[] = [];
 
         // 1. Criar tarefa de Gravação quando a revisão é concluída
         if (saveStatus === "revisao_realizada" || saveStatus === "aguardando_gravacao") {
-          console.log("[Editor] Enfileirando tarefa de Gravação...");
+          console.log("[Editor Background] Enfileirando tarefa de Gravação...");
           tasks.push(
             withTimeout(
               createRecordingTask(
@@ -378,16 +391,19 @@ function EditorContent({ id }: { id: string }) {
                 category,
                 `${window.location.origin}/editor/${currentScriptId}`
               ),
-              10000
+              15000 // Aumentado um pouco o timeout para background
             ).then(() => {
-              showToast(`Tarefa de Gravação de ${category === "video" ? "Vídeo" : "Podcast"} criada!`);
-            }).catch(err => console.warn("[Editor] Tarefa gravação ignorada:", err))
+              sonnerToast.success(`Tarefa de Gravação criada!`, { 
+                description: `Projeto: ${project}`,
+                duration: 5000 
+              });
+            }).catch(err => console.warn("[Editor Background] Tarefa gravação ignorada:", err))
           );
         }
 
         // 2. Criar tarefa de Edição quando o roteiro é marcado como Gravado
         if (saveStatus === "gravado") {
-          console.log("[Editor] Enfileirando tarefa de Edição...");
+          console.log("[Editor Background] Enfileirando tarefa de Edição...");
           const editingTask = async () => {
             const { createEditingTask } = await import("@/lib/zecki");
             await withTimeout(
@@ -400,23 +416,23 @@ function EditorContent({ id }: { id: string }) {
                 category,
                 `${window.location.origin}/editor/${currentScriptId}`
               ),
-              10000
+              15000
             );
-            showToast(`Tarefa de Edição de ${category === "video" ? "Vídeo" : "Podcast"} criada!`);
+            sonnerToast.success(`Tarefa de Edição criada!`, { 
+              description: `Projeto: ${project}`,
+              duration: 5000 
+            });
           };
-          tasks.push(editingTask().catch(err => console.warn("[Editor] Tarefa edição ignorada:", err)));
+          tasks.push(editingTask().catch(err => console.warn("[Editor Background] Tarefa edição ignorada:", err)));
         }
 
         if (tasks.length > 0) {
-          console.log(`[Editor] Processando ${tasks.length} automações em paralelo...`);
+          console.log(`[Editor Background] Processando ${tasks.length} automações em paralelo...`);
           await Promise.allSettled(tasks);
         }
-      }
-      
-      console.log("[Editor] Salvamento finalizado com sucesso.");
-      showToast("Roteiro salvo!");
-      setIsEditingMode(false);
-      if (isNew) router.push("/dashboard");
+      };
+
+      runAutomations();
     } catch (e) {
       console.error("[Editor] ERRO CRÍTICO AO SALVAR:", e);
       sonnerToast.error("Falha ao salvar roteiro. Verifique o console.");

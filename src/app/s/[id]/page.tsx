@@ -102,14 +102,13 @@ export default function PublicScriptPage({
         }
 
         const data = scriptSnap.data() as ScriptData;
+        setScript({ ...data, id: resolvedParams.id });
         
         if (!data.isPublic && !user) {
           setError("Este roteiro não está disponível para acesso público. Faça login para visualizar.");
           setLoading(false);
           return;
         }
-
-        setScript({ ...data, id: resolvedParams.id });
 
         const vQ = query(
           collection(db, "scripts", resolvedParams.id, "versions"),
@@ -182,8 +181,8 @@ export default function PublicScriptPage({
             <Lock className="w-16 h-16 mx-auto text-zinc-400 mb-6" />
             <h2 className="text-2xl font-black mb-4">Acesso Restrito</h2>
             <p className="text-zinc-500 mb-8">{error}</p>
-            <Button asChild className="w-full">
-              <Link href="/login">Fazer Login</Link>
+             <Button asChild className="w-full">
+              <Link href={`/login?workspaceId=${script?.workspaceId || ""}&redirect=${encodeURIComponent(`/s/${script?.id || ""}`)}`}>Fazer Login</Link>
             </Button>
           </CardContent>
         </Card>
@@ -215,8 +214,8 @@ export default function PublicScriptPage({
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {!user && (
-              <Button variant="outline" size="sm" asChild className="h-8 text-[10px] font-black uppercase">
-                <Link href="/login">ENTRAR</Link>
+             <Button variant="outline" size="sm" asChild className="h-8 text-[10px] font-black uppercase">
+                <Link href={`/login?workspaceId=${script?.workspaceId || ""}&redirect=${encodeURIComponent(`/s/${script?.id || ""}`)}`}>ENTRAR</Link>
               </Button>
             )}
             <Button size="sm" asChild className="h-8 bg-blue-600 text-white font-black text-[10px] tracking-widest px-4 rounded-lg">
