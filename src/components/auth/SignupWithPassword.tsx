@@ -10,9 +10,10 @@ import { useAuth } from "@/contexts/AuthContext";
 
 interface SignupWithPasswordProps {
   onSwitchToLogin: () => void;
+  inviteWorkspaceId?: string;
 }
 
-const SignupWithPassword: React.FC<SignupWithPasswordProps> = () => {
+const SignupWithPassword: React.FC<SignupWithPasswordProps> = ({ inviteWorkspaceId }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -28,7 +29,7 @@ const SignupWithPassword: React.FC<SignupWithPasswordProps> = () => {
       if (!name.trim()) throw new Error("O nome é obrigatório.");
       if (password.length < 6) throw new Error("A senha deve ter pelo menos 6 caracteres.");
 
-      await signUp(email, password, name);
+      await signUp(email, password, name, inviteWorkspaceId);
       toast.success("Conta criada! Redirecionando...");
     } catch (err) {
       console.error(err);

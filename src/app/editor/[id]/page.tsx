@@ -197,7 +197,8 @@ function EditorContent({ id }: { id: string }) {
           const data = scriptSnap.data();
           console.log("[Editor] Roteiro carregado:", data.title, "(ID:", id, ")");
           setTitle(data.title || "");
-          setProject(data.project || "Geral");
+          const pName = data.projectName || data.project || "Geral";
+          setProject(pName);
           setProjectId(data.projectId || null);
           setScriptStatus(data.status || "rascunho");
           setCategory(data.category || "video");
@@ -244,6 +245,17 @@ function EditorContent({ id }: { id: string }) {
       fetchZeckiProjects(user.workspaceId).then(setZeckiProjects);
     }
   }, [user]);
+
+  // Recuperação de ProjectID caso o roteiro tenha apenas o nome do projeto
+  useEffect(() => {
+    if (!projectId && project !== "Geral" && zeckiProjects.length > 0) {
+       const found = zeckiProjects.find(p => p.name === project);
+       if (found) {
+         console.log(`[Editor] Recuperando ID do projeto pelo nome: ${project} -> ${found.id}`);
+         setProjectId(found.id);
+       }
+    }
+  }, [project, projectId, zeckiProjects]);
 
   const generateRawTextFromBlocks = (currentScenes: Scene[]) => {
     let newText = "";
@@ -331,48 +343,50 @@ function EditorContent({ id }: { id: string }) {
         versionPayload
       );
       console.log("[Editor] Versão salva com sucesso.");
-        // --- AUTOMAÇÃO DE TAREFAS KANBAN ---
-      console.log("[Editor] Iniciando automação de tarefas Zecki...");
-      
-      // 1. Criar tarefa de Gravação quando a revisão é concluída
-      if ((saveStatus === "revisao_realizada" || saveStatus === "aguardando_gravacao") && projectId) {
-        try {
-          console.log("[Editor] Criando tarefa de Gravação no Dashboard DB...");
-          await createRecordingTask(
-            projectId, 
-            title, 
-            currentScriptId as string, 
-            user?.uid || "", 
-            finalWorkspaceId,
-            category,
-            `${window.location.origin}/editor/${currentScriptId}`
-          );
-          console.log("[Editor] Tarefa de Gravação criada com sucesso.");
-          showToast(`Tarefa de Gravação de ${category === "video" ? "Vídeo" : "Podcast"} criada!`);
-        } catch (taskErr) {
-          console.error("[Editor] Erro ao automatizar tarefa de gravação:", taskErr);
-          // Não paramos o fluxo se a tarefa falhar
-        }
-      }
+        // --- AUTOMAÇÃO DE TAREFAS KANBAN (EM PARALELO) ---
+      if (projectId) {
+        const tasks: Promise<void>[] = [];
 
-      // 2. Criar tarefa de Edição quando o roteiro é marcado como Gravado
-      if (saveStatus === "gravado" && projectId) {
-        try {
-          console.log("[Editor] Criando tarefa de Edição no Dashboard DB...");
-          const { createEditingTask } = await import("@/lib/zecki");
-          await createEditingTask(
-            projectId, 
-            title, 
-            currentScriptId as string, 
-            user?.uid || "", 
-            finalWorkspaceId,
-            category,
-            `${window.location.origin}/editor/${currentScriptId}`
+        // 1. Criar tarefa de Gravação quando a revisão é concluída
+        if (saveStatus === "revisao_realizada" || saveStatus === "aguardando_gravacao") {
+          console.log("[Editor] Enfileirando tarefa de Gravação...");
+          tasks.push(
+            createRecordingTask(
+              projectId, 
+              title, 
+              currentScriptId as string, 
+              user?.uid || "", 
+              finalWorkspaceId,
+              category,
+              `${window.location.origin}/editor/${currentScriptId}`
+            ).then(() => {
+              showToast(`Tarefa de Gravação de ${category === "video" ? "Vídeo" : "Podcast"} criada!`);
+            }).catch(err => console.error("[Editor] Erro tarefa gravação:", err))
           );
-          console.log("[Editor] Tarefa de Edição criada com sucesso.");
-          showToast(`Tarefa de Edição de ${category === "video" ? "Vídeo" : "Podcast"} criada!`);
-        } catch (taskErr) {
-          console.error("[Editor] Erro ao automatizar tarefa de edição:", taskErr);
+        }
+
+        // 2. Criar tarefa de Edição quando o roteiro é marcado como Gravado
+        if (saveStatus === "gravado") {
+          console.log("[Editor] Enfileirando tarefa de Edição...");
+          const editingTask = async () => {
+            const { createEditingTask } = await import("@/lib/zecki");
+            await createEditingTask(
+              projectId, 
+              title, 
+              currentScriptId as string, 
+              user?.uid || "", 
+              finalWorkspaceId,
+              category,
+              `${window.location.origin}/editor/${currentScriptId}`
+            );
+            showToast(`Tarefa de Edição de ${category === "video" ? "Vídeo" : "Podcast"} criada!`);
+          };
+          tasks.push(editingTask().catch(err => console.error("[Editor] Erro tarefa edição:", err)));
+        }
+
+        if (tasks.length > 0) {
+          console.log(`[Editor] Processando ${tasks.length} automações em paralelo...`);
+          await Promise.allSettled(tasks);
         }
       }
       

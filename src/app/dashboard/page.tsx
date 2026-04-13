@@ -9,7 +9,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Link2, Plus, Play, Trash2, Edit2, Check, Folder, X, FileText, Send, Clock, CheckCircle2, ChevronRight, Briefcase, Loader2, Users, UserPlus, Video, PlusCircle, ClipboardCheck } from "lucide-react";
+import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, Check, Folder, X, FileText, Send, Clock, CheckCircle2, ChevronRight, Briefcase, Loader2, Users, UserPlus, Video, PlusCircle, ClipboardCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
@@ -76,6 +76,16 @@ function DashboardContent() {
   const [statusFilter, setStatusFilter] = useState<ScriptStatus | "all">("all");
   const [reviewingScript, setReviewingScript] = useState<ScriptDoc | null>(null);
   const [completingReview, setCompletingReview] = useState(false);
+  
+  const handleCopyInvite = () => {
+    if (!user?.workspaceId) {
+      toast.error("Você não está vinculado a um workspace.");
+      return;
+    }
+    const inviteUrl = `${window.location.origin}/login?workspaceId=${user.workspaceId}`;
+    navigator.clipboard.writeText(inviteUrl);
+    toast.success("Link de convite copiado para a área de transferência!");
+  };
   const [selectedCategory, setSelectedCategory] = useState<ScriptCategory>("video");
   
   const [editingProjectName, setEditingProjectName] = useState<string | null>(null);
@@ -300,6 +310,14 @@ function DashboardContent() {
           </p>
         </div>
         <div className="flex gap-3">
+          <Button 
+            variant="outline" 
+            onClick={handleCopyInvite}
+            className="rounded-full border-zinc-200 dark:border-zinc-800 flex gap-2 hover:bg-zinc-50 dark:hover:bg-zinc-900"
+          >
+            <LinkIcon className="w-4 h-4 text-blue-500" />
+            Convidar Equipe
+          </Button>
           {selectedProject && (
             <Button 
               variant="outline" 
@@ -336,7 +354,7 @@ function DashboardContent() {
           </Button>
         </div>
         
-        <div className="flex gap-4 overflow-x-auto pb-4 no-scrollbar">
+        <div className="flex gap-4 overflow-x-auto p-5 custom-scrollbar pb-8">
           {loadingProjects ? (
             Array(3).fill(0).map((_, i) => (
               <div key={i} className="min-w-[200px] h-24 bg-zinc-100 dark:bg-zinc-900 animate-pulse rounded-xl border border-zinc-200 dark:border-zinc-800" />
@@ -464,8 +482,10 @@ function DashboardContent() {
                     size="sm" 
                     className="h-8 text-xs text-zinc-500 hover:text-blue-500"
                     onClick={() => {
-                      console.log(`[Dashboard] Navegando para novo roteiro no projeto: ${projectName} (${projectScripts[0]?.projectId || "N/A"})`);
-                      router.push(`/editor/new?project=${encodeURIComponent(projectName)}&projectId=${projectScripts[0]?.projectId || ""}`);
+                      const project = projects.find(p => p.name === projectName);
+                      const pid = project?.id || projectScripts[0]?.projectId || "";
+                      console.log(`[Dashboard] Navegando para novo roteiro no projeto: ${projectName} (${pid})`);
+                      router.push(`/editor/new?project=${encodeURIComponent(projectName)}&projectId=${pid}`);
                     }}
                   >
                     <Plus className="w-3 h-3 mr-1" /> Adicionar
@@ -474,7 +494,7 @@ function DashboardContent() {
               </div>
               
               <div className="relative">
-                <div className="flex gap-6 overflow-x-auto pb-6 pt-2 no-scrollbar snap-x snap-mandatory">
+                <div className="flex gap-6 overflow-x-auto pb-8 pt-2 custom-scrollbar snap-x snap-mandatory">
                   {projectScripts.map(script => (
                     <div key={script.id} className="min-w-[300px] md:min-w-[350px] snap-start relative">
                       {(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") && (
@@ -586,7 +606,7 @@ function DashboardContent() {
                               toast.success("Link copiado!");
                             }}
                           >
-                            <Link2 className="w-3 h-3 mr-1.5" /> Link
+                            <LinkIcon className="w-3 h-3 mr-1.5" /> Link
                           </Button>
                           
                           {(user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br" || user?.role === "SuperAdmin") && (
@@ -742,15 +762,6 @@ function DashboardContent() {
         </DialogContent>
       </Dialog>
       
-      <style jsx global>{`
-        .no-scrollbar::-webkit-scrollbar {
-          display: none;
-        }
-        .no-scrollbar {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
-      `}</style>
     </div>
   );
 }
