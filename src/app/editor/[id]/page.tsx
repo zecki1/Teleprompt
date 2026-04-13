@@ -39,7 +39,9 @@ import {
   Eye,
   EyeOff,
   ClipboardCheck,
-  FileDown
+  FileDown,
+  Loader2,
+  CheckCircle2
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -157,6 +159,7 @@ function EditorContent({ id }: { id: string }) {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importText, setImportText] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({
     message: "",
     visible: false,
@@ -356,11 +359,13 @@ function EditorContent({ id }: { id: string }) {
       showToast("Roteiro salvo!");
       setIsEditingMode(false);
       setIsSaving(false);
+      setShowSaveModal(false);
       clearTimeout(safetyTimer);
 
-      if (isNew) {
+      setShowSuccessModal(true);
+      setTimeout(() => {
         router.push("/dashboard");
-      }
+      }, 3000);
 
       // --- AUTOMAÇÃO DE TAREFAS KANBAN (PROCESSO EM BACKGROUND) ---
       const runAutomations = async () => {
