@@ -494,7 +494,7 @@ function DashboardContent() {
               </div>
               
               <div className="relative">
-                <div className="flex gap-6 overflow-x-auto pb-8 pt-2 custom-scrollbar snap-x snap-mandatory">
+                <div className="flex gap-6 overflow-x-auto p-5 custom-scrollbar snap-x snap-mandatory">
                   {projectScripts.map(script => (
                     <div key={script.id} className="min-w-[300px] md:min-w-[350px] snap-start relative">
                       {(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") && (
