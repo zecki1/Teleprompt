@@ -214,8 +214,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { user: fbUser } = await createUserWithEmailAndPassword(auth, email, password);
       
-      const defaultWorkspace = inviteWorkspaceId || "senai";
-      const workspaces = [defaultWorkspace];
+      const targetWorkspaceId = inviteWorkspaceId || SENAI_WORKSPACE_ID;
+      const workspaces = [targetWorkspaceId];
       
       const newUserDoc = {
         uid: fbUser.uid,
@@ -224,13 +224,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         displayName: name,
         role: "Docente",
         status: "active",
-        workspaceId: defaultWorkspace,
+        workspaceId: targetWorkspaceId,
         workspaces: workspaces,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
       
+      // 1. Criar documento do usuário no Zecki
       await setDoc(doc(dbZecki, "users", fbUser.uid), newUserDoc);
+
+      // 2. Adicionar UID ao array 'members' do workspace (Vital para Firestore Rules)
+      const wsRef = doc(dbZecki, "workspaces", targetWorkspaceId);
+      await updateDoc(wsRef, {
+        members: arrayUnion(fbUser.uid)
+      }).catch(err => console.error("[AuthContext] Erro ao vincular membro ao workspace:", err));
+
     } catch (error) {
       setLoading(false);
       throw error;
