@@ -290,6 +290,13 @@ function EditorContent({ id }: { id: string }) {
   const handleSave = async (saveStatus: ScriptStatus) => {
     setShowSaveModal(false);
     setIsSaving(true);
+
+    // Timeout global de segurança: garante que isSaving sempre volta a false
+    const safetyTimer = setTimeout(() => {
+      setIsSaving(false);
+      sonnerToast.error("O salvamento demorou demais. Verifique sua conexão e tente novamente.");
+    }, 30000);
+
     try {
       console.log(`[Editor] Iniciando salvamento (${saveStatus})...`);
       const finalWorkspaceId = workspaceId || user?.workspaceId || "senai";
@@ -343,7 +350,17 @@ function EditorContent({ id }: { id: string }) {
         versionPayload
       );
       console.log("[Editor] Versão salva com sucesso.");
-        // --- AUTOMAÇÃO DE TAREFAS KANBAN (EM PARALELO) ---
+
+      // --- AUTOMAÇÃO DE TAREFAS KANBAN (COM TIMEOUT DE SEGURANÇA) ---
+      // Wrapper que limita cada tarefa a no máximo 10 segundos
+      const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
+        Promise.race([
+          promise,
+          new Promise<T>((_, reject) =>
+            setTimeout(() => reject(new Error(`Timeout após ${ms}ms`)), ms)
+          ),
+        ]);
+
       if (projectId) {
         const tasks: Promise<void>[] = [];
 
@@ -351,17 +368,20 @@ function EditorContent({ id }: { id: string }) {
         if (saveStatus === "revisao_realizada" || saveStatus === "aguardando_gravacao") {
           console.log("[Editor] Enfileirando tarefa de Gravação...");
           tasks.push(
-            createRecordingTask(
-              projectId, 
-              title, 
-              currentScriptId as string, 
-              user?.uid || "", 
-              finalWorkspaceId,
-              category,
-              `${window.location.origin}/editor/${currentScriptId}`
+            withTimeout(
+              createRecordingTask(
+                projectId, 
+                title, 
+                currentScriptId as string, 
+                user?.uid || "", 
+                finalWorkspaceId,
+                category,
+                `${window.location.origin}/editor/${currentScriptId}`
+              ),
+              10000
             ).then(() => {
               showToast(`Tarefa de Gravação de ${category === "video" ? "Vídeo" : "Podcast"} criada!`);
-            }).catch(err => console.error("[Editor] Erro tarefa gravação:", err))
+            }).catch(err => console.warn("[Editor] Tarefa gravação ignorada:", err))
           );
         }
 
@@ -370,18 +390,21 @@ function EditorContent({ id }: { id: string }) {
           console.log("[Editor] Enfileirando tarefa de Edição...");
           const editingTask = async () => {
             const { createEditingTask } = await import("@/lib/zecki");
-            await createEditingTask(
-              projectId, 
-              title, 
-              currentScriptId as string, 
-              user?.uid || "", 
-              finalWorkspaceId,
-              category,
-              `${window.location.origin}/editor/${currentScriptId}`
+            await withTimeout(
+              createEditingTask(
+                projectId, 
+                title, 
+                currentScriptId as string, 
+                user?.uid || "", 
+                finalWorkspaceId,
+                category,
+                `${window.location.origin}/editor/${currentScriptId}`
+              ),
+              10000
             );
             showToast(`Tarefa de Edição de ${category === "video" ? "Vídeo" : "Podcast"} criada!`);
           };
-          tasks.push(editingTask().catch(err => console.error("[Editor] Erro tarefa edição:", err)));
+          tasks.push(editingTask().catch(err => console.warn("[Editor] Tarefa edição ignorada:", err)));
         }
 
         if (tasks.length > 0) {
@@ -398,6 +421,7 @@ function EditorContent({ id }: { id: string }) {
       console.error("[Editor] ERRO CRÍTICO AO SALVAR:", e);
       sonnerToast.error("Falha ao salvar roteiro. Verifique o console.");
     } finally {
+      clearTimeout(safetyTimer);
       setIsSaving(false);
     }
   };
