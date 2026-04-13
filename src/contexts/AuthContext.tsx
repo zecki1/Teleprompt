@@ -9,7 +9,7 @@ import {
   signOut, 
   onAuthStateChanged 
 } from "firebase/auth";
-import { doc, onSnapshot, getDoc, setDoc, updateDoc, collection, query, where, QuerySnapshot, DocumentData } from "firebase/firestore";
+import { doc, onSnapshot, getDoc, setDoc, updateDoc, arrayUnion, collection, query, where, QuerySnapshot, DocumentData } from "firebase/firestore";
 import { auth, dbZecki, googleProvider } from "@/lib/firebase";
 import { ExtendedUser, ExtendedUserSchema, Workspace, Team, Role } from "@/services/schemas";
 import { getWorkspace } from "@/services/workspaceService";
@@ -178,14 +178,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       if (inviteWorkspaceId) {
         const userRef = doc(dbZecki, "users", result.user.uid);
+        const wsRef = doc(dbZecki, "workspaces", inviteWorkspaceId);
         const userSnap = await getDoc(userRef);
         if (userSnap.exists()) {
           const userData = userSnap.data();
           const currentWorkspaces = userData.workspaces || [];
           if (!currentWorkspaces.includes(inviteWorkspaceId)) {
+            // Adiciona o workspace ao usuário
             await updateDoc(userRef, {
-              workspaces: [...currentWorkspaces, inviteWorkspaceId],
+              workspaces: arrayUnion(inviteWorkspaceId),
               workspaceId: inviteWorkspaceId
+            });
+            // Adiciona o usuário como membro do workspace (necessário para as Firestore Rules)
+            await updateDoc(wsRef, {
+              members: arrayUnion(result.user.uid)
+            });
+          } else {
+            // Já é membro, mas garante que está na lista de members do workspace
+            await updateDoc(wsRef, {
+              members: arrayUnion(result.user.uid)
             });
           }
         }
@@ -249,16 +260,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         });
+        // Adiciona o usuário como membro do workspace no Zecki
+        if (inviteWorkspaceId) {
+          const wsRef = doc(dbZecki, "workspaces", inviteWorkspaceId);
+          await updateDoc(wsRef, { members: arrayUnion(fbUser.uid) }).catch(() => {});
+        }
       } else if (inviteWorkspaceId) {
-        // Se já existe mas veio por link de convite, adicionamos o workspace se não tiver
+        // Se já existe mas veio por link de convite, adicionamos o workspace
         const userData = userSnap.data();
         const currentWorkspaces = userData.workspaces || [];
+        const wsRef = doc(dbZecki, "workspaces", inviteWorkspaceId);
         if (!currentWorkspaces.includes(inviteWorkspaceId)) {
           await updateDoc(userRef, {
-            workspaces: [...currentWorkspaces, inviteWorkspaceId],
-            workspaceId: inviteWorkspaceId // Opcional: muda para o workspace do convite
+            workspaces: arrayUnion(inviteWorkspaceId),
+            workspaceId: inviteWorkspaceId
           });
         }
+        // Sempre garantir que o usuário está na lista members do workspace
+        await updateDoc(wsRef, { members: arrayUnion(fbUser.uid) }).catch(() => {});
       }
     } catch (error) {
       setLoading(false);
