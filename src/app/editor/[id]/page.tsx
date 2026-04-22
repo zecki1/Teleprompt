@@ -152,7 +152,9 @@ function EditorContent({ id }: { id: string }) {
   const [editorName, setEditorName] = useState<string | null>(null);
 
   const { user, hasPermission } = useAuth();
-  const canEdit = hasPermission(["Docente", "Especialista", "Coordenador", "SuperAdmin"]) && (!lockedForEditing || scriptStatus === "rascunho");
+  const isWhitelisted = user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br";
+  const isSuper = user?.isSuperAdmin || isWhitelisted;
+  const canEdit = isSuper || (hasPermission(["Docente", "Especialista", "Coordenador", "Diretor", "Orientador", "Assistente", "Analista", "editor", "validador"]) && (!lockedForEditing || scriptStatus === "rascunho"));
 
   const [isEditingMode, setIsEditingMode] = useState(true);
   const [showSaveModal, setShowSaveModal] = useState(false);
