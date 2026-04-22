@@ -42,7 +42,7 @@ import {
   FileDown,
   Loader2,
 } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   collection,
   addDoc,
@@ -132,7 +132,6 @@ function HighlightedSpokenText({
 
 function EditorContent({ id }: { id: string }) {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const isNew = !id || id === "new";
 
   const [title, setTitle] = useState("Novo Roteiro");
@@ -394,11 +393,6 @@ function EditorContent({ id }: { id: string }) {
       setIsSaving(false);
       setShowSaveModal(false);
       clearTimeout(safetyTimer);
-
-      setShowSuccessModal(true);
-      setTimeout(() => {
-        router.push("/dashboard");
-      }, 3000);
 
       // --- AUTOMAÇÃO DE TAREFAS KANBAN (PROCESSO EM BACKGROUND) ---
       const runAutomations = async () => {
