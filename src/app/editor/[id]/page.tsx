@@ -56,8 +56,10 @@ import {
   updateDoc,
   serverTimestamp,
   where,
+  arrayUnion,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { logActivity } from "@/lib/activity";
 import { fetchZeckiProjects, createRecordingTask, ZeckiProject } from "@/lib/zecki";
 import Link from "next/link";
 import {
@@ -375,6 +377,12 @@ function EditorContent({ id }: { id: string }) {
         reviewerName: finalReviewerName,
         editorId: finalEditorId,
         editorName: finalEditorName,
+        collaborators: arrayUnion({
+          uid: user?.uid,
+          name: user?.displayName || user?.name || user?.email || "Usuário",
+          role: "Editor",
+          timestamp: new Date().toISOString()
+        })
       });
       console.log("[Editor] Dados sanitizados prontas:", saveData);
 
@@ -407,6 +415,20 @@ function EditorContent({ id }: { id: string }) {
         versionPayload
       );
       console.log("[Editor] Versão salva com sucesso.");
+
+      // Registra a atividade no log global
+      await logActivity({
+        userId: user?.uid || "",
+        userName: user?.displayName || user?.name || user?.email || "Usuário",
+        userAvatar: user?.photoURL || null,
+        action: isNew ? "Criou" : "Editou",
+        scriptId: currentScriptId as string,
+        scriptTitle: title,
+        projectId: projectId || null,
+        projectName: project || null,
+        folder: folder || null,
+        workspaceId: finalWorkspaceId
+      });
 
       // --- FINALIZAÇÃO SÍNCRONA (NÃO BLOQUEIA UI) ---
       console.log("[Editor] Salvamento finalizado com sucesso.");
