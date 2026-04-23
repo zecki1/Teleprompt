@@ -7,6 +7,8 @@ export interface Scene {
   sourceUrl?: string | null;    // Tag url: (principal)
   sources?: string[];           // Múltiplas URLs adicionais
   lettering?: string | null;    // Tag let: (lettering)
+  opening?: string | null;      // Tag abe: (abertura)
+  closing?: string | null;      // Tag enc: (encerramento)
   observation?: string | null;  // Observação interna
   description?: string | null;
   onScreenText?: string | null;
@@ -26,11 +28,15 @@ export function parseScript(text: string): Scene[] {
   // [url1]: https://...
   // [let1]: Texto
   // [let2]: Texto 2
+  // [abe]: Abertura
+  // [enc]: Encerramento
   // Locução: Olá! [let1] texto [img1]
-  function extractSceneData(content: string): { images: string[]; sources: string[]; lettering: string[]; spokenText: string; time: string | null } {
+  function extractSceneData(content: string): { images: string[]; sources: string[]; lettering: string[]; opening: string | null; closing: string | null; spokenText: string; time: string | null } {
     const images: string[] = [];
     const sources: string[] = [];
     const lettering: string[] = [];
+    let opening: string | null = null;
+    let closing: string | null = null;
     let spokenText = '';
     let time: string | null = null;
     
@@ -70,6 +76,20 @@ export function parseScript(text: string): Scene[] {
         }
         continue;
       }
+
+      // Detectar [abe]: Abertura
+      const abeMatch = trimmedLine.match(/^\[abe\]\s*[:\-]\s*(.+)/i);
+      if (abeMatch) {
+        opening = abeMatch[1].trim();
+        continue;
+      }
+
+      // Detectar [enc]: Encerramento
+      const encMatch = trimmedLine.match(/^\[enc\]\s*[:\-]\s*(.+)/i);
+      if (encMatch) {
+        closing = encMatch[1].trim();
+        continue;
+      }
       
       // Detectar Tempo: ou Duração:
       const timeMatch = trimmedLine.match(/^(?:Tempo|Duração)\s*[:\-]\s*(.+)/i);
@@ -92,7 +112,7 @@ export function parseScript(text: string): Scene[] {
       }
       
       // Se não tem nenhum label e não é uma referência, é parte do spoken text
-      if (!trimmedLine.match(/^\[(?:img|url|let)\d+\]/i) && 
+      if (!trimmedLine.match(/^\[(?:img|url|let|abe|enc)\d*\]/i) && 
           !trimmedLine.match(/^(?:Tempo|Duração)\s*[:\-]/i) &&
           trimmedLine) {
         // Primeira linha sem label = começa o spoken text
@@ -101,7 +121,7 @@ export function parseScript(text: string): Scene[] {
       }
     }
     
-    return { images, sources, lettering, spokenText, time };
+    return { images, sources, lettering, opening, closing, spokenText, time };
   }
   
   // Divide o texto pelo delimitador "Cena" (ignora maiúsculas/minúsculas)
@@ -112,7 +132,7 @@ export function parseScript(text: string): Scene[] {
     const rawContent = parts[i + 1] || "";
     
     // Usa a nova função de extração
-    const { images, sources, lettering, spokenText, time } = extractSceneData(rawContent);
+    const { images, sources, lettering, opening, closing, spokenText, time } = extractSceneData(rawContent);
     
     scenes.push({
       id: crypto.randomUUID(),
@@ -123,6 +143,8 @@ export function parseScript(text: string): Scene[] {
       sourceUrl: sources[0] || null,
       sources: sources.length > 1 ? sources.slice(1) : undefined,
       lettering: lettering.length > 0 ? lettering.join('\n') : null,
+      opening,
+      closing,
       spokenText: spokenText || null,
       description: null,
       onScreenText: null,
@@ -132,7 +154,7 @@ export function parseScript(text: string): Scene[] {
   
   // Caso de segurança: se houver texto mas nenhuma tag "Cena", assume cena 1
   if (scenes.length === 0 && text.trim().length > 0) {
-    const { images, sources, lettering, spokenText, time } = extractSceneData(text);
+    const { images, sources, lettering, opening, closing, spokenText, time } = extractSceneData(text);
     const sceneObj: Scene = { 
       id: crypto.randomUUID(), 
       sceneNumber: "1", 
@@ -142,6 +164,8 @@ export function parseScript(text: string): Scene[] {
       sourceUrl: sources[0] || null,
       sources: sources.length > 1 ? sources.slice(1) : undefined,
       lettering: lettering.length > 0 ? lettering.join('\n') : null,
+      opening,
+      closing,
       spokenText: spokenText || null,
     };
     scenes.push(sceneObj);

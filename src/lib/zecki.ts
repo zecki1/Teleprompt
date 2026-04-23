@@ -83,7 +83,9 @@ export async function createRecordingTask(
   createdBy: string, 
   workspaceId: string,
   category: "video" | "podcast" = "video",
-  scriptLink?: string
+  scriptLink?: string,
+  editorId?: string,
+  reviewerId?: string
 ) {
   try {
     const taskId = crypto.randomUUID();
@@ -100,7 +102,7 @@ export async function createRecordingTask(
       projectId: projectId,
       bucket: "Backlog",
       status: "backlog",
-      priority: "Média", // Usando valores das enums do dashboard (Baixa, Média, Alta)
+      priority: "Média",
       type: taskType,
       section: "audiovisual",
       source: "teleprompt",
@@ -110,7 +112,7 @@ export async function createRecordingTask(
       updatedAt: new Date().toISOString(),
       workspaceId: workspaceId || "senai",
       responsibleIds: [],
-      reviewerIds: [],
+      reviewerIds: reviewerId ? [reviewerId] : [],
       members: [],
       tags: ["Teleprompt", categoryLabel],
       progress: 0,
@@ -136,7 +138,9 @@ export async function createEditingTask(
   createdBy: string, 
   workspaceId: string,
   category: "video" | "podcast" = "video",
-  scriptLink?: string
+  scriptLink?: string,
+  editorId?: string,
+  reviewerId?: string
 ) {
   try {
     const taskId = crypto.randomUUID();
@@ -162,8 +166,8 @@ export async function createEditingTask(
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       workspaceId: workspaceId || "senai",
-      responsibleIds: [],
-      reviewerIds: [],
+      responsibleIds: editorId ? [editorId] : [],
+      reviewerIds: reviewerId ? [reviewerId] : [],
       members: [],
       tags: ["Teleprompt", "Edição", categoryLabel],
       progress: 0,
@@ -197,6 +201,44 @@ export async function createZeckiProject(projectData: Partial<ZeckiProject>) {
     return { id: docRef.id, ...payload } as ZeckiProject;
   } catch (error) {
     console.error("Erro ao criar projeto no Zecki:", error);
+    throw error;
+  }
+}
+
+/**
+ * Exclui (logicamente) um projeto no Zecki
+ */
+export async function deleteZeckiProject(projectId: string) {
+  try {
+    const projectRef = doc(dbZecki, "projects", projectId);
+    await setDoc(projectRef, {
+      isDeleted: true,
+      deletedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+    return true;
+  } catch (error) {
+    console.error("Erro ao excluir projeto no Zecki:", error);
+    throw error;
+  }
+}
+
+/**
+ * Atribui o videomaker à tarefa de gravação quando o roteiro é marcado como gravado
+ */
+export async function updateTaskVideomaker(projectId: string, taskId: string, videomakerId: string) {
+  try {
+    const taskRef = doc(dbZecki, `projects/${projectId}/modules/audiovisual/tasks/${taskId}`);
+    await setDoc(taskRef, {
+      responsibleIds: [videomakerId],
+      videomakerId: videomakerId,
+      updatedAt: new Date().toISOString(),
+      status: "done",
+      bucket: "Concluído"
+    }, { merge: true });
+    return true;
+  } catch (error) {
+    console.error("Erro ao atualizar videomaker na tarefa:", error);
     throw error;
   }
 }

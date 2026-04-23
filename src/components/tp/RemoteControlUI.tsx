@@ -45,7 +45,7 @@ export function RemoteControlUI({
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-zinc-950 text-white p-6 rounded-3xl border border-zinc-800 shadow-2xl overflow-hidden">
+    <div className="flex flex-col h-auto w-full bg-zinc-950 text-white p-6 rounded-3xl border border-zinc-800 shadow-2xl overflow-y-auto no-scrollbar">
       
       {/* HEADER DE STATUS */}
       <div className="flex justify-between items-center mb-6">
