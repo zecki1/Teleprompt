@@ -22,10 +22,12 @@ import {
   CheckCircle2,
   X,
   Play,
-  Pause
+  Pause,
+  MessageSquare
 } from "lucide-react";
 import { updateTaskVideomaker } from "@/lib/zecki";
 import Link from "next/link";
+import { CommentsPanel } from "@/components/tp/CommentsPanel";
 
 function TeleprompterContent({ id }: { id: string }) {
   const [scenes, setScenes] = useState<Scene[]>([]);
@@ -37,6 +39,7 @@ function TeleprompterContent({ id }: { id: string }) {
   const [showRemote, setShowRemote] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  const [isCommentsVisible, setIsCommentsVisible] = useState(false);
   const { user } = useAuth();
   
   // App State
@@ -244,7 +247,12 @@ function TeleprompterContent({ id }: { id: string }) {
         return; // Deixa o navegador lidar com o undo nativamente
       }
       
-      if (e.target instanceof HTMLElement && e.target.isContentEditable) return;
+      if (e.target instanceof HTMLElement && (
+        e.target.isContentEditable || 
+        e.target.tagName === 'INPUT' || 
+        e.target.tagName === 'TEXTAREA' ||
+        (isCommentsVisible && !containerRef.current?.contains(e.target))
+      )) return;
       const currentScroll = containerRef.current?.scrollTop || 0;
 
       switch(e.code) {
@@ -276,7 +284,7 @@ function TeleprompterContent({ id }: { id: string }) {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [id]);
+  }, [id, isCommentsVisible]);
 
   // --- 4. MOTOR DE SCROLL E BROADCAST ---
 
@@ -377,6 +385,14 @@ function TeleprompterContent({ id }: { id: string }) {
 
   return (
     <div className={isMirrorWindow ? "fixed inset-0 z-[100] flex overflow-hidden" : "absolute inset-0 flex overflow-hidden top-[64px] h-[calc(100vh-64px)] z-40"} style={{ backgroundColor: bgColor }}>
+      {isCommentsVisible && !isMirrorWindow && (
+        <CommentsPanel 
+          scriptId={id} 
+          onClose={() => setIsCommentsVisible(false)} 
+          hasFooter={!isSidebarVisible}
+        />
+      )}
+      <div className="flex-1 flex flex-col relative overflow-hidden h-full">
       
       {/* BOTÃO PARA MOSTRAR SIDEBAR (MOBILE OU OCULTO) */}
       {!isMirrorWindow && !isSidebarVisible && (
@@ -431,14 +447,22 @@ function TeleprompterContent({ id }: { id: string }) {
       
       {/* SIDEBAR TOGGLE BUTTON (LG SCREEN) */}
       {!isMirrorWindow && (
-        <button 
+        <div 
           onClick={() => setIsSidebarVisible(!isSidebarVisible)}
-          className={`absolute right-4 top-4 z-[50] flex items-center gap-2 px-3 py-2 bg-zinc-900/80 backdrop-blur border border-zinc-800 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-all hidden lg:flex ${!isSidebarVisible ? 'opacity-100' : 'opacity-40 hover:opacity-100'}`}
+          className={`absolute right-4 top-4 z-[50] flex items-center gap-2 px-3 py-2 bg-zinc-900/80 backdrop-blur border border-zinc-800 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-all hidden lg:flex cursor-pointer ${!isSidebarVisible ? 'opacity-100' : 'opacity-40 hover:opacity-100'}`}
         >
           {isSidebarVisible ? <X size={16} /> : <Settings2 size={16} />}
           <span className="text-[10px] font-bold uppercase tracking-widest">{isSidebarVisible ? "Ocultar" : "Controles"}</span>
-        </button>
+          <div className="h-4 w-px bg-zinc-800 mx-1" />
+          <button 
+            onClick={(e) => { e.stopPropagation(); setIsCommentsVisible(!isCommentsVisible); }}
+            className={`p-1 transition-colors ${isCommentsVisible ? 'text-blue-500' : 'text-zinc-500 hover:text-white'}`}
+          >
+            <MessageSquare size={16} />
+          </button>
+        </div>
       )}
+      </div>
 
       {!isMirrorWindow && isSidebarVisible && (
         <div className="w-[400px] shrink-0 h-full bg-zinc-950 border-l border-zinc-800 flex flex-col z-20 shadow-2xl overflow-hidden animate-in slide-in-from-right-4 duration-300">
@@ -566,6 +590,8 @@ function TeleprompterContent({ id }: { id: string }) {
                      progress={localProgress}
                      update={(data) => updateDoc(doc(db, "scripts", id), data)}
                      manualScroll={(amt) => { if (containerRef.current) containerRef.current.scrollBy({ top: amt, behavior: 'smooth' }); }}
+                     isCommentsVisible={isCommentsVisible}
+                     setIsCommentsVisible={setIsCommentsVisible}
                   />
               </div>
             )}
@@ -622,6 +648,13 @@ function TeleprompterContent({ id }: { id: string }) {
 
           {/* 4. MARCAR COMO GRAVADO */}
           <div className="flex items-center gap-4">
+             <button 
+               onClick={() => setIsCommentsVisible(!isCommentsVisible)}
+               className={`p-2 transition-colors ${isCommentsVisible ? 'text-blue-500 bg-blue-500/10 text-white rounded-lg' : 'text-zinc-500 hover:text-white'}`}
+               title="Comentários"
+             >
+               <MessageSquare size={20} />
+             </button>
              <button 
                onClick={handleSetRecorded}
                className="h-10 px-6 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-black text-[10px] tracking-widest transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2"

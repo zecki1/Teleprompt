@@ -9,7 +9,8 @@ import {
   RotateCcw, 
   ChevronUp, 
   ChevronDown,
-  Clock
+  Clock,
+  MessageSquare
 } from "lucide-react";
 
 interface RemoteControlUIProps {
@@ -19,6 +20,8 @@ interface RemoteControlUIProps {
   progress: number;
   update: (data: Record<string, unknown>) => void;
   manualScroll: (amount: number) => void;
+  isCommentsVisible: boolean;
+  setIsCommentsVisible: (visible: boolean) => void;
 }
 
 export function RemoteControlUI({
@@ -27,7 +30,9 @@ export function RemoteControlUI({
   duration,
   progress,
   update,
-  manualScroll
+  manualScroll,
+  isCommentsVisible,
+  setIsCommentsVisible
 }: RemoteControlUIProps) {
   
   // Garantir que os números sejam válidos para evitar quebras de layout
@@ -59,11 +64,20 @@ export function RemoteControlUI({
           </div>
         </div>
         
-        <div className="text-right">
-          <div className="flex items-center justify-end gap-1.5 text-zinc-400 font-mono text-sm">
-            <span className="text-emerald-400 font-black">{formatTime(elapsedSeconds)}</span>
-            <span className="text-zinc-800">/</span>
-            <span className="text-zinc-500">{formatTime(safeDuration)}</span>
+        <div className="text-right flex flex-col items-end">
+          <div className="flex items-center justify-end gap-3 mb-2">
+            <button 
+              onClick={() => setIsCommentsVisible(!isCommentsVisible)}
+              className={`p-2 rounded-xl transition-all border ${isCommentsVisible ? 'bg-blue-500/20 border-blue-500 text-blue-400' : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-white'}`}
+              title="Abrir Comentários"
+            >
+              <MessageSquare size={18} />
+            </button>
+            <div className="flex items-center gap-1.5 text-zinc-400 font-mono text-sm bg-zinc-900 px-3 py-2 rounded-xl border border-zinc-800">
+              <span className="text-emerald-400 font-black">{formatTime(elapsedSeconds)}</span>
+              <span className="text-zinc-800">/</span>
+              <span className="text-zinc-500">{formatTime(safeDuration)}</span>
+            </div>
           </div>
           <p className="text-[9px] uppercase font-bold text-zinc-600 tracking-tighter">Tempo Estimado</p>
         </div>
@@ -169,7 +183,7 @@ export function RemoteControlUI({
         className="mt-6 flex items-center justify-center w-full py-5 rounded-2xl bg-zinc-900 text-zinc-500 hover:text-white active:scale-95 transition-all border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-800/50 group shrink-0"
       >
         <RotateCcw className="w-4 h-4 mr-3 group-hover:rotate-[-45deg] transition-transform" />
-        <span className="text-[11px] font-black uppercase tracking-[0.15em]">Reiniciar do Início</span>
+        <span className="text-[11px] font-black uppercase tracking-[0.15em]">Reiniciar roteiro!</span>
       </button>
     </div>
   );

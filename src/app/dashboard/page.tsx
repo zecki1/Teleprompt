@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, Check, Folder, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, Briefcase, Loader2, Users, UserPlus, Video, PlusCircle, ClipboardCheck } from "lucide-react";
+import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, Check, Folder, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, Briefcase, Loader2, Users, UserPlus, Video, PlusCircle, ClipboardCheck, MessageSquare } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
@@ -53,6 +53,8 @@ interface ScriptDoc {
   editorName?: string;
   reviewerId?: string;
   reviewerName?: string;
+  commentCount?: number;
+  commentAuthors?: string[];
 }
 
 const statusConfig: Record<ScriptStatus, { label: string; color: string; icon: React.ElementType }> = {
@@ -90,6 +92,7 @@ function DashboardContent() {
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [newProjectData, setNewProjectData] = useState({ name: "", code: "" });
+  const [filterCommenter, setFilterCommenter] = useState<string>("all");
   
   const handleCopyInvite = () => {
     if (!user?.workspaceId) {
@@ -186,7 +189,8 @@ function DashboardContent() {
   const filteredScripts = scripts.filter(s => {
     const matchesStatus = statusFilter === "all" || s.status === statusFilter;
     const matchesProject = !projectIdFilter || s.projectId === projectIdFilter;
-    return matchesStatus && matchesProject;
+    const matchesCommenter = filterCommenter === "all" || (s.commentAuthors && s.commentAuthors.includes(filterCommenter));
+    return matchesStatus && matchesProject && matchesCommenter;
   });
 
   const statusCounts = {
@@ -435,6 +439,8 @@ function DashboardContent() {
     }
   };
 
+  const allCommenters = Array.from(new Set(scripts.flatMap(s => s.commentAuthors || [])));
+
   const groupedScripts = filteredScripts.reduce((acc, script) => {
     const projectName = script.projectName || script.project || "Geral";
     const folderName = script.folder || "Sem Pasta";
@@ -591,6 +597,26 @@ function DashboardContent() {
           );
         })}
       </div>
+
+      {allCommenters.length > 0 && (
+        <div className="flex items-center gap-4 mb-8">
+          <div className="flex items-center gap-2 px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800">
+            <MessageSquare className="w-4 h-4 text-blue-500" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Comentários de:</span>
+            <Select value={filterCommenter} onValueChange={setFilterCommenter}>
+              <SelectTrigger className="w-[200px] h-7 border-none bg-transparent shadow-none text-[10px] font-bold focus:ring-0">
+                <SelectValue placeholder="Todos" />
+              </SelectTrigger>
+              <SelectContent className="rounded-xl border-zinc-200 dark:border-zinc-800">
+                <SelectItem value="all" className="text-[10px] font-black uppercase">Todos</SelectItem>
+                {allCommenters.map(author => (
+                  <SelectItem key={author} value={author} className="text-[10px] font-black uppercase">{author}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -805,6 +831,28 @@ function DashboardContent() {
                                   <Clock className="w-3 h-3" />
                                   {script.createdAt ? format(new Date(script.createdAt), "dd 'de' MMMM", { locale: ptBR }) : "Sem data"}
                                 </p>
+
+                                {script.commentCount ? (
+                                  <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800/50 mt-2">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                        <div className="bg-blue-500/10 text-blue-500 p-1 rounded">
+                                          <MessageSquare className="w-3 h-3" />
+                                        </div>
+                                        <span className="text-[10px] font-black uppercase text-blue-500 tracking-widest">
+                                          {script.commentCount} {script.commentCount === 1 ? "Comentário" : "Comentários"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1 mt-2">
+                                      {Array.from(new Set(script.commentAuthors || [])).map((author, i) => (
+                                        <Badge key={i} variant="secondary" className="text-[8px] h-4 bg-zinc-100 dark:bg-zinc-800 text-zinc-500 font-bold border-none">
+                                          {author}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
                                 
                                 <div className="grid grid-cols-2 gap-2">
                                   <Button variant="outline" size="sm" className="h-9 text-[10px] font-black uppercase tracking-widest hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2" asChild>
