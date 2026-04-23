@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useState, useRef, use, Suspense } from "react";
-import { doc, onSnapshot, getDocs, collection, query, orderBy, limit, updateDoc } from "firebase/firestore";
+import { doc, onSnapshot, getDocs, collection, query, orderBy, limit, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Scene } from "@/lib/parser";
 import { RemoteControlUI } from "@/components/tp/RemoteControlUI";
+import { useAuth } from "@/contexts/AuthContext";
 import { 
   Monitor, 
   ChevronLeft, 
+  ChevronDown,
+  ChevronUp,
   Type, 
   AlignJustify,
   Settings2,
@@ -16,8 +19,12 @@ import {
   Expand,
   Zap,
   Save,
-  CheckCircle2
+  CheckCircle2,
+  X,
+  Play,
+  Pause
 } from "lucide-react";
+import { updateTaskVideomaker } from "@/lib/zecki";
 import Link from "next/link";
 
 function TeleprompterContent({ id }: { id: string }) {
@@ -29,6 +36,8 @@ function TeleprompterContent({ id }: { id: string }) {
   const [isMirrored] = useState(isMirrorWindow);
   const [showRemote, setShowRemote] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  const { user } = useAuth();
   
   // App State
   const [isPlaying, setIsPlaying] = useState(false);
@@ -36,6 +45,9 @@ function TeleprompterContent({ id }: { id: string }) {
   const [duration, setDuration] = useState(0);
   const [localProgress, setLocalProgress] = useState(0);
   const [saveStatus, setSaveStatus] = useState<'saved' | null>(null);
+  const [scriptTitle, setScriptTitle] = useState("");
+  const [recordingTaskId, setRecordingTaskId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
 
   // Refs para Motor de Scroll (Evita lag de estado)
   const isPlayingRef = useRef(false);
@@ -113,22 +125,15 @@ function TeleprompterContent({ id }: { id: string }) {
   };
 
   // Texto para TP com marcadores ocultos mas preservados
-  const getTPDisplay = (text: string | null | undefined): string => {
-    if (!text) return '\u00A0';
-    
-    // Primeiro limpa as linhas de定义
-    let clean = text
-      .replace(/^\[(img|url|let)\d+\]:.*$/gim, '')
-      .replace(/^\[?Locução\]?:|^\[?Legenda\]?:/gim, '')
-      .trim();
-    
-    // Substitui marcadores por spans invisíveis que não interferem na edição
-    // O innerText ainda captura o texto, mas visualmente não aparece
-    clean = clean.replace(/(\[(?:let|img)\d+\])/g, 
-      '<span class="tp-hidden-marker" contenteditable="false">$1</span>'
-    );
-    
-    return clean || '\u00A0';
+  const getTPDisplay = (text: string | null) => {
+    if (!text) return "";
+    // Converte [let1], [img1], [abe], [enc] para spans com estilo
+    return text
+      .replace(/\[let(\d+)\]/g, '<span class="bg-red-600 text-white px-2 py-0.5 rounded-lg mx-1 font-black text-[0.4em] align-middle shadow-[0_0_15px_rgba(220,38,38,0.5)]">LET $1</span>')
+      .replace(/\[img(\d+)\]/g, '<span class="bg-blue-600 text-white px-2 py-0.5 rounded-lg mx-1 font-black text-[0.4em] align-middle shadow-[0_0_15px_rgba(37,99,235,0.5)]">IMG $1</span>')
+      .replace(/\[abe\]/g, '<span class="bg-emerald-600 text-white px-2 py-0.5 rounded-lg mx-1 font-black text-[0.4em] align-middle shadow-[0_0_15px_rgba(16,185,129,0.5)]">ABERTURA</span>')
+      .replace(/\[enc\]/g, '<span class="bg-rose-600 text-white px-2 py-0.5 rounded-lg mx-1 font-black text-[0.4em] align-middle shadow-[0_0_15px_rgba(225,29,72,0.5)]">ENCERRAMENTO</span>')
+      .replace(/\[(\d+)\]/g, '<span class="bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-lg mx-1 font-black text-[0.4em] align-middle">$1</span>');
   };
 
   const reconstructRawText = (scenesList: Scene[]): string => {
@@ -154,6 +159,10 @@ function TeleprompterContent({ id }: { id: string }) {
           sceneText += `[let${i + 1}]: ${letText.trim()}\n`;
         });
       }
+
+      // Abertura e Encerramento
+      if (s.opening) sceneText += `[abe]: ${s.opening}\n`;
+      if (s.closing) sceneText += `[enc]: ${s.closing}\n`;
       
       // Locução - mantém exatamente como está, só remove o prefixo se existir
       let spokenText = s.spokenText || '';
@@ -213,6 +222,9 @@ function TeleprompterContent({ id }: { id: string }) {
         if (d.fontFamily) setFontFamily(d.fontFamily);
         if (d.fontWeight) setFontWeight(d.fontWeight);
         if (d.lineHeight) setLineHeight(d.lineHeight);
+        if (d.title) setScriptTitle(d.title);
+        if (d.recordingTaskId) setRecordingTaskId(d.recordingTaskId);
+        if (d.projectId) setProjectId(d.projectId);
 
         if (d.resetRequest && d.resetRequest !== lastProcessedReset.current) {
           if (containerRef.current) containerRef.current.scrollTop = 0;
@@ -332,12 +344,50 @@ function TeleprompterContent({ id }: { id: string }) {
       });
     }
   }, [fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, isMirrorWindow]);
-
   if (loading) return <div className="fixed inset-0 bg-black flex items-center justify-center text-white font-bold animate-pulse">SINCRONIZANDO...</div>;
+
+  const handleSetRecorded = async () => {
+    try {
+      const rawContent = reconstructRawText(scenes);
+      await updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes, content: rawContent });
+      await updateDoc(doc(db, "scripts", id), { 
+        status: 'gravado',
+        updatedAt: serverTimestamp(),
+        duration: calculateDuration(scenes),
+        videomakerId: user?.uid,
+        videomakerName: user?.displayName || user?.name || "Videomaker"
+      });
+
+      // Atribui videomaker à tarefa no Zecki se houver uma tarefa vinculada
+      if (projectId && recordingTaskId && user?.uid) {
+        try {
+          await updateTaskVideomaker(projectId, recordingTaskId, user.uid);
+          console.log("Videomaker atribuído à tarefa do Zecki com sucesso.");
+        } catch (zeckiError) {
+          console.error("Erro ao atribuir videomaker no Zecki:", zeckiError);
+        }
+      }
+
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus(null), 2000);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   return (
     <div className={isMirrorWindow ? "fixed inset-0 z-[100] flex overflow-hidden" : "absolute inset-0 flex overflow-hidden top-[64px] h-[calc(100vh-64px)] z-40"} style={{ backgroundColor: bgColor }}>
       
+      {/* BOTÃO PARA MOSTRAR SIDEBAR (MOBILE OU OCULTO) */}
+      {!isMirrorWindow && !isSidebarVisible && (
+        <button 
+          onClick={() => setIsSidebarVisible(true)}
+          className="fixed right-4 bottom-4 z-[60] w-12 h-12 bg-zinc-900 border border-zinc-800 rounded-full flex items-center justify-center text-white shadow-2xl hover:bg-zinc-800 transition-all lg:hidden"
+        >
+          <Settings2 size={20} />
+        </button>
+      )}
+
       {/* OVERLAY PARA FULLSCREEN (Mirror Only) */}
       {isMirrorWindow && !isFullscreen && (
         <div onClick={toggleFullscreen} className="fixed inset-0 z-[110] bg-black/95 flex flex-col items-center justify-center cursor-pointer group transition-all">
@@ -367,18 +417,35 @@ function TeleprompterContent({ id }: { id: string }) {
                 const rawText = e.currentTarget.innerText;
                 handleSceneBlur(s.id, rawText);
               }}
-              dangerouslySetInnerHTML={{ __html: getTPDisplay(s.spokenText) }}
+              dangerouslySetInnerHTML={{ 
+                __html: getTPDisplay(
+                  (s.opening ? `[abe] ${s.opening}\n` : '') + 
+                  (s.spokenText || '') + 
+                  (s.closing ? `\n[enc] ${s.closing}` : '')
+                ) 
+              }}
             />
           ))}
         </div>
       </div>
-
+      
+      {/* SIDEBAR TOGGLE BUTTON (LG SCREEN) */}
       {!isMirrorWindow && (
-        <div className="w-[400px] shrink-0 h-full bg-zinc-950 border-l border-zinc-800 flex flex-col hidden lg:flex z-20 shadow-2xl overflow-hidden">
+        <button 
+          onClick={() => setIsSidebarVisible(!isSidebarVisible)}
+          className={`absolute right-4 top-4 z-[50] flex items-center gap-2 px-3 py-2 bg-zinc-900/80 backdrop-blur border border-zinc-800 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-all hidden lg:flex ${!isSidebarVisible ? 'opacity-100' : 'opacity-40 hover:opacity-100'}`}
+        >
+          {isSidebarVisible ? <X size={16} /> : <Settings2 size={16} />}
+          <span className="text-[10px] font-bold uppercase tracking-widest">{isSidebarVisible ? "Ocultar" : "Controles"}</span>
+        </button>
+      )}
+
+      {!isMirrorWindow && isSidebarVisible && (
+        <div className="w-[400px] shrink-0 h-full bg-zinc-950 border-l border-zinc-800 flex flex-col z-20 shadow-2xl overflow-hidden animate-in slide-in-from-right-4 duration-300">
           <div className="p-4 border-b border-zinc-900 flex items-center justify-between">
             <Link href={`/editor/${id}`} className="p-2 text-zinc-500 hover:text-white transition"><ChevronLeft size={20}/></Link>
             <span className="text-[10px] font-black tracking-[0.2em] text-zinc-400 uppercase font-mono">Master Control</span>
-            <Settings2 size={18} className="text-zinc-700" />
+            <button onClick={() => setIsSidebarVisible(false)} className="p-2 text-zinc-700 hover:text-white transition"><X size={18} /></button>
           </div>
 
           <div className="flex p-1.5 bg-zinc-900 m-4 rounded-xl gap-1 border border-zinc-800">
@@ -454,24 +521,36 @@ function TeleprompterContent({ id }: { id: string }) {
                   </div>
 
                   <div className="space-y-3 pt-4 border-t border-zinc-900">
-                    <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><Save size={14}/> Salvar Roteiro</p>
+                    <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest">
+                      {isPlaying || localProgress > 0.05 ? <Zap size={14}/> : <Save size={14}/>} 
+                      {isPlaying || localProgress > 0.05 ? "Finalizar Gravação" : "Salvar Roteiro"}
+                    </p>
                     <button 
                       onClick={async () => {
-                        const rawContent = reconstructRawText(scenes);
-                        await updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes, content: rawContent });
-                        await updateDoc(doc(db, "scripts", id), { duration: calculateDuration(scenes) });
-                        setSaveStatus('saved');
-                        setTimeout(() => setSaveStatus(null), 2000);
+                        if (isPlaying || localProgress > 0.05) {
+                          await handleSetRecorded();
+                        } else {
+                          const rawContent = reconstructRawText(scenes);
+                          await updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes, content: rawContent });
+                          await updateDoc(doc(db, "scripts", id), { duration: calculateDuration(scenes) });
+                          setSaveStatus('saved');
+                          setTimeout(() => setSaveStatus(null), 2000);
+                        }
                       }}
-                      className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-900/20"
+                      className={`w-full py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg ${
+                        isPlaying || localProgress > 0.05 
+                        ? "bg-blue-600 hover:bg-blue-500 shadow-blue-900/20" 
+                        : "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20"
+                      } text-white`}
                     >
                       {saveStatus === 'saved' ? (
                         <>
-                          <CheckCircle2 size={16} /> SALVO!
+                          <CheckCircle2 size={16} /> {isPlaying || localProgress > 0.05 ? "GRAVADO!" : "SALVO!"}
                         </>
                       ) : (
                         <>
-                          <Save size={16} /> SALVAR AGORA
+                          {isPlaying || localProgress > 0.05 ? <Zap size={16} /> : <Save size={16} />} 
+                          {isPlaying || localProgress > 0.05 ? "GRAVADO" : "SALVAR AGORA"}
                         </>
                       )}
                     </button>
@@ -479,7 +558,7 @@ function TeleprompterContent({ id }: { id: string }) {
                 </div>
               </div>
             ) : (
-              <div className="h-full py-4 animate-in slide-in-from-left-4 duration-300">
+              <div className="py-4 animate-in slide-in-from-left-4 duration-300">
                   <RemoteControlUI
                      isPlaying={isPlaying}
                      speed={speed}
@@ -497,6 +576,65 @@ function TeleprompterContent({ id }: { id: string }) {
              <span className="text-[9px] font-black uppercase text-zinc-600 tracking-[0.3em]">
                 {isPlaying ? 'EXECUTANDO' : 'PAUSADO'} | VEL {speed}X
              </span>
+          </div>
+        </div>
+      )}
+      {!isMirrorWindow && !isSidebarVisible && (
+        <div className="fixed bottom-0 left-0 right-0 h-16 bg-zinc-950/90 backdrop-blur-md border-t border-zinc-800 z-50 flex items-center justify-between px-6 animate-in slide-in-from-bottom-4 duration-300">
+          <div className="flex items-center gap-6 flex-1">
+             {/* 1. VELOCIDADE */}
+             <div className="flex flex-col">
+               <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">Velocidade</span>
+               <div className="flex items-center gap-2">
+                 <button onClick={() => updateGlobalStyle({speed: Math.max(speed - 1, 0)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronDown size={14}/></button>
+                 <div className="flex items-baseline gap-1">
+                   <span className="text-xl font-black text-white">{speed}</span>
+                   <span className="text-[10px] font-bold text-zinc-600 uppercase">x</span>
+                 </div>
+                 <button onClick={() => updateGlobalStyle({speed: Math.min(speed + 1, 20)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronUp size={14}/></button>
+               </div>
+             </div>
+
+             <div className="h-8 w-px bg-zinc-800" />
+
+             {/* 2. PLAY / PAUSE */}
+             <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => setIsPlaying(!isPlaying)}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isPlaying ? 'bg-red-500/20 text-red-500 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'bg-emerald-500/20 text-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]'}`}
+                >
+                  {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
+                </button>
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">{isPlaying ? 'Executando' : 'Pausado'}</span>
+                  <span className="text-[10px] font-bold text-white uppercase font-mono">{Math.floor(localProgress * 100)}%</span>
+                </div>
+             </div>
+
+             <div className="h-8 w-px bg-zinc-800" />
+
+             {/* 3. TÍTULO DO ROTEIRO */}
+             <div className="flex flex-col flex-1 min-w-0">
+               <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest mb-0.5">Roteiro Atual</span>
+               <span className="text-sm font-bold text-white truncate pr-4">{scriptTitle}</span>
+             </div>
+          </div>
+
+          {/* 4. MARCAR COMO GRAVADO */}
+          <div className="flex items-center gap-4">
+             <button 
+               onClick={handleSetRecorded}
+               className="h-10 px-6 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-black text-[10px] tracking-widest transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2"
+             >
+               {saveStatus === 'saved' ? <CheckCircle2 size={16} /> : <Zap size={16} />}
+               {saveStatus === 'saved' ? 'GRAVADO!' : 'MARCAR COMO GRAVADO'}
+             </button>
+             <button 
+               onClick={() => setIsSidebarVisible(true)}
+               className="p-2 text-zinc-500 hover:text-white transition-colors"
+             >
+               <Settings2 size={20} />
+             </button>
           </div>
         </div>
       )}

@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { fetchZeckiProjects as getProjects, ZeckiProject as Project, createZeckiProject as createProject } from "@/lib/zecki";
+import { fetchZeckiProjects as getProjects, ZeckiProject as Project, createZeckiProject as createProject, deleteZeckiProject as deleteProject } from "@/lib/zecki";
+import { SENAI_WORKSPACE_ID } from "@/lib/constants";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,8 +26,10 @@ import {
   Link2, 
   CheckCircle2,
   Calendar,
-  Eye
+  Eye,
+  Trash2
 } from "lucide-react";
+import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -42,7 +45,7 @@ export default function ProjectsPage() {
 
   const loadProjects = useCallback(async () => {
     try {
-      const workspaceId = user?.workspaceId || "senai";
+      const workspaceId = user?.workspaceId || SENAI_WORKSPACE_ID;
       const projectsData = await getProjects(workspaceId);
       setProjects(projectsData);
     } catch (error) {
@@ -66,7 +69,7 @@ export default function ProjectsPage() {
     
     setCreating(true);
     try {
-      const workspaceId = user?.workspaceId || "senai";
+      const workspaceId = user?.workspaceId || SENAI_WORKSPACE_ID;
       
       const created = await createProject({
         name: newProject.name,
@@ -85,6 +88,20 @@ export default function ProjectsPage() {
       console.error("Erro ao criar projeto:", error);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleDeleteProject = async (e: React.MouseEvent, projectId: string) => {
+    e.stopPropagation();
+    if (!confirm("Tem certeza que deseja excluir este projeto? Os roteiros vinculados a ele continuarão existindo, mas sem projeto definido.")) return;
+    
+    try {
+      await deleteProject(projectId);
+      setProjects(projects.filter(p => p.id !== projectId));
+      toast.success("Projeto excluído com sucesso!");
+    } catch (error) {
+      console.error("Erro ao excluir projeto:", error);
+      toast.error("Erro ao excluir projeto.");
     }
   };
 
@@ -190,14 +207,14 @@ export default function ProjectsPage() {
           {projects.map((project) => (
             <Card 
               key={project.id} 
-              className="hover:shadow-lg transition-all cursor-pointer group border-zinc-200 dark:border-zinc-800"
+              className="hover:shadow-lg transition-all cursor-pointer group border-zinc-200 dark:border-zinc-800 "
               onClick={() => router.push(`/dashboard?projectId=${project.id}`)}
             >
-              <CardHeader className="pb-3 border-b border-zinc-100 dark:border-zinc-800/50 bg-zinc-50/50 dark:bg-zinc-900/50">
+              <CardHeader className="pb-3 border-b border-zinc-100 dark:border-zinc-800/50 bg-zinc-50/50 dark:bg-zinc-900/50 pt-4">
                 <div className="flex items-start justify-between">
                   <div>
                     <CardTitle className="text-lg group-hover:text-blue-600 transition-colors">{project.name}</CardTitle>
-                    <CardDescription className="font-mono text-xs mt-1">
+                    <CardDescription className="font-mono text-xs mt-1 ">
                       {project.code || "PB-000"}
                     </CardDescription>
                   </div>
@@ -214,13 +231,22 @@ export default function ProjectsPage() {
                     >
                       <PlusCircle className="w-5 h-5" />
                     </Button>
+                    <Button 
+                      size="icon" 
+                      variant="ghost" 
+                      className="h-8 w-8 rounded-full hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30"
+                      onClick={(e) => handleDeleteProject(e, project.id)}
+                      title="Excluir Projeto"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
                     <Badge variant={project.status === "active" ? "default" : "secondary"}>
                       {project.status === "active" ? "Ativo" : project.status}
                     </Badge>
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="pt-4">
+              <CardContent className="pb-5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4 text-sm text-zinc-500">
                     <div className="flex items-center gap-1">

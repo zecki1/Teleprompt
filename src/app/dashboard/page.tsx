@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { collection, query, getDocs, deleteDoc, doc, updateDoc, writeBatch, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
@@ -16,7 +16,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Suspense } from "react";
-import { fetchZeckiProjects, ZeckiProject, createRecordingTask, createEditingTask } from "@/lib/zecki";
+import { fetchZeckiProjects, ZeckiProject, createRecordingTask, createEditingTask, createZeckiProject, deleteZeckiProject } from "@/lib/zecki";
 import { toDate } from "@/lib/firebase-utils";
 import { toast } from "sonner";
 import {
@@ -87,6 +87,9 @@ function DashboardContent() {
   const [statusFilter, setStatusFilter] = useState<ScriptStatus | "all">("all");
   const [reviewingScript, setReviewingScript] = useState<ScriptDoc | null>(null);
   const [completingReview, setCompletingReview] = useState(false);
+  const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [newProjectData, setNewProjectData] = useState({ name: "", code: "" });
   
   const handleCopyInvite = () => {
     if (!user?.workspaceId) {
@@ -105,6 +108,18 @@ function DashboardContent() {
   const projectIdFilter = searchParams.get("projectId");
   const selectedProject = projects.find(p => p.id === projectIdFilter);
 
+  const loadProjects = useCallback(async () => {
+    try {
+      const workspaceId = user?.workspaceId || SENAI_WORKSPACE_ID;
+      const projectsData = await fetchZeckiProjects(workspaceId);
+      setProjects(projectsData);
+    } catch (error) {
+      console.error("Erro ao carregar projetos:", error);
+    } finally {
+      setLoadingProjects(false);
+    }
+  }, [user?.workspaceId]);
+
   useEffect(() => {
     if (!user) {
       router.push("/login");
@@ -121,10 +136,7 @@ function DashboardContent() {
       const activeWorkspaceId = user.workspaceId || SENAI_WORKSPACE_ID;
 
       try {
-        setLoadingProjects(true);
-        const projectsData = await fetchZeckiProjects(activeWorkspaceId);
-        setProjects(projectsData);
-        setLoadingProjects(false);
+        await loadProjects();
 
         const scriptsRef = collection(db, "scripts");
         const q = activeWorkspaceId === SENAI_WORKSPACE_ID 
@@ -144,9 +156,20 @@ function DashboardContent() {
         }) as ScriptDoc[];
 
         fetched.sort((a, b) => {
-          const dateA = new Date(a.createdAt || 0).getTime();
-          const dateB = new Date(b.createdAt || 0).getTime();
-          return dateB - dateA;
+          const priority: Record<string, number> = {
+            'aguardando_gravacao': 0,
+            'rascunho': 1,
+            'em_revisao': 1,
+            'revisao_realizada': 1,
+            'gravado': 2,
+            'rejeitado': 3
+          };
+          
+          const pA = priority[a.status] ?? 1;
+          const pB = priority[b.status] ?? 1;
+          
+          if (pA !== pB) return pA - pB;
+          return a.title.localeCompare(b.title);
         });
 
         setScripts(fetched);
@@ -158,7 +181,7 @@ function DashboardContent() {
       }
     }
     fetchData();
-  }, [user?.workspaceId, router, user]);
+  }, [user?.workspaceId, router, user, loadProjects]);
 
   const filteredScripts = scripts.filter(s => {
     const matchesStatus = statusFilter === "all" || s.status === statusFilter;
@@ -174,6 +197,19 @@ function DashboardContent() {
     aguardando_gravacao: scripts.filter(s => s.status === "aguardando_gravacao").length,
     gravado: scripts.filter(s => s.status === "gravado").length,
     rejeitado: scripts.filter(s => s.status === "rejeitado").length,    
+  };
+
+  const handleDeleteProject = async (e: React.MouseEvent, projectId: string) => {
+    e.stopPropagation();
+    if (!confirm("Tem certeza que deseja excluir este projeto?")) return;
+    try {
+      await deleteZeckiProject(projectId);
+      setProjects(projects.filter(p => p.id !== projectId));
+      if (projectIdFilter === projectId) router.push("/dashboard");
+      toast.success("Projeto excluído com sucesso!");
+    } catch {
+      toast.error("Erro ao excluir projeto.");
+    }
   };
 
   const handleAssign = async (scriptId: string, userId: string, userName: string, field: 'editor' | 'reviewer') => {
@@ -211,25 +247,34 @@ function DashboardContent() {
       await updateDoc(scriptRef, updateData);
       
       if (reviewingScript.projectId) {
-        await createRecordingTask(
+        const recordingTaskId = await createRecordingTask(
           reviewingScript.projectId,
           reviewingScript.title,
           reviewingScript.id,
           user?.uid || "",
           user?.workspaceId || SENAI_WORKSPACE_ID,
           selectedCategory,
-          `${window.location.origin}/tp/${reviewingScript.id}`
+          `${window.location.origin}/tp/${reviewingScript.id}`,
+          reviewingScript.editorId,
+          reviewingScript.reviewerId
         );
         
-        await createEditingTask(
+        const editingTaskId = await createEditingTask(
           reviewingScript.projectId,
           reviewingScript.title,
           reviewingScript.id,
           user?.uid || "",
           user?.workspaceId || SENAI_WORKSPACE_ID,
           selectedCategory,
-          `${window.location.origin}/tp/${reviewingScript.id}`
+          `${window.location.origin}/tp/${reviewingScript.id}`,
+          reviewingScript.editorId,
+          reviewingScript.reviewerId
         );
+
+        await updateDoc(scriptRef, {
+          recordingTaskId,
+          editingTaskId
+        });
         
         toast.success(`Tarefas de Gravação e Edição de ${selectedCategory === "video" ? "Vídeo" : "Podcast"} criadas!`);
       }
@@ -330,6 +375,33 @@ function DashboardContent() {
     }
   };
 
+  const handleCreateNewProject = async () => {
+    if (!newProjectData.name.trim()) return;
+    setIsCreatingProject(true);
+    try {
+      const workspaceId = user?.workspaceId || SENAI_WORKSPACE_ID;
+      
+      const payload: Partial<ZeckiProject> = {
+        name: newProjectData.name,
+        code: newProjectData.code || newProjectData.name.toUpperCase().slice(0, 3),
+        workspaceId: workspaceId,
+        status: 'active'
+      };
+
+      const createdProj = await createZeckiProject(payload);
+      
+      setProjects([createdProj, ...projects]);
+      setIsCreateProjectOpen(false);
+      setNewProjectData({ name: "", code: "" });
+      toast.success("Projeto criado com sucesso!");
+    } catch (error) {
+      console.error("Erro ao criar projeto:", error);
+      toast.error("Erro ao criar projeto.");
+    } finally {
+      setIsCreatingProject(false);
+    }
+  };
+
   const handleRenameFolder = async (projectName: string, oldFolderName: string) => {
     if (!newFolderTitle.trim() || oldFolderName === newFolderTitle) {
       setEditingFolderName(null);
@@ -404,6 +476,14 @@ function DashboardContent() {
             </Button>
           )}
           <Button 
+            variant="outline"
+            onClick={() => setIsCreateProjectOpen(true)}
+            className="rounded border-zinc-200 dark:border-zinc-800 flex gap-2 hover:bg-zinc-50 dark:hover:bg-zinc-900"
+          >
+            <PlusCircle className="w-4 h-4 text-emerald-500" />
+            Novo Projeto
+          </Button>
+          <Button 
             onClick={() => {
               const url = selectedProject 
                 ? `/editor/new?project=${encodeURIComponent(selectedProject.name)}&projectId=${selectedProject.id}`
@@ -445,7 +525,7 @@ function DashboardContent() {
               return (
                 <Card 
                   key={project.id} 
-                  className={`min-w-[220px] max-w-[220px] flex-shrink-0 cursor-pointer transition-all border-2 ${
+                  className={`min-w-[220px] max-w-[220px] flex-shrink-0 cursor-pointer transition-all border-2 group ${
                     isActive 
                       ? 'border-blue-500 ring-4 ring-blue-500/10 scale-105 shadow-lg bg-blue-50/30' 
                       : 'hover:border-blue-300 border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
@@ -463,7 +543,14 @@ function DashboardContent() {
                       <Badge variant={isActive ? "default" : "outline"} className="text-[10px] uppercase font-mono px-1.5 py-0 h-5">
                         {project.code || "PRJ"}
                       </Badge>
-                      {isActive && <CheckCircle2 className="w-4 h-4 text-blue-500" />}
+                      <Button 
+                        size="icon" 
+                        variant="ghost" 
+                        className="h-6 w-6 rounded-full hover:bg-red-100 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(e) => handleDeleteProject(e, project.id)}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
                     </div>
                     <CardTitle className={`text-sm line-clamp-1 ${isActive ? 'text-blue-700 dark:text-blue-400 font-bold' : ''}`}>
                       {project.name}
@@ -650,7 +737,7 @@ function DashboardContent() {
                                   </div>
                                 ) : (
                                   <div className="flex items-start justify-between group/title">
-                                    <CardTitle className="text-base line-clamp-2 leading-tight font-black" title={script.title}>{script.title}</CardTitle>
+                                    <CardTitle className="text-base leading-tight font-black break-all whitespace-normal" title={script.title}>{script.title}</CardTitle>
                                     <Button 
                                       size="icon" 
                                       variant="ghost" 
@@ -662,9 +749,20 @@ function DashboardContent() {
                                   </div>
                                 )}
                                 <div className="flex items-center gap-2 mt-2">
-                                  <Badge className={`${statusConfig[script.status]?.color || "bg-zinc-500"} text-white text-[9px] font-black uppercase tracking-widest px-2 h-5`}>
-                                    {statusConfig[script.status]?.label || script.status}
-                                  </Badge>
+                                  {(script.status === "revisao_realizada" || script.status === "aguardando_gravacao") ? (
+                                    <>
+                                      <Badge className="bg-emerald-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5">
+                                        Revisado
+                                      </Badge>
+                                      <Badge className="bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(37,99,235,0.3)]">
+                                        Aguardando Gravação
+                                      </Badge>
+                                    </>
+                                  ) : (
+                                    <Badge className={`${statusConfig[script.status]?.color || "bg-zinc-500"} text-white text-[9px] font-black uppercase tracking-widest px-2 h-5`}>
+                                      {statusConfig[script.status]?.label || script.status}
+                                    </Badge>
+                                  )}
                                   <Badge variant="outline" className="text-[9px] font-black uppercase tracking-widest px-2 h-5 border-zinc-200 dark:border-zinc-800 text-zinc-500 gap-1.5">
                                     {script.category === "podcast" ? (
                                       <><PlusCircle className="w-2.5 h-2.5 text-purple-500" /> Podcast</>
@@ -953,6 +1051,54 @@ function DashboardContent() {
               className="flex-[2] h-12 rounded bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px]"
             >
               MOVER AGORA
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* DIALOG CRIAR PROJETO */}
+      <Dialog open={isCreateProjectOpen} onOpenChange={setIsCreateProjectOpen}>
+        <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)]">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-black text-center mb-2 uppercase tracking-widest">Novo Projeto</DialogTitle>
+            <DialogDescription className="text-center text-zinc-500 text-sm font-medium mb-6">
+              O projeto será criado no Teleprompt e sincronizado com o Zecki Dashboard.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="proj-name" className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1">Nome do Projeto</Label>
+              <Input
+                id="proj-name"
+                placeholder="Ex: Curso de Excel"
+                value={newProjectData.name}
+                onChange={(e) => {
+                  const name = e.target.value;
+                  const code = name.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3) + "-" + Math.floor(100 + Math.random() * 900);
+                  setNewProjectData({ name, code: newProjectData.code || code });
+                }}
+                className="h-12 rounded border-zinc-200 dark:border-zinc-800 font-bold"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="proj-code" className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1">Código (ID)</Label>
+              <Input
+                id="proj-code"
+                placeholder="Ex: EXC-001"
+                value={newProjectData.code}
+                onChange={(e) => setNewProjectData({ ...newProjectData, code: e.target.value })}
+                className="h-12 rounded border-zinc-200 dark:border-zinc-800 font-mono font-bold"
+              />
+            </div>
+          </div>
+          <DialogFooter className="flex gap-3">
+            <Button variant="ghost" onClick={() => setIsCreateProjectOpen(false)} className="flex-1 h-12 rounded font-bold">Cancelar</Button>
+            <Button 
+              onClick={handleCreateNewProject} 
+              disabled={isCreatingProject || !newProjectData.name.trim()}
+              className="flex-[2] h-12 rounded bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] shadow-lg"
+            >
+              {isCreatingProject ? <Loader2 className="w-4 h-4 animate-spin" /> : "CRIAR PROJETO"}
             </Button>
           </DialogFooter>
         </DialogContent>

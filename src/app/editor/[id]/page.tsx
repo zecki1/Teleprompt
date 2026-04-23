@@ -41,8 +41,9 @@ import {
   ClipboardCheck,
   FileDown,
   Loader2,
+  Monitor,
 } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import {
   collection,
   addDoc,
@@ -68,6 +69,7 @@ import {
 } from "@/components/ui/select";
 import { toast as sonnerToast } from "sonner";
 import { exportToWord } from "@/lib/export-word";
+import { exportToPPT } from "@/lib/export-ppt";
 
 type ScriptStatus = "rascunho" | "em_revisao" | "revisao_realizada" | "aguardando_gravacao" | "gravado" | "rejeitado";
 
@@ -132,6 +134,7 @@ function HighlightedSpokenText({
 
 function EditorContent({ id }: { id: string }) {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const isNew = !id || id === "new";
 
   const [title, setTitle] = useState("Novo Roteiro");
@@ -308,6 +311,8 @@ function EditorContent({ id }: { id: string }) {
           if (l.trim()) newText += `[let${idx + 1}]: ${l.trim()}\n`;
         });
       }
+      if (scene.opening) newText += `[abe]: ${scene.opening}\n`;
+      if (scene.closing) newText += `[enc]: ${scene.closing}\n`;
       if (scene.sourceUrl) newText += `[url1]: ${scene.sourceUrl}\n`;
       if (scene.observation) newText += `OBS: ${scene.observation}\n`;
       if (scene.spokenText) newText += `Locução: ${scene.spokenText}\n`;
@@ -393,6 +398,11 @@ function EditorContent({ id }: { id: string }) {
       setIsSaving(false);
       setShowSaveModal(false);
       clearTimeout(safetyTimer);
+      
+      // Redireciona para o dashboard após salvar
+      setTimeout(() => {
+        router.push("/dashboard");
+      }, 1000);
 
       // --- AUTOMAÇÃO DE TAREFAS KANBAN (PROCESSO EM BACKGROUND) ---
       const runAutomations = async () => {
@@ -486,7 +496,7 @@ function EditorContent({ id }: { id: string }) {
     showToast(`${label} copiado!`);
   };
 
-  const addBlockToScene = (index: number, type: 'spokenText' | 'imageUrl' | 'lettering' | 'observation') => {
+  const addBlockToScene = (index: number, type: 'spokenText' | 'imageUrl' | 'lettering' | 'observation' | 'opening' | 'closing') => {
     const ns = [...scenes];
     const scene = ns[index];
     if (type === 'spokenText') scene.spokenText = "";
@@ -498,11 +508,13 @@ function EditorContent({ id }: { id: string }) {
        if (scene.lettering == null) scene.lettering = "";
        else scene.lettering += "\n";
     }
+    if (type === 'opening') scene.opening = "";
+    if (type === 'closing') scene.closing = "";
     if (type === 'observation') scene.observation = "";
     setScenes(ns);
   };
 
-  const removeBlockFromScene = (index: number, type: 'spokenText' | 'imageUrl' | 'lettering' | 'observation', subIndex?: number) => {
+  const removeBlockFromScene = (index: number, type: 'spokenText' | 'imageUrl' | 'lettering' | 'observation' | 'opening' | 'closing', subIndex?: number) => {
     const ns = [...scenes];
     const scene = ns[index];
     if (type === 'spokenText') scene.spokenText = null;
@@ -519,6 +531,8 @@ function EditorContent({ id }: { id: string }) {
         scene.lettering = filtered.length > 0 ? filtered.join('\n') : null;
       } else { scene.lettering = null; }
     }
+    if (type === 'opening') scene.opening = null;
+    if (type === 'closing') scene.closing = null;
     if (type === 'observation') scene.observation = null;
     setScenes(ns);
   };
@@ -570,6 +584,16 @@ function EditorContent({ id }: { id: string }) {
     } catch (error) {
       console.error("Erro ao gerar documento Word:", error);
       sonnerToast.error("Falha ao gerar arquivo Word.");
+    }
+  };
+
+  const handleDownloadPPT = async () => {
+    try {
+      await exportToPPT({ title, projectName: project }, scenes);
+      showToast("Backup PPT gerado!");
+    } catch (error) {
+      console.error("Erro ao gerar documento PPT:", error);
+      sonnerToast.error("Falha ao gerar arquivo PPT.");
     }
   };
 
@@ -703,12 +727,27 @@ function EditorContent({ id }: { id: string }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={handleDownloadWord} className="h-9 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 hidden md:flex">
-                <FileDown size={16} /> Backup Word
+              <Button variant="outline" size="sm" onClick={handleDownloadWord} className="h-9 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 hidden lg:flex">
+                <FileDown size={16} /> Word
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleDownloadPPT} className="h-9 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 hidden lg:flex">
+                <FileDown size={16} /> PPT
               </Button>
              <Button variant={isEditingMode ? "outline" : "secondary"} size="sm" onClick={() => setIsEditingMode(!isEditingMode)} className="h-9 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2">
                 {isEditingMode ? <Eye size={16} /> : <EyeOff size={16} />} {isEditingMode ? "Ver Final" : "Editar"}
               </Button>
+              {!isNew && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="h-9 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 border-blue-500 text-blue-600 hover:bg-blue-50" 
+                  asChild
+                >
+                  <Link href={`/tp/${id}`}>
+                    <Monitor size={16} /> TP
+                  </Link>
+                </Button>
+              )}
               <Button 
                 onClick={handleSaveClick} 
                 className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] tracking-widest px-6 rounded shadow-lg"
@@ -755,6 +794,12 @@ function EditorContent({ id }: { id: string }) {
                         <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'imageUrl')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-purple-500 transition-colors">
                            <ImageIcon size={14} className="text-purple-500" /> Img
                         </Button>
+                        <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'opening')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-emerald-500 transition-colors">
+                           <Pin size={14} className="text-emerald-500" /> Abe
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'closing')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-rose-500 transition-colors">
+                           <Pin size={14} className="text-rose-500" /> Enc
+                        </Button>
                       </div>
                     )}
                   </div>
@@ -778,6 +823,42 @@ function EditorContent({ id }: { id: string }) {
                          </div>
                       </div>
                       <HighlightedSpokenText text={scene.spokenText || ""} onChange={(e) => updateScene(index, { spokenText: e.target.value })} textareaRef={(el) => { if (el) textareaRefs.current[scene.id] = el; }} disabled={!canEdit} isEditing={isEditingMode} />
+                    </div>
+                  )}
+
+                  {/* ABERTURA */}
+                  {(scene.opening != null) && (
+                    <div className="space-y-3 pt-6 border-t border-zinc-100 dark:border-zinc-800">
+                      <div className="flex items-center justify-between">
+                         <Label className="text-[10px] uppercase font-black text-emerald-600 tracking-widest flex items-center gap-2"><Pin size={16} /> Abertura</Label>
+                         <div className="flex gap-2">
+                            <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100" onClick={() => copyToClipboard(scene.opening || "", "Abertura")}><Copy size={12} /></Button>
+                            {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'opening')}><Trash2 size={12} /></Button>}
+                         </div>
+                      </div>
+                      {isEditingMode ? (
+                        <Input value={scene.opening || ""} onChange={(e) => updateScene(index, { opening: e.target.value })} className="text-[14px] font-medium leading-relaxed bg-zinc-50/50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800" placeholder="Texto da abertura..." />
+                      ) : (
+                        <p className="text-[14px] font-medium text-emerald-800 dark:text-emerald-400 p-4 bg-emerald-50/30 dark:bg-emerald-950/20 rounded border border-emerald-100 dark:border-emerald-900/20">{scene.opening}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ENCERRAMENTO */}
+                  {(scene.closing != null) && (
+                    <div className="space-y-3 pt-6 border-t border-zinc-100 dark:border-zinc-800">
+                      <div className="flex items-center justify-between">
+                         <Label className="text-[10px] uppercase font-black text-rose-600 tracking-widest flex items-center gap-2"><Pin size={16} /> Encerramento</Label>
+                         <div className="flex gap-2">
+                            <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100" onClick={() => copyToClipboard(scene.closing || "", "Encerramento")}><Copy size={12} /></Button>
+                            {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'closing')}><Trash2 size={12} /></Button>}
+                         </div>
+                      </div>
+                      {isEditingMode ? (
+                        <Input value={scene.closing || ""} onChange={(e) => updateScene(index, { closing: e.target.value })} className="text-[14px] font-medium leading-relaxed bg-zinc-50/50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800" placeholder="Texto do encerramento..." />
+                      ) : (
+                        <p className="text-[14px] font-medium text-rose-800 dark:text-rose-400 p-4 bg-rose-50/30 dark:bg-rose-950/20 rounded border border-rose-100 dark:border-rose-900/20">{scene.closing}</p>
+                      )}
                     </div>
                   )}
 
