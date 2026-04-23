@@ -98,7 +98,7 @@ export function SiteHeader() {
         </nav>
 
         {/* Ações & Menu Mobile */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-6">
           <Button variant="ghost" size="icon" className="hidden sm:flex" onClick={() => {
             if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
             else if (document.exitFullscreen) document.exitFullscreen();
