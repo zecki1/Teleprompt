@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, useRef, use, Suspense } from "react";
-import { doc, onSnapshot, getDocs, collection, query, orderBy, limit, updateDoc, serverTimestamp } from "firebase/firestore";
+import { doc, onSnapshot, getDocs, collection, query, orderBy, limit, updateDoc, serverTimestamp, arrayUnion, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { logActivity } from "@/lib/activity";
 import { Scene } from "@/lib/parser";
 import { RemoteControlUI } from "@/components/tp/RemoteControlUI";
 import { useAuth } from "@/contexts/AuthContext";
@@ -23,11 +24,23 @@ import {
   X,
   Play,
   Pause,
-  MessageSquare
+  MessageSquare,
+  ChevronRight
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { updateTaskVideomaker } from "@/lib/zecki";
 import Link from "next/link";
 import { CommentsPanel } from "@/components/tp/CommentsPanel";
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogFooter,
+  DialogDescription
+} from "@/components/ui/dialog";
+import { useRouter } from "next/navigation";
 
 function TeleprompterContent({ id }: { id: string }) {
   const [scenes, setScenes] = useState<Scene[]>([]);
@@ -51,6 +64,14 @@ function TeleprompterContent({ id }: { id: string }) {
   const [scriptTitle, setScriptTitle] = useState("");
   const [recordingTaskId, setRecordingTaskId] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState<string | null>(null);
+  const [folder, setFolder] = useState<string | null>(null);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [nextScript, setNextScript] = useState<any | null>(null);
+  const [showNextModal, setShowNextModal] = useState(false);
+  const [editorId, setEditorId] = useState<string | null>(null);
+  const [editorName, setEditorName] = useState<string | null>(null);
+  const router = useRouter();
 
   // Refs para Motor de Scroll (Evita lag de estado)
   const isPlayingRef = useRef(false);
@@ -228,6 +249,11 @@ function TeleprompterContent({ id }: { id: string }) {
         if (d.title) setScriptTitle(d.title);
         if (d.recordingTaskId) setRecordingTaskId(d.recordingTaskId);
         if (d.projectId) setProjectId(d.projectId);
+        if (d.projectName) setProjectName(d.projectName);
+        if (d.folder) setFolder(d.folder);
+        if (d.workspaceId) setWorkspaceId(d.workspaceId);
+        if (d.editorId) setEditorId(d.editorId);
+        if (d.editorName) setEditorName(d.editorName);
 
         if (d.resetRequest && d.resetRequest !== lastProcessedReset.current) {
           if (containerRef.current) containerRef.current.scrollTop = 0;
@@ -366,6 +392,8 @@ function TeleprompterContent({ id }: { id: string }) {
         videomakerName: user?.displayName || user?.name || "Videomaker"
       });
 
+      console.log("[TP] Iniciando handleSetRecorded para ID:", id);
+      
       // Atribui videomaker à tarefa no Zecki se houver uma tarefa vinculada
       if (projectId && recordingTaskId && user?.uid) {
         try {
@@ -376,10 +404,110 @@ function TeleprompterContent({ id }: { id: string }) {
         }
       }
 
+      // Adiciona o usuário como colaborador e atribui responsabilidade se necessário
+      if (user?.uid) {
+        const scriptRef = doc(db, "scripts", id);
+        const updateData: any = {
+          collaborators: arrayUnion({
+            uid: user.uid,
+            name: user.displayName || user.name || user.email || "Usuário",
+            role: "Videomaker",
+            timestamp: new Date().toISOString()
+          })
+        };
+
+        // Se não houver responsável definido, define o usuário atual
+        if (!editorId) {
+          updateData.editorId = user.uid;
+          updateData.editorName = user.displayName || user.name || user.email || "Videomaker";
+        }
+
+        await updateDoc(scriptRef, updateData);
+
+        // Registra a atividade no log global
+        await logActivity({
+          userId: user.uid,
+          userName: user.displayName || user.name || user.email || "Usuário",
+          userAvatar: user.photoURL || null,
+          action: "Gravou",
+          scriptId: id,
+          scriptTitle: scriptTitle,
+          projectId: projectId || null,
+          projectName: projectName || null,
+          folder: folder || null,
+          workspaceId: workspaceId || "senai"
+        });
+      }
+
       setSaveStatus('saved');
+      console.log("[TP] Status salvo como gravado. Buscando próximo roteiro...");
+      
+      // Busca o próximo roteiro para sugerir
+      await findNextScript();
+      
       setTimeout(() => setSaveStatus(null), 2000);
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const findNextScript = async () => {
+    try {
+      const activeWorkspaceId = workspaceId || "senai";
+      const scriptsRef = collection(db, "scripts");
+      
+      // Busca todos os roteiros do workspace para garantir a ordem correta
+      const q = query(
+        scriptsRef, 
+        where("workspaceId", "==", activeWorkspaceId)
+      );
+      
+      const snapshot = await getDocs(q);
+      const allScripts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+      
+      console.log(`[NextScript] Total de roteiros encontrados no workspace ${activeWorkspaceId}:`, allScripts.length);
+      
+      if (allScripts.length === 0) {
+        console.log("[NextScript] Nenhum roteiro encontrado no workspace.");
+        return;
+      }
+
+      // Ordenação: Projeto -> Pasta -> Título (mesma lógica do Dashboard)
+      allScripts.sort((a, b) => {
+        const projA = a.projectName || a.project || "Geral";
+        const projB = b.projectName || b.project || "Geral";
+        if (projA !== projB) return projA.localeCompare(projB, undefined, { numeric: true, sensitivity: 'base' });
+
+        const folderA = a.folder || "Sem Pasta";
+        const folderB = b.folder || "Sem Pasta";
+        if (folderA !== folderB) return folderA.localeCompare(folderB, undefined, { numeric: true, sensitivity: 'base' });
+
+        const titleA = a.title || "";
+        const titleB = b.title || "";
+        return titleA.localeCompare(titleB, undefined, { numeric: true, sensitivity: 'base' });
+      });
+
+      // Encontra o índice do roteiro atual
+      const currentIndex = allScripts.findIndex(s => s.id === id);
+      
+      if (currentIndex !== -1) {
+        // Procura o próximo roteiro que esteja revisado/aguardando gravação
+        const next = allScripts.slice(currentIndex + 1).find(s => 
+          s.status === "revisao_realizada" || s.status === "aguardando_gravacao"
+        );
+
+        if (next) {
+          console.log("[NextScript] Sucesso! Sugerindo:", next.title, "ID:", next.id);
+          setNextScript(next);
+          setShowNextModal(true);
+        } else {
+          console.log("[NextScript] Nenhum roteiro 'revisado' encontrado após o atual na lista ordenada.");
+        }
+      } else {
+        console.log("[NextScript] Roteiro atual não encontrado na lista de scripts do workspace.");
+      }
+    } catch (err) {
+      console.error("Erro ao buscar próximo roteiro:", err);
     }
   };
 
@@ -465,7 +593,7 @@ function TeleprompterContent({ id }: { id: string }) {
       </div>
 
       {!isMirrorWindow && isSidebarVisible && (
-        <div className="w-[400px] shrink-0 h-full bg-zinc-950 border-l border-zinc-800 flex flex-col z-20 shadow-2xl overflow-hidden animate-in slide-in-from-right-4 duration-300">
+        <div className="w-[400px] shrink-0 h-full bg-zinc-950 border-l border-zinc-800 flex flex-col z-20 shadow-2xl overflow-hidden animate-in slide-in-from-left-4 duration-300">
           <div className="p-4 border-b border-zinc-900 flex items-center justify-between">
             <Link href={`/editor/${id}`} className="p-2 text-zinc-500 hover:text-white transition"><ChevronLeft size={20}/></Link>
             <span className="text-[10px] font-black tracking-[0.2em] text-zinc-400 uppercase font-mono">Master Control</span>
@@ -479,7 +607,7 @@ function TeleprompterContent({ id }: { id: string }) {
 
           <div className="flex-1 overflow-y-auto px-6 pb-6 no-scrollbar text-zinc-100">
             {!showRemote ? (
-              <div className="space-y-8 py-4 animate-in fade-in slide-in-from-right-4 duration-300">
+              <div className="space-y-8 py-4 animate-in fade-in slide-in-from-left-4 duration-300">
                 <button onClick={() => window.open(window.location.href + "?mirror=true", "TPMirror", "width=1200,height=900,menubar=no")} className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-3 transition-all shadow-xl shadow-blue-900/20">
                   <Monitor size={18} /> Abrir Tela de Retorno
                 </button>
@@ -671,6 +799,62 @@ function TeleprompterContent({ id }: { id: string }) {
           </div>
         </div>
       )}
+
+      {/* MODAL DE PRÓXIMO ROTEIRO */}
+      <Dialog open={showNextModal} onOpenChange={setShowNextModal}>
+        <DialogContent className="sm:max-w-[500px] bg-zinc-950 border-zinc-800 rounded-[32px] p-0 overflow-hidden shadow-[0_0_100px_rgba(37,99,235,0.2)]">
+          <div className="bg-gradient-to-br from-blue-600/20 to-purple-600/20 p-8 border-b border-zinc-800">
+            <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mb-6 shadow-xl shadow-blue-600/20">
+              <Zap size={32} className="text-white" />
+            </div>
+            <DialogHeader>
+              <DialogTitle className="text-2xl font-black text-white tracking-tight uppercase">Gravação Concluída!</DialogTitle>
+              <DialogDescription className="text-zinc-400 font-medium">
+                O roteiro <span className="text-white font-bold">"{scriptTitle}"</span> foi marcado como gravado com sucesso.
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+
+          <div className="p-8 space-y-6">
+            <div className="space-y-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Sugestão de Próximo</p>
+              <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-2xl group hover:border-blue-500/50 transition-all cursor-pointer" onClick={() => router.push(`/tp/${nextScript?.id}`)}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <h4 className="text-lg font-black text-white group-hover:text-blue-400 transition-colors line-clamp-2">{nextScript?.title}</h4>
+                    <div className="flex items-center gap-2">
+                       <Badge variant="secondary" className="text-[9px] font-black uppercase tracking-widest bg-zinc-800 text-zinc-400 border-none px-2 h-5">
+                         {nextScript?.projectName || "Geral"}
+                       </Badge>
+                       <span className="text-zinc-600 text-xs">/</span>
+                       <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{nextScript?.folder || "Sem Pasta"}</span>
+                    </div>
+                  </div>
+                  <div className="w-10 h-10 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-500 group-hover:bg-blue-600 group-hover:text-white transition-all">
+                    <ChevronRight size={20} />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 pt-4">
+              <Button 
+                variant="outline" 
+                onClick={() => router.push('/dashboard')}
+                className="h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest border-zinc-800 text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all"
+              >
+                <X size={16} className="mr-2" /> Sair
+              </Button>
+              <Button 
+                onClick={() => router.push(`/tp/${nextScript?.id}`)}
+                className="h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest bg-blue-600 hover:bg-blue-500 text-white shadow-xl shadow-blue-600/20 transition-all gap-2"
+              >
+                Continuar <ChevronRight size={16} />
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

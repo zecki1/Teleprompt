@@ -54,8 +54,8 @@ import {
 } from "@/components/ui/select";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { updateDoc, doc, serverTimestamp } from "firebase/firestore";
-import { dbZecki } from "@/lib/firebase";
+import { updateDoc, doc, serverTimestamp, collection, getDocs, query, orderBy, limit } from "firebase/firestore";
+import { db, dbZecki } from "@/lib/firebase";
 import { toDate } from "@/lib/firebase-utils";
 
 const roleConfig: Record<Role, { label: string; color: string; icon: React.ElementType }> = {
@@ -82,6 +82,8 @@ export default function AdminPage() {
   const [usersList, setUsersList] = useState<ExtendedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
+  const [activities, setActivities] = useState<any[]>([]);
+  const [loadingActivities, setLoadingActivities] = useState(true);
   
   const handleCopyInvite = () => {
     if (!user?.workspaceId) {
@@ -104,8 +106,26 @@ export default function AdminPage() {
 
     if (user) {
       loadUsers();
+      loadActivities();
     }
   }, [user, router]);
+
+  const loadActivities = async () => {
+    try {
+      const q = query(
+        collection(db, "activities"),
+        orderBy("timestamp", "desc"),
+        limit(50)
+      );
+      const snapshot = await getDocs(q);
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setActivities(data);
+    } catch (error) {
+      console.error("Erro ao carregar atividades:", error);
+    } finally {
+      setLoadingActivities(false);
+    }
+  };
 
   const loadUsers = async () => {
     try {
@@ -202,6 +222,9 @@ export default function AdminPage() {
           </TabsTrigger>
           <TabsTrigger value="permissoes" className="rounded-xl px-8 h-full data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-800 data-[state=active]:shadow-lg font-bold flex gap-2">
             <Shield className="w-4 h-4" /> Permissões e Cargos
+          </TabsTrigger>
+          <TabsTrigger value="atividades" className="rounded-xl px-8 h-full data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-800 data-[state=active]:shadow-lg font-bold flex gap-2">
+            <Activity className="w-4 h-4" /> Registro de Atividades
           </TabsTrigger>
         </TabsList>
 
@@ -368,6 +391,92 @@ export default function AdminPage() {
                       </TableCell>
                     </TableRow>
                   ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="atividades">
+          <Card className="border-none shadow-2xl bg-white dark:bg-zinc-950 overflow-hidden rounded-[32px]">
+            <CardHeader className="bg-zinc-50/50 dark:bg-zinc-900/50 border-b border-zinc-100 dark:border-zinc-900 p-8">
+              <CardTitle className="text-2xl font-bold">Registro de Atividades</CardTitle>
+              <CardDescription className="text-base">
+                Histórico recente de ações realizadas pelos colaboradores no Teleprompter.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader className="bg-zinc-50/30 dark:bg-zinc-900/30">
+                  <TableRow className="hover:bg-transparent border-zinc-100 dark:border-zinc-900">
+                    <TableHead className="w-[250px] h-14 px-8 font-bold text-zinc-900 dark:text-zinc-100">Colaborador</TableHead>
+                    <TableHead className="w-[120px] font-bold text-zinc-900 dark:text-zinc-100">Ação</TableHead>
+                    <TableHead className="font-bold text-zinc-900 dark:text-zinc-100">Roteiro</TableHead>
+                    <TableHead className="w-[200px] font-bold text-zinc-900 dark:text-zinc-100">Projeto / Pasta</TableHead>
+                    <TableHead className="text-right px-8 font-bold text-zinc-900 dark:text-zinc-100">Data/Hora</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loadingActivities ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="h-32 text-center">
+                        <Loader2 className="w-6 h-6 animate-spin mx-auto text-primary" />
+                      </TableCell>
+                    </TableRow>
+                  ) : activities.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="h-32 text-center text-muted-foreground italic">
+                        Nenhuma atividade registrada ainda.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    activities.map((act) => (
+                      <TableRow key={act.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 border-zinc-100 dark:border-zinc-900 transition-colors group">
+                        <TableCell className="px-8 py-4">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-8 w-8">
+                              <AvatarImage src={act.userAvatar} />
+                              <AvatarFallback className="text-[10px] bg-zinc-100">{getInitials(act.userName)}</AvatarFallback>
+                            </Avatar>
+                            <span className="font-bold text-sm">{act.userName}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge 
+                            variant="outline" 
+                            className={`
+                              text-[10px] font-black uppercase tracking-widest px-2 h-5 border-none
+                              ${act.action === 'Gravou' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : ''}
+                              ${act.action === 'Editou' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : ''}
+                              ${act.action === 'Criou' ? 'bg-zinc-100 text-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-400' : ''}
+                            `}
+                          >
+                            {act.action}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-bold text-sm line-clamp-1">{act.scriptTitle}</span>
+                            <span className="text-[9px] text-muted-foreground font-mono">ID: {act.scriptId.slice(0, 8)}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                           <div className="flex flex-col gap-0.5">
+                              <span className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-tighter">{act.projectName || "Geral"}</span>
+                              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">{act.folder || "Sem Pasta"}</span>
+                           </div>
+                        </TableCell>
+                        <TableCell className="text-right px-8 font-medium text-xs text-zinc-500">
+                          {act.timestamp ? toDate(act.timestamp).toLocaleString("pt-BR", {
+                            day: '2-digit',
+                            month: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          }) : "N/A"}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
