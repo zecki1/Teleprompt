@@ -600,7 +600,7 @@ function TeleprompterContent({ id }: { id: string }) {
              {/* 2. PLAY / PAUSE */}
              <div className="flex items-center gap-3">
                 <button 
-                  onClick={() => setIsPlaying(!isPlaying)}
+                  onClick={() => updateGlobalStyle({ isPlaying: !isPlaying })}
                   className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isPlaying ? 'bg-red-500/20 text-red-500 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'bg-emerald-500/20 text-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]'}`}
                 >
                   {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}

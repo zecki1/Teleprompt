@@ -241,7 +241,9 @@ function DashboardContent() {
       const updateData = {
         status: ("revisao_realizada" as ScriptStatus),
         category: selectedCategory,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        reviewerId: reviewingScript.reviewerId || user?.uid,
+        reviewerName: reviewingScript.reviewerName || user?.displayName || user?.email
       };
       
       await updateDoc(scriptRef, updateData);
@@ -606,7 +608,9 @@ function DashboardContent() {
         </div>
       ) : (
         <div className="space-y-16">
-          {Object.entries(groupedScripts).map(([projectName, folders]) => (
+          {Object.entries(groupedScripts)
+            .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' }))
+            .map(([projectName, folders]) => (
             <div key={projectName} id={`project-section-${projectName}`} className="space-y-8">
               <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3 group/header">
                 <div className="flex items-center gap-3">
@@ -656,7 +660,9 @@ function DashboardContent() {
               </div>
               
               <div className="space-y-12">
-                {Object.entries(folders).map(([folderName, projectScripts]) => (
+                {Object.entries(folders)
+                  .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' }))
+                  .map(([folderName, projectScripts]) => (
                   <div key={folderName} className="space-y-4">
                     <div className="flex items-center justify-between px-1 group/folder-header">
                       <div className="flex items-center gap-2">
@@ -774,6 +780,27 @@ function DashboardContent() {
                               </CardHeader>
                               
                               <CardContent className="p-5 pt-2 flex-1 space-y-3">
+                                <div className="space-y-1.5 border-y border-zinc-100 dark:border-zinc-800/50 py-3 my-3">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Responsável</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">
+                                        {script.editorName || "Não atribuído"}
+                                      </span>
+                                      {script.editorId && <div className="w-4 h-4 rounded-full bg-blue-500/20 flex items-center justify-center text-[8px] font-bold text-blue-600">ED</div>}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Revisor</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">
+                                        {script.reviewerName || "Não atribuído"}
+                                      </span>
+                                      {script.reviewerId && <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center text-[8px] font-bold text-emerald-600">RV</div>}
+                                    </div>
+                                  </div>
+                                </div>
+                                
                                 <p className="text-[10px] text-zinc-400 flex items-center gap-1.5 font-bold uppercase tracking-widest">
                                   <Clock className="w-3 h-3" />
                                   {script.createdAt ? format(new Date(script.createdAt), "dd 'de' MMMM", { locale: ptBR }) : "Sem data"}

@@ -80,13 +80,15 @@ function HighlightedSpokenText({
   onChange, 
   textareaRef, 
   disabled,
-  isEditing
+  isEditing,
+  placeholder = "Escreva o que será dito..."
 }: { 
   text: string; 
   onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
   textareaRef: (el: HTMLTextAreaElement | null) => void;
   disabled?: boolean;
   isEditing: boolean;
+  placeholder?: string;
 }) {
   const highlights = useMemo(() => {
     if (!text || isEditing) return null;
@@ -125,7 +127,7 @@ function HighlightedSpokenText({
         value={text}
         onChange={onChange}
         disabled={disabled || !isEditing}
-        placeholder="Escreva o que será dito..."
+        placeholder={placeholder}
         className={`text-[14px] font-medium leading-relaxed min-h-[120px] p-4 resize-none w-full rounded focus-visible:ring-blue-500 bg-zinc-50/50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 ${!isEditing ? 'opacity-0' : 'opacity-100 placeholder:opacity-40'}`}
       />
     </div>
@@ -173,6 +175,7 @@ function EditorContent({ id }: { id: string }) {
   const [newProjectData, setNewProjectData] = useState({ name: "", code: "" });
   const [isCreatingProject, setIsCreatingProject] = useState(false);
 
+  const [focusedField, setFocusedField] = useState<Record<string, 'spokenText' | 'opening' | 'closing'>>({});
   const textareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
 
   const showToast = (message: string) => {
@@ -343,6 +346,20 @@ function EditorContent({ id }: { id: string }) {
       const rawContent = generateRawTextFromBlocks(scenes);
       
       console.log("[Editor] Sanitizando dados...");
+      
+      // Sempre atribui o usuário atual como Editor ao salvar, pois ele é quem está "mexendo"
+      const finalEditorId = user?.uid || editorId;
+      const finalEditorName = user?.displayName || user?.email || editorName;
+      
+      let finalReviewerId = reviewerId;
+      let finalReviewerName = reviewerName;
+      
+      // Se estiver concluindo a revisão agora, marca o usuário atual como revisor
+      if (saveStatus === "revisao_realizada" || saveStatus === "aguardando_gravacao") {
+        finalReviewerId = user?.uid || null;
+        finalReviewerName = user?.displayName || user?.email || null;
+      }
+
       const saveData = sanitizeData({
         title,
         project,
@@ -354,10 +371,10 @@ function EditorContent({ id }: { id: string }) {
         status: saveStatus,
         updatedAt: serverTimestamp(),
         isPublic: isPublic,
-        reviewerId,
-        reviewerName,
-        editorId,
-        editorName,
+        reviewerId: finalReviewerId,
+        reviewerName: finalReviewerName,
+        editorId: finalEditorId,
+        editorName: finalEditorName,
       });
       console.log("[Editor] Dados sanitizados prontas:", saveData);
 
@@ -499,7 +516,24 @@ function EditorContent({ id }: { id: string }) {
   const addBlockToScene = (index: number, type: 'spokenText' | 'imageUrl' | 'lettering' | 'observation' | 'opening' | 'closing') => {
     const ns = [...scenes];
     const scene = ns[index];
-    if (type === 'spokenText') scene.spokenText = "";
+    
+    // Tornar Locução, Abertura e Encerramento exclusivos entre si
+    if (type === 'spokenText') {
+      scene.spokenText = "";
+      scene.opening = null;
+      scene.closing = null;
+    }
+    if (type === 'opening') {
+      scene.opening = "";
+      scene.spokenText = null;
+      scene.closing = null;
+    }
+    if (type === 'closing') {
+      scene.closing = "";
+      scene.spokenText = null;
+      scene.opening = null;
+    }
+    
     if (type === 'imageUrl') {
        if (!scene.imageUrl) scene.imageUrl = "";
        else scene.images = [...(scene.images || []), ""];
@@ -508,8 +542,6 @@ function EditorContent({ id }: { id: string }) {
        if (scene.lettering == null) scene.lettering = "";
        else scene.lettering += "\n";
     }
-    if (type === 'opening') scene.opening = "";
-    if (type === 'closing') scene.closing = "";
     if (type === 'observation') scene.observation = "";
     setScenes(ns);
   };
@@ -538,15 +570,24 @@ function EditorContent({ id }: { id: string }) {
   };
 
   const insertTagAtCursor = (sceneIndex: number, tag: string) => {
-    const sceneId = scenes[sceneIndex].id;
-    const textarea = textareaRefs.current[sceneId];
+    const scene = scenes[sceneIndex];
+    const field = focusedField[scene.id] || 'spokenText';
+    const refId = `${scene.id}-${field}`;
+    const textarea = textareaRefs.current[refId];
     if (!textarea) return;
+    
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
-    const currentText = scenes[sceneIndex].spokenText || "";
+    const currentText = (scene[field] as string) || "";
     const newText = currentText.substring(0, start) + `[${tag}]` + currentText.substring(end);
-    updateScene(sceneIndex, { spokenText: newText });
-    setTimeout(() => { textarea.focus(); const newPos = start + tag.length + 2; textarea.setSelectionRange(newPos, newPos); }, 0);
+    
+    updateScene(sceneIndex, { [field]: newText });
+    
+    setTimeout(() => { 
+      textarea.focus(); 
+      const newPos = start + tag.length + 2; 
+      textarea.setSelectionRange(newPos, newPos); 
+    }, 0);
   };
 
   const addEmptyScene = (index?: number) => {
@@ -708,6 +749,18 @@ function EditorContent({ id }: { id: string }) {
                 </div>
               </div>
 
+              {/* RESPONSÁVEIS */}
+              <div className="flex items-center gap-4 border-l border-zinc-200 dark:border-zinc-800 pl-4">
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-black text-zinc-400 uppercase tracking-tighter">Responsável:</span>
+                  <span className="text-[10px] font-bold text-blue-600 truncate max-w-[100px]">{editorName || (isNew ? user?.displayName || user?.email : "Não atribuído")}</span>
+                </div>
+                <div className="flex flex-col border-l border-zinc-100 dark:border-zinc-800/50 pl-4">
+                  <span className="text-[8px] font-black text-zinc-400 uppercase tracking-tighter">Revisor:</span>
+                  <span className="text-[10px] font-bold text-emerald-600 truncate max-w-[100px]">{reviewerName || "Não atribuído"}</span>
+                </div>
+              </div>
+
               <div className="flex items-center gap-1.5 border-l border-zinc-200 dark:border-zinc-800 pl-4">
                 <span className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter shrink-0">Tipo:</span>
                 <Select value={category} onValueChange={(val: "video" | "podcast") => setCategory(val)}>
@@ -822,13 +875,19 @@ function EditorContent({ id }: { id: string }) {
                             {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'spokenText')}><Trash2 size={12} /></Button>}
                          </div>
                       </div>
-                      <HighlightedSpokenText text={scene.spokenText || ""} onChange={(e) => updateScene(index, { spokenText: e.target.value })} textareaRef={(el) => { if (el) textareaRefs.current[scene.id] = el; }} disabled={!canEdit} isEditing={isEditingMode} />
+                      <HighlightedSpokenText 
+                        text={scene.spokenText || ""} 
+                        onChange={(e) => updateScene(index, { spokenText: e.target.value })} 
+                        textareaRef={(el) => { if (el) { textareaRefs.current[`${scene.id}-spokenText`] = el; el.onfocus = () => setFocusedField(prev => ({...prev, [scene.id]: 'spokenText'})); } }} 
+                        disabled={!canEdit} 
+                        isEditing={isEditingMode} 
+                      />
                     </div>
                   )}
 
                   {/* ABERTURA */}
                   {(scene.opening != null) && (
-                    <div className="space-y-3 pt-6 border-t border-zinc-100 dark:border-zinc-800">
+                    <div className="space-y-3  dark:border-zinc-800">
                       <div className="flex items-center justify-between">
                          <Label className="text-[10px] uppercase font-black text-emerald-600 tracking-widest flex items-center gap-2"><Pin size={16} /> Abertura</Label>
                          <div className="flex gap-2">
@@ -836,17 +895,20 @@ function EditorContent({ id }: { id: string }) {
                             {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'opening')}><Trash2 size={12} /></Button>}
                          </div>
                       </div>
-                      {isEditingMode ? (
-                        <Input value={scene.opening || ""} onChange={(e) => updateScene(index, { opening: e.target.value })} className="text-[14px] font-medium leading-relaxed bg-zinc-50/50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800" placeholder="Texto da abertura..." />
-                      ) : (
-                        <p className="text-[14px] font-medium text-emerald-800 dark:text-emerald-400 p-4 bg-emerald-50/30 dark:bg-emerald-950/20 rounded border border-emerald-100 dark:border-emerald-900/20">{scene.opening}</p>
-                      )}
+                      <HighlightedSpokenText 
+                        text={scene.opening || ""} 
+                        onChange={(e) => updateScene(index, { opening: e.target.value })} 
+                        textareaRef={(el) => { if (el) { textareaRefs.current[`${scene.id}-opening`] = el; el.onfocus = () => setFocusedField(prev => ({...prev, [scene.id]: 'opening'})); } }} 
+                        disabled={!canEdit} 
+                        isEditing={isEditingMode} 
+                        placeholder="Texto da abertura..."
+                      />
                     </div>
                   )}
 
                   {/* ENCERRAMENTO */}
                   {(scene.closing != null) && (
-                    <div className="space-y-3 pt-6 border-t border-zinc-100 dark:border-zinc-800">
+                    <div className="space-y-3 dark:border-zinc-800">
                       <div className="flex items-center justify-between">
                          <Label className="text-[10px] uppercase font-black text-rose-600 tracking-widest flex items-center gap-2"><Pin size={16} /> Encerramento</Label>
                          <div className="flex gap-2">
@@ -854,11 +916,14 @@ function EditorContent({ id }: { id: string }) {
                             {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'closing')}><Trash2 size={12} /></Button>}
                          </div>
                       </div>
-                      {isEditingMode ? (
-                        <Input value={scene.closing || ""} onChange={(e) => updateScene(index, { closing: e.target.value })} className="text-[14px] font-medium leading-relaxed bg-zinc-50/50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800" placeholder="Texto do encerramento..." />
-                      ) : (
-                        <p className="text-[14px] font-medium text-rose-800 dark:text-rose-400 p-4 bg-rose-50/30 dark:bg-rose-950/20 rounded border border-rose-100 dark:border-rose-900/20">{scene.closing}</p>
-                      )}
+                      <HighlightedSpokenText 
+                        text={scene.closing || ""} 
+                        onChange={(e) => updateScene(index, { closing: e.target.value })} 
+                        textareaRef={(el) => { if (el) { textareaRefs.current[`${scene.id}-closing`] = el; el.onfocus = () => setFocusedField(prev => ({...prev, [scene.id]: 'closing'})); } }} 
+                        disabled={!canEdit} 
+                        isEditing={isEditingMode} 
+                        placeholder="Texto do encerramento..."
+                      />
                     </div>
                   )}
 
