@@ -18,6 +18,13 @@ interface ExportScriptData {
   title: string;
   projectName?: string;
   author?: string;
+  folder?: string;
+  subfolder?: string;
+  lesson?: string;
+  editorName?: string | null;
+  reviewerName?: string | null;
+  videomakerName?: string | null;
+  path?: string[] | null;
 }
 
 export const exportToWord = async (script: ExportScriptData, scenes: Scene[]) => {
@@ -35,10 +42,26 @@ export const exportToWord = async (script: ExportScriptData, scenes: Scene[]) =>
           new Paragraph({
             children: [
               new TextRun({
-                text: `Projeto: ${script.projectName || "Geral"}`,
+                text: `Projeto: ${script.projectName || "Geral"}${
+                  script.path && script.path.length > 0 
+                    ? ` > ${script.path.join(" > ")}` 
+                    : `${script.folder ? ` > ${script.folder}` : ""}${script.subfolder ? ` > ${script.subfolder}` : ""}${script.lesson ? ` > ${script.lesson}` : ""}`
+                }`,
                 bold: true,
                 color: "666666",
               }),
+            ],
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 200 },
+          }),
+          new Paragraph({
+            children: [
+              new TextRun({ text: `Responsável (Edição): `, bold: true, color: "333333" }),
+              new TextRun({ text: script.editorName || "Não atribuído", color: "555555" }),
+              new TextRun({ text: `  |  Revisor: `, bold: true, color: "333333" }),
+              new TextRun({ text: script.reviewerName || "Não atribuído", color: "555555" }),
+              new TextRun({ text: `  |  Gravado por: `, bold: true, color: "333333" }),
+              new TextRun({ text: script.videomakerName || "Não atribuído", color: "555555" }),
             ],
             alignment: AlignmentType.CENTER,
             spacing: { after: 400 },

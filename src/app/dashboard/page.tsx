@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, Check, Folder, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Loader2, Users, UserPlus, Video, PlusCircle, PlusSquare, ClipboardCheck, MessageSquare } from "lucide-react";
+import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, Check, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Loader2, Users, UserPlus, PlusSquare, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
@@ -35,28 +35,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ScriptDoc, ScriptStatus } from "@/types/script";
+import { buildTree, getScriptPath, renameFolder } from "@/lib/pathUtils";
+import { FolderTree } from "@/components/tp/FolderTree";
+import { MoveScriptModal } from "@/components/tp/MoveScriptModal";
 
-export type ScriptStatus = "rascunho" | "em_revisao" | "revisao_realizada" | "aguardando_gravacao" | "gravado" | "rejeitado";
 type ScriptCategory = "video" | "podcast";
-
-interface ScriptDoc {
-  id: string;
-  title: string;
-  project?: string;
-  projectName?: string;
-  projectId?: string;
-  folder?: string;
-  subfolder?: string;
-  createdAt: string;
-  status: ScriptStatus;
-  category?: "video" | "podcast";
-  editorId?: string;
-  editorName?: string;
-  reviewerId?: string;
-  reviewerName?: string;
-  commentCount?: number;
-  commentAuthors?: string[];
-}
 
 const statusConfig: Record<ScriptStatus, { label: string; color: string; icon: React.ElementType }> = {
   rascunho: { label: "Rascunho", color: "bg-orange-500", icon: FileText },
@@ -66,6 +50,8 @@ const statusConfig: Record<ScriptStatus, { label: string; color: string; icon: R
   gravado: { label: "Gravado", color: "bg-blue-600", icon: Send },
   rejeitado: { label: "Rejeitado", color: "bg-red-500", icon: X },
 };
+// Re-export for pages that still import from here
+export type { ScriptStatus };
 
 export default function DashboardPage() {
   return (
@@ -118,10 +104,16 @@ function DashboardContent() {
   };
 
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
-  const [newFolderData, setNewFolderData] = useState({ projectName: "", folder: "", subfolder: "" });
+  const [newFolderData, setNewFolderData] = useState({ 
+    projectName: "", 
+    folder: "", 
+    subfolder: "", 
+    lesson: "", 
+    path: [] as string[] 
+  });
 
   const handleCreateFolderClick = (projectName: string) => {
-    setNewFolderData({ projectName, folder: "", subfolder: "" });
+    setNewFolderData({ projectName, folder: "", subfolder: "", lesson: "", path: [] });
     setIsCreateFolderOpen(true);
   };
 
@@ -372,31 +364,6 @@ function DashboardContent() {
   const [editingFolderName, setEditingFolderName] = useState<{project: string, folder: string} | null>(null);
   const [newFolderTitle, setNewFolderTitle] = useState("");
   const [movingScript, setMovingScript] = useState<ScriptDoc | null>(null);
-  const [moveFolderName, setMoveFolderName] = useState("");
-  const [moveProjectName, setMoveProjectName] = useState("");
-
-  const handleMoveScript = async () => {
-    if (!movingScript) return;
-    try {
-      const ref = doc(db, "scripts", movingScript.id);
-      await updateDoc(ref, { 
-        folder: moveFolderName || "Sem Pasta",
-        projectName: moveProjectName || movingScript.projectName || "Geral"
-      });
-      
-      setScripts(scripts.map(s => s.id === movingScript.id ? { 
-        ...s, 
-        folder: moveFolderName || "Sem Pasta",
-        projectName: moveProjectName || movingScript.projectName || "Geral"
-      } : s));
-      
-      setMovingScript(null);
-      toast.success("Roteiro movido com sucesso!");
-    } catch (e) {
-      console.error(e);
-      toast.error("Erro ao mover roteiro.");
-    }
-  };
 
   const handleCreateNewProject = async () => {
     if (!newProjectData.name.trim()) return;
@@ -425,51 +392,15 @@ function DashboardContent() {
     }
   };
 
-  const handleRenameFolder = async (projectName: string, oldFolderName: string) => {
-    if (!newFolderTitle.trim() || oldFolderName === newFolderTitle) {
-      setEditingFolderName(null);
-      return;
-    }
-    try {
-      const batch = writeBatch(db);
-      const scriptsToUpdate = scripts.filter(s => 
-        (s.projectName || s.project || "Geral") === projectName && 
-        (s.folder || "Sem Pasta") === oldFolderName
-      );
-      
-      scriptsToUpdate.forEach(s => {
-        const ref = doc(db, "scripts", s.id);
-        batch.update(ref, { folder: newFolderTitle });
-      });
-
-      await batch.commit();
-      setScripts(scripts.map(s => 
-        ((s.projectName || s.project || "Geral") === projectName && (s.folder || "Sem Pasta") === oldFolderName)
-          ? { ...s, folder: newFolderTitle } 
-          : s
-      ));
-      setEditingFolderName(null);
-      toast.success("Pasta renomeada com sucesso!");
-    } catch (e) {
-      console.error(e);
-      toast.error("Erro ao renomear pasta.");
-    }
-  };
-
   const allCommenters = Array.from(new Set(scripts.flatMap(s => s.commentAuthors || [])));
 
-  const groupedScripts = filteredScripts.reduce((acc, script) => {
+  // Group filtered scripts by project name
+  const scriptsByProject = filteredScripts.reduce((acc, script) => {
     const projectName = script.projectName || script.project || "Geral";
-    const folderName = script.folder || "Sem Pasta";
-    const subfolderName = script.subfolder || "";
-    
-    if (!acc[projectName]) acc[projectName] = {};
-    if (!acc[projectName][folderName]) acc[projectName][folderName] = {};
-    if (!acc[projectName][folderName][subfolderName]) acc[projectName][folderName][subfolderName] = [];
-    
-    acc[projectName][folderName][subfolderName].push(script);
+    if (!acc[projectName]) acc[projectName] = [];
+    acc[projectName].push(script);
     return acc;
-  }, {} as Record<string, Record<string, Record<string, ScriptDoc[]>>>);
+  }, {} as Record<string, ScriptDoc[]>);
 
   return (
     <div className="container mx-auto py-10 px-4 max-w-6xl">
@@ -653,126 +584,123 @@ function DashboardContent() {
         </div>
       ) : (
         <div className="space-y-16">
-          {Object.entries(groupedScripts)
-            .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' }))
-            .map(([projectName, folders]) => (
-            <div key={projectName} id={`project-section-${projectName}`} className="space-y-8">
-              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3 group/header cursor-pointer select-none" onClick={() => toggleProjectCollapse(projectName)}>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
-                    {collapsedProjects.has(projectName) ? <ChevronRight className="w-4 h-4 text-zinc-400" /> : <ChevronDown className="w-4 h-4 text-zinc-400" />}
-                  </div>
-                  <div className="p-2 bg-blue-500/10 rounded-lg">
-                    <Folder className="w-5 h-5 text-blue-500" />
-                  </div>
-                  {editingProjectName === projectName ? (
-                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                      <Input 
-                        value={newProjectTitle} 
-                        onChange={(e) => setNewProjectTitle(e.target.value)}
-                        className="h-8 w-64"
-                        autoFocus
-                      />
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-green-500" onClick={() => handleRenameProject(projectName)}><Check className="w-4 h-4" /></Button>
-                      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditingProjectName(null)}><X className="w-4 h-4" /></Button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-lg font-black tracking-tight text-zinc-900 dark:text-zinc-100 uppercase tracking-widest">{projectName}</h2>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); setEditingProjectName(projectName); setNewProjectTitle(projectName); }}
-                        className="opacity-0 group-hover/header:opacity-100 p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-all"
-                      >
-                        <Edit2 className="w-3 h-3 text-zinc-400" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                  <Badge variant="secondary" className="font-black text-[9px] tracking-widest">
-                    {Object.values(folders).reduce((acc, subfolders) => acc + Object.values(subfolders).flat().length, 0)} ROTEIROS
-                  </Badge>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    className="h-8 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-blue-500"
-                    onClick={() => handleCreateFolderClick(projectName)}
+          {Object.entries(scriptsByProject)
+            .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: "base" }))
+            .map(([projectName, projectScripts]) => {
+              const tree = buildTree(projectScripts);
+              const project = projects.find(p => p.name === projectName);
+              const pid = project?.id || projectScripts[0]?.projectId || "";
+
+              return (
+                <div key={projectName} id={`project-section-${projectName}`} className="space-y-8">
+                  {/* Project header */}
+                  <div
+                    className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3 group/header cursor-pointer select-none"
+                    onClick={() => toggleProjectCollapse(projectName)}
                   >
-                    <PlusSquare className="w-3.5 h-3.5 mr-1.5" /> NOVA PASTA
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    className="h-8 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-blue-500"
-                    onClick={() => {
-                      const project = projects.find(p => p.name === projectName);
-                      const pid = project?.id || Object.values(folders).flat()[0]?.projectId || "";
-                      router.push(`/editor/new?project=${encodeURIComponent(projectName)}&projectId=${pid}`);
-                    }}
-                  >
-                    <Plus className="w-3.5 h-3.5 mr-1.5" /> NOVO ROTEIRO
-                  </Button>
-                </div>
-              </div>
-              
-              {!collapsedProjects.has(projectName) && (
-                <div className="space-y-12 animate-in fade-in slide-in-from-top-2 duration-300">
-                {Object.entries(folders)
-                  .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' }))
-                  .map(([folderName, subfolders]) => (
-                  <div key={folderName} className="space-y-8">
-                    {Object.entries(subfolders)
-                      .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' }))
-                      .map(([subfolderName, projectScripts]) => (
-                      <div key={subfolderName} className="space-y-4">
-                        <div className="flex items-center justify-between px-1 group/folder-header">
-                          <div className="flex items-center gap-2">
-                            <div className={`w-1 h-4 ${subfolderName ? 'bg-blue-400' : 'bg-zinc-300 dark:bg-zinc-700'} rounded`} />
-                            {editingFolderName?.project === projectName && editingFolderName?.folder === folderName ? (
-                              <div className="flex items-center gap-2">
-                                <Input 
-                                  value={newFolderTitle} 
-                                  onChange={(e) => setNewFolderTitle(e.target.value)}
-                                  className="h-6 w-48 text-[10px]"
-                                  autoFocus
-                                />
-                                <Button size="icon" variant="ghost" className="h-6 w-6 text-green-500" onClick={() => handleRenameFolder(projectName, folderName)}><Check className="w-3 h-3" /></Button>
-                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setEditingFolderName(null)}><X className="w-3 h-3" /></Button>
-                              </div>
-                            ) : (
-                              <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-400 flex items-center gap-2">
-                                {folderName} {subfolderName && <><ChevronRight className="w-3 h-3 text-zinc-600" /> <span className="text-blue-500/80">{subfolderName}</span></>}
-                                <Badge variant="outline" className="text-[9px] h-4 px-1.5 font-black border-zinc-200 dark:border-zinc-800 text-zinc-400">
-                                  {projectScripts.length}
-                                </Badge>
-                                <button 
-                                  onClick={() => { setEditingFolderName({project: projectName, folder: folderName}); setNewFolderTitle(folderName); }}
-                                  className="opacity-0 group-hover/folder-header:opacity-100 p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-all"
-                                >
-                                  <Edit2 className="w-2.5 h-2.5 text-zinc-400" />
-                                </button>
-                              </h3>
-                            )}
-                          </div>
-                          
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="h-7 text-[9px] font-black uppercase tracking-widest text-zinc-400 hover:text-blue-500 opacity-0 group-hover/folder-header:opacity-100 transition-opacity"
-                            onClick={() => {
-                              const project = projects.find(p => p.name === projectName);
-                              const pid = project?.id || projectScripts[0]?.projectId || "";
-                              const url = `/editor/new?project=${encodeURIComponent(projectName)}&projectId=${pid}&folder=${encodeURIComponent(folderName)}&subfolder=${encodeURIComponent(subfolderName)}`;
-                              router.push(url);
-                            }}
-                          >
-                            <Plus className="w-3 h-3 mr-1" /> Criar aqui
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+                        {collapsedProjects.has(projectName) ? (
+                          <ChevronRight className="w-4 h-4 text-zinc-400" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4 text-zinc-400" />
+                        )}
+                      </div>
+                      <div className="p-2 bg-blue-500/10 rounded-lg">
+                        <Briefcase className="w-5 h-5 text-blue-500" />
+                      </div>
+                      {editingProjectName === projectName ? (
+                        <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                          <Input
+                            value={newProjectTitle}
+                            onChange={e => setNewProjectTitle(e.target.value)}
+                            className="h-8 w-64"
+                            autoFocus
+                          />
+                          <Button size="icon" variant="ghost" className="h-8 w-8 text-green-500" onClick={() => handleRenameProject(projectName)}>
+                            <Check className="w-4 h-4" />
+                          </Button>
+                          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditingProjectName(null)}>
+                            <X className="w-4 h-4" />
                           </Button>
                         </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <h2 className="text-lg font-black tracking-tight text-zinc-900 dark:text-zinc-100 uppercase tracking-widest">
+                            {projectName}
+                          </h2>
+                          <button
+                            onClick={e => { e.stopPropagation(); setEditingProjectName(projectName); setNewProjectTitle(projectName); }}
+                            className="opacity-0 group-hover/header:opacity-100 p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-all"
+                          >
+                            <Edit2 className="w-3 h-3 text-zinc-400" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                      <Badge variant="secondary" className="font-black text-[9px] tracking-widest">
+                        {projectScripts.length} ROTEIROS
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-blue-500"
+                        onClick={() => handleCreateFolderClick(projectName)}
+                      >
+                        <FolderPlus className="w-3.5 h-3.5 mr-1.5" /> NOVA PASTA
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-blue-500"
+                        onClick={() => router.push(`/editor/new?project=${encodeURIComponent(projectName)}&projectId=${pid}`)}
+                      >
+                        <Plus className="w-3.5 h-3.5 mr-1.5" /> NOVO ROTEIRO
+                      </Button>
+                    </div>
+                  </div>
 
-                        <div className="relative">
-                          <div className="flex gap-6 overflow-x-auto p-5 custom-scrollbar snap-x snap-mandatory pb-8">
-                            {projectScripts.map(script => (
+                  {/* Folder tree + cards */}
+                  {!collapsedProjects.has(projectName) && (
+                    <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                      <FolderTree
+                        nodes={tree}
+                        projectName={projectName}
+                        projectId={pid}
+                        allScripts={projectScripts}
+                        onScriptsChanged={() => {
+                          // Refresh scripts from Firestore
+                          setScripts(prev => [...prev]);
+                        }}
+                        onCreateScript={(path) => {
+                          const params = new URLSearchParams({
+                            project: projectName,
+                            projectId: pid,
+                          });
+                          path.forEach((seg, i) => {
+                            if (i === 0) params.set("folder", seg);
+                            else if (i === 1) params.set("subfolder", seg);
+                            else if (i === 2) params.set("lesson", seg);
+                            else params.set(`level${i}`, seg);
+                          });
+                          // Also store full path
+                          params.set("path", JSON.stringify(path));
+                          router.push(`/editor/new?${params.toString()}`);
+                        }}
+                        onCreateSubfolder={(parentPath) => {
+                          setNewFolderData({
+                            projectName,
+                            folder: parentPath[0] ?? "",
+                            subfolder: parentPath[1] ?? "",
+                            lesson: parentPath[2] ?? "",
+                            path: parentPath,
+                          });
+                          setIsCreateFolderOpen(true);
+                        }}
+                        renderScripts={(scripts, _path) => (
+                          <>
+                            {scripts.map(script => (
                               <div key={script.id} className="min-w-[300px] md:min-w-[350px] snap-start relative pl-2">
                                 {script.status === "rascunho" && (
                                   <div className="absolute -top-1 -right-1 z-20 bg-orange-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
@@ -794,244 +722,195 @@ function DashboardContent() {
                                     <Send className="w-3 h-3" /> Gravado
                                   </div>
                                 )}
-                            <Card className={`h-full border-zinc-200 dark:border-zinc-800 hover:shadow-xl transition-all group flex flex-col 
-                              ${script.status === "rascunho" ? "ring-2 ring-orange-500/30 border-orange-500/50" : ""}
-                              ${(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") ? "ring-2 ring-emerald-500/30 border-emerald-500/50" : ""}
-                              ${script.status === "em_revisao" ? "ring-2 ring-yellow-500/30 border-yellow-500/50" : ""}
-                              ${script.status === "gravado" ? "ring-2 ring-blue-600/30 border-blue-600/50" : ""}
-                            `}>
-                              <CardHeader className="p-5 pb-2">
-                                {editingId === script.id ? (
-                                  <div className="flex items-center gap-2">
-                                    <Input 
-                                      value={editTitle} 
-                                      onChange={(e) => setEditTitle(e.target.value)} 
-                                      autoFocus 
-                                      onKeyDown={(e) => e.key === 'Enter' && saveTitle(script.id)}
-                                      className="h-8"
-                                    />
-                                    <Button size="icon" variant="ghost" onClick={() => saveTitle(script.id)}>
-                                      <Check className="w-4 h-4 text-green-500" />
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <div className="flex items-start justify-between group/title">
-                                    <CardTitle className="text-base leading-tight font-black break-all whitespace-normal" title={script.title}>{script.title}</CardTitle>
-                                    <Button 
-                                      size="icon" 
-                                      variant="ghost" 
-                                      className="h-7 w-7 opacity-0 group-hover/title:opacity-100 transition-opacity flex-shrink-0" 
-                                      onClick={() => { setEditingId(script.id); setEditTitle(script.title); }}
-                                    >
-                                      <Edit2 className="w-3 h-3 text-muted-foreground" />
-                                    </Button>
-                                  </div>
-                                )}
-                                <div className="flex items-center gap-2 mt-2">
-                                  {script.status === "rascunho" && (
-                                    <Badge className="bg-orange-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(249,115,22,0.3)]">
-                                      Aguardando Revisão
-                                    </Badge>
-                                  )}
-                                  {(script.status === "revisao_realizada" || script.status === "aguardando_gravacao") && (
-                                    <Badge className="bg-emerald-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.3)]">
-                                      Aguardando Gravação
-                                    </Badge>
-                                  )}
-                                  {script.status === "gravado" && (
-                                    <Badge className="bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(37,99,235,0.3)]">
-                                      Aguardando Edição
-                                    </Badge>
-                                  )}
-                                  {script.status === "em_revisao" && (
-                                    <Badge className="bg-yellow-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5">
-                                      Em Revisão
-                                    </Badge>
-                                  )}
-                                </div>
-                              </CardHeader>
-                              
-                              <CardContent className="p-5 pt-2 flex-grow space-y-4">
-                                <div className="space-y-1.5 border-y border-zinc-100 dark:border-zinc-800/50 py-3 my-2">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Responsável</span>
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">
-                                        {script.editorName || "Não atribuído"}
-                                      </span>
-                                      {script.editorId && <div className="w-4 h-4 rounded-full bg-blue-500/20 flex items-center justify-center text-[8px] font-bold text-blue-600">ED</div>}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Revisor</span>
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">
-                                        {script.reviewerName || "Não atribuído"}
-                                      </span>
-                                      {script.reviewerId && <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center text-[8px] font-bold text-emerald-600">RV</div>}
-                                    </div>
-                                  </div>
-                                </div>
-                                
-                                <p className="text-[10px] text-zinc-400 flex items-center gap-1.5 font-bold uppercase tracking-widest">
-                                  <Clock className="w-3 h-3" />
-                                  {script.createdAt ? format(new Date(script.createdAt), "dd 'de' MMMM", { locale: ptBR }) : "Sem data"}
-                                </p>
-
-                                {script.commentCount ? (
-                                  <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800/50 mt-2">
-                                    <div className="flex items-center justify-between">
+                                <Card className={`h-full border-zinc-200 dark:border-zinc-800 hover:shadow-xl transition-all group flex flex-col 
+                                  ${script.status === "rascunho" ? "ring-2 ring-orange-500/30 border-orange-500/50" : ""}
+                                  ${(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") ? "ring-2 ring-emerald-500/30 border-emerald-500/50" : ""}
+                                  ${script.status === "em_revisao" ? "ring-2 ring-yellow-500/30 border-yellow-500/50" : ""}
+                                  ${script.status === "gravado" ? "ring-2 ring-blue-600/30 border-blue-600/50" : ""}
+                                `}>
+                                  <CardHeader className="p-5 pb-2">
+                                    {editingId === script.id ? (
                                       <div className="flex items-center gap-2">
-                                        <div className="bg-blue-500/10 text-blue-500 p-1 rounded">
-                                          <MessageSquare className="w-3 h-3" />
+                                        <Input value={editTitle} onChange={e => setEditTitle(e.target.value)} autoFocus onKeyDown={e => e.key === "Enter" && saveTitle(script.id)} className="h-8" />
+                                        <Button size="icon" variant="ghost" onClick={() => saveTitle(script.id)}><Check className="w-4 h-4 text-green-500" /></Button>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-start justify-between group/title">
+                                        <CardTitle className="text-base leading-tight font-black break-all whitespace-normal" title={script.title}>{script.title}</CardTitle>
+                                        <Button size="icon" variant="ghost" className="h-7 w-7 opacity-0 group-hover/title:opacity-100 transition-opacity flex-shrink-0" onClick={() => { setEditingId(script.id); setEditTitle(script.title); }}>
+                                          <Edit2 className="w-3 h-3 text-muted-foreground" />
+                                        </Button>
+                                      </div>
+                                    )}
+                                    <div className="flex items-center gap-2 mt-2">
+                                      {script.status === "rascunho" && <Badge className="bg-orange-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(249,115,22,0.3)]">Aguardando Revisão</Badge>}
+                                      {(script.status === "revisao_realizada" || script.status === "aguardando_gravacao") && <Badge className="bg-emerald-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.3)]">Aguardando Gravação</Badge>}
+                                      {script.status === "gravado" && <Badge className="bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(37,99,235,0.3)]">Aguardando Edição</Badge>}
+                                      {script.status === "em_revisao" && <Badge className="bg-yellow-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5">Em Revisão</Badge>}
+                                    </div>
+                                  </CardHeader>
+
+                                  <CardContent className="p-5 pt-2 flex-grow space-y-4">
+                                    <div className="space-y-1.5 border-y border-zinc-100 dark:border-zinc-800/50 py-3 my-2">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Responsável</span>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">{script.editorName || "Não atribuído"}</span>
+                                          {script.editorId && <div className="w-4 h-4 rounded-full bg-blue-500/20 flex items-center justify-center text-[8px] font-bold text-blue-600">ED</div>}
                                         </div>
-                                        <span className="text-[10px] font-black uppercase text-blue-500 tracking-widest">
-                                          {script.commentCount} {script.commentCount === 1 ? "Comentário" : "Comentários"}
-                                        </span>
+                                      </div>
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Revisor</span>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">{script.reviewerName || "Não atribuído"}</span>
+                                          {script.reviewerId && <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center text-[8px] font-bold text-emerald-600">RV</div>}
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Gravado por</span>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">{script.videomakerName || "Não atribuído"}</span>
+                                          {script.videomakerId && <div className="w-4 h-4 rounded-full bg-purple-500/20 flex items-center justify-center text-[8px] font-bold text-purple-600">VM</div>}
+                                        </div>
                                       </div>
                                     </div>
-                                    <div className="flex flex-wrap gap-1 mt-2">
-                                      {Array.from(new Set(script.commentAuthors || [])).map((author, i) => (
-                                        <Badge key={i} variant="secondary" className="text-[8px] h-4 bg-zinc-100 dark:bg-zinc-800 text-zinc-500 font-bold border-none">
-                                          {author}
-                                        </Badge>
-                                      ))}
-                                    </div>
-                                  </div>
-                                ) : null}
-                                
-                                <div className="grid grid-cols-2 gap-2 mt-4">
-                                  <Button variant="outline" size="sm" className="h-9 text-[10px] font-black uppercase tracking-widest hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2" asChild>
-                                    <Link href={`/tp/${script.id}`}>
-                                      <Play className="w-3 h-3 mr-1.5 text-blue-500" /> Play
-                                    </Link>
-                                  </Button>
-                                  
-                                  {script.status === "em_revisao" ? (
-                                    <div className="flex flex-col gap-1 w-full">
-                                      <Button variant="secondary" size="sm" className="h-8 text-[10px] font-black uppercase tracking-widest bg-yellow-500 hover:bg-yellow-600 text-white w-full" asChild>
-                                        <Link href={`/editor/${script.id}`}>
-                                          <ClipboardCheck className="w-3.5 h-3.5 mr-1.5" /> Revisar
-                                        </Link>
+                                    <p className="text-[10px] text-zinc-400 flex items-center gap-1.5 font-bold uppercase tracking-widest">
+                                      <Clock className="w-3 h-3" />
+                                      {script.createdAt ? format(new Date(script.createdAt), "dd 'de' MMMM", { locale: ptBR }) : "Sem data"}
+                                    </p>
+                                    {script.commentCount ? (
+                                      <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800/50 mt-2">
+                                        <div className="flex items-center gap-2">
+                                          <div className="bg-blue-500/10 text-blue-500 p-1 rounded"><MessageSquare className="w-3 h-3" /></div>
+                                          <span className="text-[10px] font-black uppercase text-blue-500 tracking-widest">{script.commentCount} {script.commentCount === 1 ? "Comentário" : "Comentários"}</span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1 mt-2">
+                                          {Array.from(new Set(script.commentAuthors || [])).map((author, i) => (
+                                            <Badge key={i} variant="secondary" className="text-[8px] h-4 bg-zinc-100 dark:bg-zinc-800 text-zinc-500 font-bold border-none">{author}</Badge>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    <div className="grid grid-cols-2 gap-2 mt-4">
+                                      <Button variant="outline" size="sm" className="h-9 text-[10px] font-black uppercase tracking-widest hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2" asChild>
+                                        <Link href={`/tp/${script.id}`}><Play className="w-3 h-3 mr-1.5 text-blue-500" /> Play</Link>
                                       </Button>
-                                      <Button 
-                                        variant="outline" 
-                                        size="sm" 
-                                        className="h-8 text-[10px] font-black uppercase tracking-widest border-emerald-500 text-emerald-600 hover:bg-emerald-50 w-full"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          setReviewingScript(script);
-                                          setSelectedCategory(script.category || "video");
-                                        }}
-                                      >
-                                        <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Concluir
-                                      </Button>
+                                      {script.status === "em_revisao" ? (
+                                        <div className="flex flex-col gap-1 w-full">
+                                          <Button variant="secondary" size="sm" className="h-8 text-[10px] font-black uppercase tracking-widest bg-yellow-500 hover:bg-yellow-600 text-white w-full" asChild>
+                                            <Link href={`/editor/${script.id}`}><ClipboardCheck className="w-3.5 h-3.5 mr-1.5" /> Revisar</Link>
+                                          </Button>
+                                          <Button variant="outline" size="sm" className="h-8 text-[10px] font-black uppercase tracking-widest border-emerald-500 text-emerald-600 hover:bg-emerald-50 w-full"
+                                            onClick={e => { e.preventDefault(); e.stopPropagation(); setReviewingScript(script); setSelectedCategory(script.category || "video"); }}>
+                                            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Concluir
+                                          </Button>
+                                        </div>
+                                      ) : (
+                                        <Button variant="outline" size="sm" className="h-9 text-[10px] font-black uppercase tracking-widest hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2" asChild>
+                                          <Link href={`/editor/${script.id}`}><Edit2 className="w-3 h-3 mr-1.5 text-zinc-400" /> Editar</Link>
+                                        </Button>
+                                      )}
                                     </div>
-                                  ) : (
-                                    <Button variant="outline" size="sm" className="h-9 text-[10px] font-black uppercase tracking-widest hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2" asChild>
-                                      <Link href={`/editor/${script.id}`}>
-                                        <Edit2 className="w-3 h-3 mr-1.5 text-zinc-400" /> Editar
-                                      </Link>
+                                  </CardContent>
+
+                                  <CardFooter className="bg-zinc-50/50 dark:bg-zinc-900/50 border-t border-zinc-100 dark:border-zinc-800/50 p-3 h-12 flex justify-between">
+                                    <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
+                                      onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/tp/${script.id}`); toast.success("Link copiado!"); }}>
+                                      <LinkIcon className="w-3 h-3 mr-1.5" /> Link
                                     </Button>
-                                  )}
-                                </div>
-                              </CardContent>
-
-                              <CardFooter className="bg-zinc-50/50 dark:bg-zinc-900/50 border-t border-zinc-100 dark:border-zinc-800/50 p-3 h-12 flex justify-between">
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm" 
-                                  className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(`${window.location.origin}/tp/${script.id}`);
-                                    toast.success("Link copiado!");
-                                  }}
-                                >
-                                  <LinkIcon className="w-3 h-3 mr-1.5" /> Link
-                                </Button>
-                                
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm" 
-                                  className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
-                                  onClick={() => {
-                                    setMovingScript(script);
-                                    setMoveFolderName(script.folder || "Sem Pasta");
-                                    setMoveProjectName(script.projectName || script.project || "Geral");
-                                  }}
-                                >
-                                  <FolderInput className="w-3 h-3 mr-1.5" /> Mover
-                                </Button>
-
-                                {(user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br" || user?.role === "SuperAdmin") && (
-                                   <Button 
-                                      variant="ghost" 
-                                      size="sm" 
-                                      className="h-7 text-[9px] font-black text-blue-500 uppercase tracking-widest"
-                                      onClick={() => setAssigningScript(script)}
-                                   >
-                                     <UserPlus className="w-3 h-3 mr-1.5" /> Equipe
-                                   </Button>
-                                )}
-                                
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm" 
-                                  className="h-7 w-7 text-red-500/50 hover:text-red-500 hover:bg-red-500/10"
-                                  onClick={() => deleteScript(script.id)}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
-                              </CardFooter>
-                            </Card>
-                          </div>
-                        ))}
-                      </div>
+                                    <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
+                                      onClick={() => setMovingScript(script)}>
+                                      <FolderInput className="w-3 h-3 mr-1.5" /> Mover
+                                    </Button>
+                                    {(user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br" || user?.role === "SuperAdmin") && (
+                                      <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-blue-500 uppercase tracking-widest" onClick={() => setAssigningScript(script)}>
+                                        <UserPlus className="w-3 h-3 mr-1.5" /> Equipe
+                                      </Button>
+                                    )}
+                                    <Button variant="ghost" size="sm" className="h-7 w-7 text-red-500/50 hover:text-red-500 hover:bg-red-500/10" onClick={() => deleteScript(script.id)}>
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </CardFooter>
+                                </Card>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                      />
                     </div>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    ))}
-  </div>
-)}
+                  )}
+                </div>
+              );
+            })}
+        </div>
+      )}
+
+      {/* Move Script Modal */}
+      <MoveScriptModal
+        open={!!movingScript}
+        script={movingScript}
+        projectScripts={movingScript ? (scriptsByProject[movingScript.projectName || movingScript.project || "Geral"] ?? []) : []}
+        onClose={() => setMovingScript(null)}
+        onMoved={() => {
+          // Refresh by re-fetching from Firestore
+          setMovingScript(null);
+          window.location.reload();
+        }}
+      />
+
+
 
       <Dialog open={isCreateFolderOpen} onOpenChange={setIsCreateFolderOpen}>
         <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)]">
           <DialogHeader>
             <DialogTitle className="text-2xl font-black text-center mb-2 uppercase tracking-widest">Nova Pasta/Subpasta</DialogTitle>
             <DialogDescription className="text-center text-zinc-500 text-sm font-medium mb-6">
-              As pastas são criadas automaticamente ao criar um roteiro nelas.
+              Defina o caminho para o novo roteiro.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-             <div className="space-y-2">
+          <div className="space-y-6 py-4">
+            <div className="space-y-2">
               <Label className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1">Projeto</Label>
-              <Input value={newFolderData.projectName} disabled className="h-12 rounded border-zinc-200 dark:border-zinc-800 font-bold bg-zinc-50" />
+              <div className="h-10 px-4 flex items-center bg-zinc-50 dark:bg-zinc-900 rounded border border-zinc-100 dark:border-zinc-800 font-bold text-zinc-600 dark:text-zinc-400">
+                {newFolderData.projectName}
+              </div>
             </div>
+
             <div className="space-y-2">
-              <Label htmlFor="folder-name" className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1">Nome da Pasta</Label>
+              <Label className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1">Caminho Atual</Label>
+              <div className="flex flex-wrap items-center gap-1.5 p-3 bg-zinc-50 dark:bg-zinc-900 rounded border border-dashed border-zinc-200 dark:border-zinc-800">
+                <span className="text-[10px] font-bold text-zinc-400">Raiz</span>
+                {newFolderData.path.map((p, i) => (
+                  <React.Fragment key={i}>
+                    <ChevronRight className="w-3 h-3 text-zinc-300" />
+                    <span className="text-[10px] font-black text-blue-500 uppercase">{p}</span>
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="new-level-name" className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1">Nome da Nova Subpasta</Label>
               <Input
-                id="folder-name"
-                placeholder="Ex: Módulo 1"
-                value={newFolderData.folder}
-                onChange={(e) => setNewFolderData({ ...newFolderData, folder: e.target.value })}
+                id="new-level-name"
+                placeholder="Ex: Módulo 1, Aula 5..."
+                value={newFolderData.path[newFolderData.path.length] || ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  // For backward compatibility, we still set folder/subfolder/lesson based on path length
+                  if (newFolderData.path.length === 0) setNewFolderData({ ...newFolderData, folder: val });
+                  else if (newFolderData.path.length === 1) setNewFolderData({ ...newFolderData, subfolder: val });
+                  else if (newFolderData.path.length === 2) setNewFolderData({ ...newFolderData, lesson: val });
+                  else {
+                    // Just update a temporary field if needed, but the primary way is the Editor
+                    setNewFolderData({ ...newFolderData, folder: newFolderData.folder || val });
+                  }
+                }}
                 className="h-12 rounded border-zinc-200 dark:border-zinc-800 font-bold"
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="subfolder-name" className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1">Subpasta (Opcional)</Label>
-              <Input
-                id="subfolder-name"
-                placeholder="Ex: Aula 1"
-                value={newFolderData.subfolder}
-                onChange={(e) => setNewFolderData({ ...newFolderData, subfolder: e.target.value })}
-                className="h-12 rounded border-zinc-200 dark:border-zinc-800 font-bold"
-              />
+              <p className="text-[10px] text-zinc-400 italic px-1">
+                Você será levado ao editor para criar o primeiro roteiro nesta pasta.
+              </p>
             </div>
           </div>
           <DialogFooter className="flex gap-3">
@@ -1040,14 +919,29 @@ function DashboardContent() {
               onClick={() => {
                 const project = projects.find(p => p.name === newFolderData.projectName);
                 const pid = project?.id || "";
-                const url = `/editor/new?project=${encodeURIComponent(newFolderData.projectName)}&projectId=${pid}&folder=${encodeURIComponent(newFolderData.folder || "Raiz")}&subfolder=${encodeURIComponent(newFolderData.subfolder)}`;
-                router.push(url);
+                const val = (document.getElementById("new-level-name") as HTMLInputElement)?.value || "";
+                
+                const finalPath = [...newFolderData.path];
+                if (val) finalPath.push(val);
+                if (finalPath.length === 0) finalPath.push("Raiz");
+
+                const params = new URLSearchParams({
+                  project: newFolderData.projectName,
+                  projectId: pid,
+                  path: JSON.stringify(finalPath)
+                });
+                
+                // Legacy support
+                params.set("folder", finalPath[0] || "Raiz");
+                if (finalPath[1]) params.set("subfolder", finalPath[1]);
+                if (finalPath[2]) params.set("lesson", finalPath[2]);
+
+                router.push(`/editor/new?${params.toString()}`);
                 setIsCreateFolderOpen(false);
               }} 
-              disabled={!newFolderData.folder.trim()}
-              className="flex-[2] h-12 rounded bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] shadow-lg"
+              className="flex-[2] h-12 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-widest text-[10px] shadow-lg"
             >
-              CRIAR NESTA PASTA
+              CRIAR E ABRIR EDITOR
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1176,62 +1070,8 @@ function DashboardContent() {
         </DialogContent>
       </Dialog>
 
-      {/* DIALOG MOVER ROTEIRO */}
-      <Dialog open={!!movingScript} onOpenChange={(open) => !open && setMovingScript(null)}>
-        <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)]">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-black text-center mb-2 uppercase tracking-widest">Mover Roteiro</DialogTitle>
-            <DialogDescription className="text-center text-zinc-500 text-xs font-medium mb-6">
-              Mova &ldquo;{movingScript?.title}&rdquo; para outro projeto ou pasta.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1">Projeto</Label>
-              <Select value={moveProjectName} onValueChange={setMoveProjectName}>
-                <SelectTrigger className="h-10 rounded border-zinc-200 dark:border-zinc-800 font-bold">
-                  <SelectValue placeholder="Selecionar Projeto" />
-                </SelectTrigger>
-                <SelectContent className="rounded border-none shadow-xl">
-                  <SelectItem value="Geral" className="font-bold">Geral</SelectItem>
-                  {projects.map(p => (
-                    <SelectItem key={p.id} value={p.name} className="font-bold">{p.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1">Pasta</Label>
-              <Input 
-                value={moveFolderName} 
-                onChange={(e) => setMoveFolderName(e.target.value)}
-                placeholder="Ex: Módulo 1, Social Media..."
-                className="h-10 rounded border-zinc-200 dark:border-zinc-800 font-bold"
-              />
-              <div className="flex flex-wrap gap-1 mt-2">
-                {Array.from(new Set(scripts.filter(s => (s.projectName || s.project || "Geral") === moveProjectName).map(s => s.folder).filter(Boolean))).map(f => (
-                  <button 
-                    key={f} 
-                    onClick={() => setMoveFolderName(f!)}
-                    className="text-[9px] font-black px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-800 hover:bg-blue-500 hover:text-white transition-colors uppercase tracking-widest"
-                  >
-                    {f}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-          <DialogFooter className="flex gap-3">
-            <Button variant="ghost" onClick={() => setMovingScript(null)} className="flex-1 h-12 rounded font-bold">Cancelar</Button>
-            <Button 
-              onClick={handleMoveScript} 
-              className="flex-[2] h-12 rounded bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px]"
-            >
-              MOVER AGORA
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+
+
       
       {/* DIALOG CRIAR PROJETO */}
       <Dialog open={isCreateProjectOpen} onOpenChange={setIsCreateProjectOpen}>

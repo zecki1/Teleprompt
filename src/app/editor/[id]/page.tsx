@@ -42,6 +42,8 @@ import {
   FileDown,
   Loader2,
   Monitor,
+  ChevronRight,
+  X,
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
@@ -73,6 +75,22 @@ import {
 import { toast as sonnerToast } from "sonner";
 import { exportToWord } from "@/lib/export-word";
 import { exportToPPT } from "@/lib/export-ppt";
+import { getScriptPath } from "@/lib/pathUtils";
+import { 
+  Breadcrumb, 
+  BreadcrumbItem, 
+  BreadcrumbLink, 
+  BreadcrumbList, 
+  BreadcrumbPage, 
+  BreadcrumbSeparator,
+  BreadcrumbEllipsis
+} from "@/components/ui/breadcrumb";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type ScriptStatus = "rascunho" | "em_revisao" | "revisao_realizada" | "aguardando_gravacao" | "gravado" | "rejeitado";
 
@@ -147,6 +165,8 @@ function EditorContent({ id }: { id: string }) {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [folder, setFolder] = useState("Raiz");
   const [subfolder, setSubfolder] = useState("");
+  const [lesson, setLesson] = useState("");
+  const [path, setPath] = useState<string[]>([]);
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [loading, setLoading] = useState(!isNew);
   const [scriptStatus, setScriptStatus] = useState<ScriptStatus>("rascunho");
@@ -160,6 +180,7 @@ function EditorContent({ id }: { id: string }) {
   const [reviewerName, setReviewerName] = useState<string | null>(null);
   const [editorId, setEditorId] = useState<string | null>(null);
   const [editorName, setEditorName] = useState<string | null>(null);
+  const [videomakerName, setVideomakerName] = useState<string | null>(null);
 
   const { user, hasPermission } = useAuth();
   const isWhitelisted = user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br";
@@ -198,11 +219,37 @@ function EditorContent({ id }: { id: string }) {
       const p = searchParams.get("project");
       const pid = searchParams.get("projectId");
       const f = searchParams.get("folder");
+      const sf = searchParams.get("subfolder");
+      const l = searchParams.get("lesson");
+      const pth = searchParams.get("path");
+      
       console.log(`[Editor] Modo Novo Roteiro - Projeto: ${p}, ProjectID: ${pid}, Pasta: ${f}`);
       if (p) {
         setProject(p);
         if (pid) setProjectId(pid);
-        if (f) setFolder(f);
+        
+        if (pth) {
+          try {
+            const parsedPath = JSON.parse(pth);
+            setPath(parsedPath);
+            // Sync legacy
+            setFolder(parsedPath[0] || "Raiz");
+            setSubfolder(parsedPath[1] || "");
+            setLesson(parsedPath[2] || "");
+          } catch (e) {
+            console.error("Error parsing path param", e);
+          }
+        } else {
+          if (f) setFolder(f);
+          if (sf) setSubfolder(sf);
+          if (l) setLesson(l);
+          const initialPath = [f || "Raiz"];
+          if (sf) initialPath.push(sf);
+          if (l) initialPath.push(l);
+          setPath(initialPath);
+        }
+      } else {
+        setPath(["Raiz"]);
       }
       setLoading(false);
       return;
@@ -220,8 +267,13 @@ function EditorContent({ id }: { id: string }) {
           const pName = data.projectName || data.project || "Geral";
           setProject(pName);
           setProjectId(data.projectId || null);
-          setFolder(data.folder || "Raiz");
-          setSubfolder(data.subfolder || "");
+          
+          const scriptPath = getScriptPath(data as any);
+          setPath(scriptPath);
+          
+          setFolder(data.folder || scriptPath[0] || "Raiz");
+          setSubfolder(data.subfolder || scriptPath[1] || "");
+          setLesson(data.lesson || scriptPath[2] || "");
           setScriptStatus(data.status || "rascunho");
           setCategory(data.category || "video");
           setIsPublic(data.isPublic || false);
@@ -229,8 +281,10 @@ function EditorContent({ id }: { id: string }) {
           setWorkspaceId(data.workspaceId || user?.workspaceId || "senai");
           setReviewerId(data.reviewerId || null);
           setReviewerName(data.reviewerName || null);
+          setReviewerName(data.reviewerName || null);
           setEditorId(data.editorId || null);
           setEditorName(data.editorName || null);
+          setVideomakerName(data.videomakerName || null);
 
           const vQ = query(
             collection(db, "scripts", id, "versions"),
@@ -381,6 +435,7 @@ function EditorContent({ id }: { id: string }) {
         status: saveStatus,
         updatedAt: serverTimestamp(),
         isPublic: isPublic,
+        path: path,
         reviewerId: finalReviewerId,
         reviewerName: finalReviewerName,
         editorId: finalEditorId,
@@ -428,6 +483,8 @@ function EditorContent({ id }: { id: string }) {
         projectName: project || null,
         folder: folder || null,
         subfolder: subfolder || null,
+        lesson: lesson || null,
+        path: path || null,
         workspaceId: finalWorkspaceId
       });
 
@@ -578,7 +635,16 @@ function EditorContent({ id }: { id: string }) {
 
   const handleDownloadWord = async () => {
     try {
-      await exportToWord({ title, projectName: project }, scenes);
+      await exportToWord({ 
+        title, 
+        projectName: project,
+        folder,
+        subfolder,
+        lesson,
+        editorName,
+        reviewerName,
+        videomakerName
+      }, scenes);
       showToast("Backup Word gerado!");
     } catch (error) {
       sonnerToast.error("Falha ao gerar arquivo Word.");
@@ -587,7 +653,16 @@ function EditorContent({ id }: { id: string }) {
 
   const handleDownloadPPT = async () => {
     try {
-      await exportToPPT({ title, projectName: project }, scenes);
+      await exportToPPT({ 
+        title, 
+        projectName: project,
+        folder,
+        subfolder,
+        lesson,
+        editorName,
+        reviewerName,
+        videomakerName
+      }, scenes);
       showToast("Backup PPT gerado!");
     } catch (error) {
       sonnerToast.error("Falha ao gerar arquivo PPT.");
@@ -673,26 +748,77 @@ function EditorContent({ id }: { id: string }) {
                 </Select>
               </div>
               
-              <div className="flex items-center gap-1.5 border-l border-zinc-200 dark:border-zinc-800 pl-4">
-                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter shrink-0">Pasta:</span>
-                <div className="relative group/folder">
-                  <Input 
-                    value={folder} 
-                    onChange={(e) => setFolder(e.target.value)}
-                    className="h-8 px-4 w-32 border-none shadow-none text-[10px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-900/20 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors focus-visible:ring-0"
-                    placeholder="Pasta..."
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1.5 border-l border-zinc-200 dark:border-zinc-800 pl-4">
-                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter shrink-0">Subpasta:</span>
-                <Input 
-                  value={subfolder} 
-                  onChange={(e) => setSubfolder(e.target.value)}
-                  className="h-8 px-4 w-32 border-none shadow-none text-[10px] font-black text-zinc-600 dark:text-zinc-400 bg-zinc-50/50 dark:bg-zinc-900/20 rounded hover:bg-zinc-100 dark:hover:bg-zinc-900/40 transition-colors focus-visible:ring-0"
-                  placeholder="Subpasta..."
-                />
+              {/* Path Breadcrumb */}
+              <div className="flex items-center gap-1.5 border-l border-zinc-200 dark:border-zinc-800 pl-4 max-w-md overflow-hidden">
+                <Breadcrumb>
+                  <BreadcrumbList className="flex-nowrap">
+                    {path.map((segment, index) => (
+                      <React.Fragment key={index}>
+                        <BreadcrumbItem>
+                          <div className="group/segment relative">
+                            <Input
+                              value={segment}
+                              onChange={(e) => {
+                                const newPath = [...path];
+                                newPath[index] = e.target.value;
+                                setPath(newPath);
+                                // Sync legacy
+                                if (index === 0) setFolder(e.target.value);
+                                if (index === 1) setSubfolder(e.target.value);
+                                if (index === 2) setLesson(e.target.value);
+                              }}
+                              disabled={!canEdit}
+                              className={cn(
+                                "h-7 px-2 border-none shadow-none text-[9px] font-black uppercase tracking-widest transition-all focus-visible:ring-1 focus-visible:ring-zinc-200 w-auto min-w-[40px]",
+                                index === 0 ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-900/20" : 
+                                index === 1 ? "text-blue-600 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-900/20" :
+                                "text-purple-600 dark:text-purple-400 bg-purple-50/50 dark:bg-purple-900/20"
+                              )}
+                              style={{ width: `${Math.max(segment.length + 2, 8)}ch` }}
+                            />
+                            {canEdit && (
+                              <button 
+                                onClick={() => {
+                                  const newPath = path.filter((_, i) => i !== index);
+                                  if (newPath.length === 0) newPath.push("Raiz");
+                                  setPath(newPath);
+                                  if (index === 0) setFolder(newPath[0] || "Raiz");
+                                  if (index === 1) setSubfolder(newPath[1] || "");
+                                  if (index === 2) setLesson(newPath[2] || "");
+                                }}
+                                className="absolute -top-1 -right-1 hidden group-hover/segment:flex w-3 h-3 bg-red-500 text-white rounded-full items-center justify-center text-[8px] hover:bg-red-600 shadow-sm"
+                              >
+                                <X className="w-2 h-2" />
+                              </button>
+                            )}
+                          </div>
+                        </BreadcrumbItem>
+                        {index < path.length - 1 && <BreadcrumbSeparator><ChevronRight className="w-3 h-3" /></BreadcrumbSeparator>}
+                      </React.Fragment>
+                    ))}
+                    
+                    {canEdit && path.length < 5 && (
+                      <>
+                        <BreadcrumbSeparator><ChevronRight className="w-3 h-3" /></BreadcrumbSeparator>
+                        <BreadcrumbItem>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 hover:text-blue-500"
+                            onClick={() => {
+                              const newPath = [...path, "Nova Pasta"];
+                              setPath(newPath);
+                              if (newPath.length === 2) setSubfolder("Nova Pasta");
+                              if (newPath.length === 3) setLesson("Nova Pasta");
+                            }}
+                          >
+                            <Plus className="w-3 h-3" />
+                          </Button>
+                        </BreadcrumbItem>
+                      </>
+                    )}
+                  </BreadcrumbList>
+                </Breadcrumb>
               </div>
 
               <div className="flex items-center gap-4 border-l border-zinc-200 dark:border-zinc-800 pl-4">
