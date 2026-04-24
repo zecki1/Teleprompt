@@ -1095,13 +1095,13 @@ function EditorContent({ id }: { id: string }) {
       </Dialog>
       
       <Dialog open={showImportModal} onOpenChange={setShowImportModal}>
-        <DialogContent className="sm:max-w-3xl bg-white dark:bg-zinc-950 border-none rounded p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-3xl bg-white dark:bg-zinc-950 border-none rounded p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)] max-h-[90vh]">
           <DialogHeader>
             <DialogTitle className="text-2xl font-black">Importar Roteiro Bruto</DialogTitle>
             <DialogDescription className="text-zinc-500 font-medium pt-2">Cole seu texto aqui para converter em blocos.</DialogDescription>
           </DialogHeader>
-          <div className="py-6  overflow-y-auto">
-            <Textarea value={importText} onChange={(e) => setImportText(e.target.value)} className="min-h-[400px] font-mono text-xs bg-zinc-50 dark:bg-zinc-900 rounded p-6 border-zinc-200 dark:border-zinc-800" placeholder="Cena 1&#10;..." />
+          <div className="py-6  overflow-y-auto px-2">
+            <Textarea value={importText} onChange={(e) => setImportText(e.target.value)} className="min-h-[400px] font-mono text-xs bg-zinc-50 dark:bg-zinc-900 rounded p-6 border-zinc-200 dark:border-zinc-800 max-h-[40vh]  overflow-y-auto" placeholder="Cena 1&#10;..." />
           </div>
           <DialogFooter className="sm:justify-center">
             <Button onClick={handleImport} className="bg-blue-600 hover:bg-blue-700 text-white font-black rounded px-12 h-14 text-xs uppercase tracking-widest shadow-xl">PROCESSAR E IMPORTAR</Button>
