@@ -6,7 +6,7 @@ import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { MessageSquare, Send, User, Clock, X } from "lucide-react";
+import { MessageSquare, Send, Clock, X } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -16,7 +16,7 @@ interface Comment {
   text: string;
   userId: string;
   userName: string;
-  createdAt: any;
+  createdAt: { toDate: () => Date } | null;
 }
 
 export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: string; onClose: () => void; hasFooter?: boolean }) {
