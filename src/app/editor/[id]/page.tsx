@@ -856,6 +856,20 @@ function EditorContent({ id }: { id: string }) {
              <Button variant={isEditingMode ? "outline" : "secondary"} size="sm" onClick={() => setIsEditingMode(!isEditingMode)} className="h-9 px-4 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2">
                 {isEditingMode ? <Eye size={16} /> : <EyeOff size={16} />} {isEditingMode ? "Ver Final" : "Editar"}
               </Button>
+              
+              {!isNew && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  asChild
+                  className="h-9 px-4 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 border-blue-200 dark:border-blue-900 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                >
+                  <Link href={`/tp/${id}`} target="_blank">
+                    <Monitor size={16} /> TP
+                  </Link>
+                </Button>
+              )}
+
               <Button 
                 onClick={handleSaveClick} 
                 className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] tracking-widest px-6 rounded shadow-lg"
