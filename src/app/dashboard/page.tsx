@@ -738,7 +738,7 @@ function DashboardContent() {
                     <div className="relative">
                       <div className="flex gap-6 overflow-x-auto p-5 custom-scrollbar snap-x snap-mandatory pb-8">
                         {projectScripts.map(script => (
-                          <div key={script.id} className="min-w-[300px] md:min-w-[350px] snap-start relative">
+                          <div key={script.id} className="min-w-[300px] md:min-w-[350px] snap-start relative pl-2">
                             {(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") && (
                               <div className="absolute -top-1 -right-1 z-20 bg-green-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
                                 <CheckCircle2 className="w-3 h-3" /> {script.status === "revisao_realizada" ? "Revisado" : "Pronto"}
@@ -749,9 +749,15 @@ function DashboardContent() {
                                 <Clock className="w-3 h-3" /> Em Revisão
                               </div>
                             )}
+                            {script.status === "gravado" && (
+                              <div className="absolute -top-1 -right-1 z-20 bg-blue-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
+                                <CheckCircle2 className="w-3 h-3" /> Gravado
+                              </div>
+                            )}
                             <Card className={`h-full border-zinc-200 dark:border-zinc-800 hover:shadow-xl transition-all group flex flex-col 
                               ${(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") ? "ring-2 ring-green-500/30 border-green-500/50" : ""}
                               ${script.status === "em_revisao" ? "ring-2 ring-yellow-500/30 border-yellow-500/50" : ""}
+                              ${script.status === "gravado" ? "ring-2 ring-blue-500/30 border-blue-500/50" : ""}
                             `}>
                               <CardHeader className="p-5 pb-2">
                                 {editingId === script.id ? (
@@ -816,6 +822,17 @@ function DashboardContent() {
                                       {script.editorId && <div className="w-4 h-4 rounded-full bg-blue-500/20 flex items-center justify-center text-[8px] font-bold text-blue-600">ED</div>}
                                     </div>
                                   </div>
+                                  {(script as any).videomakerName && (
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Gravação</span>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">
+                                          {(script as any).videomakerName}
+                                        </span>
+                                        <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center text-[8px] font-bold text-emerald-600">GR</div>
+                                      </div>
+                                    </div>
+                                  )}
                                   <div className="flex items-center justify-between">
                                     <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Revisor</span>
                                     <div className="flex items-center gap-1.5">
