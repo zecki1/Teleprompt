@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, Check, Folder, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, Briefcase, Loader2, Users, UserPlus, Video, PlusCircle, ClipboardCheck, MessageSquare } from "lucide-react";
+import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, Check, Folder, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Loader2, Users, UserPlus, Video, PlusCircle, PlusSquare, ClipboardCheck, MessageSquare } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
@@ -46,6 +46,7 @@ interface ScriptDoc {
   projectName?: string;
   projectId?: string;
   folder?: string;
+  subfolder?: string;
   createdAt: string;
   status: ScriptStatus;
   category?: "video" | "podcast";
@@ -58,11 +59,11 @@ interface ScriptDoc {
 }
 
 const statusConfig: Record<ScriptStatus, { label: string; color: string; icon: React.ElementType }> = {
-  rascunho: { label: "Rascunho", color: "bg-zinc-500", icon: FileText },
+  rascunho: { label: "Rascunho", color: "bg-orange-500", icon: FileText },
   em_revisao: { label: "Em Revisão", color: "bg-yellow-500", icon: Clock },
-  revisao_realizada: { label: "Revisão Realizada", color: "bg-orange-500", icon: CheckCircle2 },
-  aguardando_gravacao: { label: "Aguardando Gravação", color: "bg-green-500", icon: CheckCircle2 },
-  gravado: { label: "Gravado", color: "bg-blue-500", icon: Send },
+  revisao_realizada: { label: "Revisado", color: "bg-emerald-500", icon: CheckCircle2 },
+  aguardando_gravacao: { label: "Revisado", color: "bg-green-500", icon: CheckCircle2 },
+  gravado: { label: "Gravado", color: "bg-blue-600", icon: Send },
   rejeitado: { label: "Rejeitado", color: "bg-red-500", icon: X },
 };
 
@@ -107,6 +108,22 @@ function DashboardContent() {
   
   const [editingProjectName, setEditingProjectName] = useState<string | null>(null);
   const [newProjectTitle, setNewProjectTitle] = useState("");
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
+
+  const toggleProjectCollapse = (projectName: string) => {
+    const next = new Set(collapsedProjects);
+    if (next.has(projectName)) next.delete(projectName);
+    else next.add(projectName);
+    setCollapsedProjects(next);
+  };
+
+  const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
+  const [newFolderData, setNewFolderData] = useState({ projectName: "", folder: "", subfolder: "" });
+
+  const handleCreateFolderClick = (projectName: string) => {
+    setNewFolderData({ projectName, folder: "", subfolder: "" });
+    setIsCreateFolderOpen(true);
+  };
 
   const projectIdFilter = searchParams.get("projectId");
   const selectedProject = projects.find(p => p.id === projectIdFilter);
@@ -444,13 +461,15 @@ function DashboardContent() {
   const groupedScripts = filteredScripts.reduce((acc, script) => {
     const projectName = script.projectName || script.project || "Geral";
     const folderName = script.folder || "Sem Pasta";
+    const subfolderName = script.subfolder || "";
     
     if (!acc[projectName]) acc[projectName] = {};
-    if (!acc[projectName][folderName]) acc[projectName][folderName] = [];
+    if (!acc[projectName][folderName]) acc[projectName][folderName] = {};
+    if (!acc[projectName][folderName][subfolderName]) acc[projectName][folderName][subfolderName] = [];
     
-    acc[projectName][folderName].push(script);
+    acc[projectName][folderName][subfolderName].push(script);
     return acc;
-  }, {} as Record<string, Record<string, ScriptDoc[]>>);
+  }, {} as Record<string, Record<string, Record<string, ScriptDoc[]>>>);
 
   return (
     <div className="container mx-auto py-10 px-4 max-w-6xl">
@@ -638,13 +657,16 @@ function DashboardContent() {
             .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' }))
             .map(([projectName, folders]) => (
             <div key={projectName} id={`project-section-${projectName}`} className="space-y-8">
-              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3 group/header">
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3 group/header cursor-pointer select-none" onClick={() => toggleProjectCollapse(projectName)}>
                 <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-6 h-6 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+                    {collapsedProjects.has(projectName) ? <ChevronRight className="w-4 h-4 text-zinc-400" /> : <ChevronDown className="w-4 h-4 text-zinc-400" />}
+                  </div>
                   <div className="p-2 bg-blue-500/10 rounded-lg">
                     <Folder className="w-5 h-5 text-blue-500" />
                   </div>
                   {editingProjectName === projectName ? (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                       <Input 
                         value={newProjectTitle} 
                         onChange={(e) => setNewProjectTitle(e.target.value)}
@@ -658,7 +680,7 @@ function DashboardContent() {
                     <div className="flex items-center gap-2">
                       <h2 className="text-lg font-black tracking-tight text-zinc-900 dark:text-zinc-100 uppercase tracking-widest">{projectName}</h2>
                       <button 
-                        onClick={() => { setEditingProjectName(projectName); setNewProjectTitle(projectName); }}
+                        onClick={(e) => { e.stopPropagation(); setEditingProjectName(projectName); setNewProjectTitle(projectName); }}
                         className="opacity-0 group-hover/header:opacity-100 p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-all"
                       >
                         <Edit2 className="w-3 h-3 text-zinc-400" />
@@ -666,10 +688,18 @@ function DashboardContent() {
                     </div>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                   <Badge variant="secondary" className="font-black text-[9px] tracking-widest">
-                    {Object.values(folders).flat().length} ROTEIROS
+                    {Object.values(folders).reduce((acc, subfolders) => acc + Object.values(subfolders).flat().length, 0)} ROTEIROS
                   </Badge>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-8 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-blue-500"
+                    onClick={() => handleCreateFolderClick(projectName)}
+                  >
+                    <PlusSquare className="w-3.5 h-3.5 mr-1.5" /> NOVA PASTA
+                  </Button>
                   <Button 
                     variant="ghost" 
                     size="sm" 
@@ -685,79 +715,90 @@ function DashboardContent() {
                 </div>
               </div>
               
-              <div className="space-y-12">
+              {!collapsedProjects.has(projectName) && (
+                <div className="space-y-12 animate-in fade-in slide-in-from-top-2 duration-300">
                 {Object.entries(folders)
                   .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' }))
-                  .map(([folderName, projectScripts]) => (
-                  <div key={folderName} className="space-y-4">
-                    <div className="flex items-center justify-between px-1 group/folder-header">
-                      <div className="flex items-center gap-2">
-                        <div className="w-1 h-4 bg-zinc-300 dark:bg-zinc-700 rounded" />
-                        {editingFolderName?.project === projectName && editingFolderName?.folder === folderName ? (
+                  .map(([folderName, subfolders]) => (
+                  <div key={folderName} className="space-y-8">
+                    {Object.entries(subfolders)
+                      .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' }))
+                      .map(([subfolderName, projectScripts]) => (
+                      <div key={subfolderName} className="space-y-4">
+                        <div className="flex items-center justify-between px-1 group/folder-header">
                           <div className="flex items-center gap-2">
-                            <Input 
-                              value={newFolderTitle} 
-                              onChange={(e) => setNewFolderTitle(e.target.value)}
-                              className="h-6 w-48 text-[10px]"
-                              autoFocus
-                            />
-                            <Button size="icon" variant="ghost" className="h-6 w-6 text-green-500" onClick={() => handleRenameFolder(projectName, folderName)}><Check className="w-3 h-3" /></Button>
-                            <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setEditingFolderName(null)}><X className="w-3 h-3" /></Button>
+                            <div className={`w-1 h-4 ${subfolderName ? 'bg-blue-400' : 'bg-zinc-300 dark:bg-zinc-700'} rounded`} />
+                            {editingFolderName?.project === projectName && editingFolderName?.folder === folderName ? (
+                              <div className="flex items-center gap-2">
+                                <Input 
+                                  value={newFolderTitle} 
+                                  onChange={(e) => setNewFolderTitle(e.target.value)}
+                                  className="h-6 w-48 text-[10px]"
+                                  autoFocus
+                                />
+                                <Button size="icon" variant="ghost" className="h-6 w-6 text-green-500" onClick={() => handleRenameFolder(projectName, folderName)}><Check className="w-3 h-3" /></Button>
+                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setEditingFolderName(null)}><X className="w-3 h-3" /></Button>
+                              </div>
+                            ) : (
+                              <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-400 flex items-center gap-2">
+                                {folderName} {subfolderName && <><ChevronRight className="w-3 h-3 text-zinc-600" /> <span className="text-blue-500/80">{subfolderName}</span></>}
+                                <Badge variant="outline" className="text-[9px] h-4 px-1.5 font-black border-zinc-200 dark:border-zinc-800 text-zinc-400">
+                                  {projectScripts.length}
+                                </Badge>
+                                <button 
+                                  onClick={() => { setEditingFolderName({project: projectName, folder: folderName}); setNewFolderTitle(folderName); }}
+                                  className="opacity-0 group-hover/folder-header:opacity-100 p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-all"
+                                >
+                                  <Edit2 className="w-2.5 h-2.5 text-zinc-400" />
+                                </button>
+                              </h3>
+                            )}
                           </div>
-                        ) : (
-                          <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-400 flex items-center gap-2">
-                            {folderName}
-                            <Badge variant="outline" className="text-[9px] h-4 px-1.5 font-black border-zinc-200 dark:border-zinc-800 text-zinc-400">
-                              {projectScripts.length}
-                            </Badge>
-                            <button 
-                              onClick={() => { setEditingFolderName({project: projectName, folder: folderName}); setNewFolderTitle(folderName); }}
-                              className="opacity-0 group-hover/folder-header:opacity-100 p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-all"
-                            >
-                              <Edit2 className="w-2.5 h-2.5 text-zinc-400" />
-                            </button>
-                          </h3>
-                        )}
-                      </div>
-                      
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="h-7 text-[9px] font-black uppercase tracking-widest text-zinc-400 hover:text-blue-500 opacity-0 group-hover/folder-header:opacity-100 transition-opacity"
-                        onClick={() => {
-                          const project = projects.find(p => p.name === projectName);
-                          const pid = project?.id || projectScripts[0]?.projectId || "";
-                          const url = `/editor/new?project=${encodeURIComponent(projectName)}&projectId=${pid}&folder=${encodeURIComponent(folderName)}`;
-                          router.push(url);
-                        }}
-                      >
-                        <Plus className="w-3 h-3 mr-1" /> Criar nesta pasta
-                      </Button>
-                    </div>
+                          
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="h-7 text-[9px] font-black uppercase tracking-widest text-zinc-400 hover:text-blue-500 opacity-0 group-hover/folder-header:opacity-100 transition-opacity"
+                            onClick={() => {
+                              const project = projects.find(p => p.name === projectName);
+                              const pid = project?.id || projectScripts[0]?.projectId || "";
+                              const url = `/editor/new?project=${encodeURIComponent(projectName)}&projectId=${pid}&folder=${encodeURIComponent(folderName)}&subfolder=${encodeURIComponent(subfolderName)}`;
+                              router.push(url);
+                            }}
+                          >
+                            <Plus className="w-3 h-3 mr-1" /> Criar aqui
+                          </Button>
+                        </div>
 
-                    <div className="relative">
-                      <div className="flex gap-6 overflow-x-auto p-5 custom-scrollbar snap-x snap-mandatory pb-8">
-                        {projectScripts.map(script => (
-                          <div key={script.id} className="min-w-[300px] md:min-w-[350px] snap-start relative pl-2">
-                            {(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") && (
-                              <div className="absolute -top-1 -right-1 z-20 bg-green-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
-                                <CheckCircle2 className="w-3 h-3" /> {script.status === "revisao_realizada" ? "Revisado" : "Pronto"}
-                              </div>
-                            )}
-                            {script.status === "em_revisao" && (
-                              <div className="absolute -top-1 -right-1 z-20 bg-yellow-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
-                                <Clock className="w-3 h-3" /> Em Revisão
-                              </div>
-                            )}
-                            {script.status === "gravado" && (
-                              <div className="absolute -top-1 -right-1 z-20 bg-blue-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
-                                <CheckCircle2 className="w-3 h-3" /> Gravado
-                              </div>
-                            )}
+                        <div className="relative">
+                          <div className="flex gap-6 overflow-x-auto p-5 custom-scrollbar snap-x snap-mandatory pb-8">
+                            {projectScripts.map(script => (
+                              <div key={script.id} className="min-w-[300px] md:min-w-[350px] snap-start relative pl-2">
+                                {script.status === "rascunho" && (
+                                  <div className="absolute -top-1 -right-1 z-20 bg-orange-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
+                                    <FileText className="w-3 h-3" /> Rascunho
+                                  </div>
+                                )}
+                                {(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") && (
+                                  <div className="absolute -top-1 -right-1 z-20 bg-emerald-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
+                                    <CheckCircle2 className="w-3 h-3" /> Revisado
+                                  </div>
+                                )}
+                                {script.status === "em_revisao" && (
+                                  <div className="absolute -top-1 -right-1 z-20 bg-yellow-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
+                                    <Clock className="w-3 h-3" /> Em Revisão
+                                  </div>
+                                )}
+                                {script.status === "gravado" && (
+                                  <div className="absolute -top-1 -right-1 z-20 bg-blue-600 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
+                                    <Send className="w-3 h-3" /> Gravado
+                                  </div>
+                                )}
                             <Card className={`h-full border-zinc-200 dark:border-zinc-800 hover:shadow-xl transition-all group flex flex-col 
-                              ${(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") ? "ring-2 ring-green-500/30 border-green-500/50" : ""}
+                              ${script.status === "rascunho" ? "ring-2 ring-orange-500/30 border-orange-500/50" : ""}
+                              ${(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") ? "ring-2 ring-emerald-500/30 border-emerald-500/50" : ""}
                               ${script.status === "em_revisao" ? "ring-2 ring-yellow-500/30 border-yellow-500/50" : ""}
-                              ${script.status === "gravado" ? "ring-2 ring-blue-500/30 border-blue-500/50" : ""}
+                              ${script.status === "gravado" ? "ring-2 ring-blue-600/30 border-blue-600/50" : ""}
                             `}>
                               <CardHeader className="p-5 pb-2">
                                 {editingId === script.id ? (
@@ -787,32 +828,31 @@ function DashboardContent() {
                                   </div>
                                 )}
                                 <div className="flex items-center gap-2 mt-2">
-                                  {(script.status === "revisao_realizada" || script.status === "aguardando_gravacao") ? (
-                                    <>
-                                      <Badge className="bg-emerald-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5">
-                                        Revisado
-                                      </Badge>
-                                      <Badge className="bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(37,99,235,0.3)]">
-                                        Aguardando Gravação
-                                      </Badge>
-                                    </>
-                                  ) : (
-                                    <Badge className={`${statusConfig[script.status]?.color || "bg-zinc-500"} text-white text-[9px] font-black uppercase tracking-widest px-2 h-5`}>
-                                      {statusConfig[script.status]?.label || script.status}
+                                  {script.status === "rascunho" && (
+                                    <Badge className="bg-orange-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(249,115,22,0.3)]">
+                                      Aguardando Revisão
                                     </Badge>
                                   )}
-                                  <Badge variant="outline" className="text-[9px] font-black uppercase tracking-widest px-2 h-5 border-zinc-200 dark:border-zinc-800 text-zinc-500 gap-1.5">
-                                    {script.category === "podcast" ? (
-                                      <><PlusCircle className="w-2.5 h-2.5 text-purple-500" /> Podcast</>
-                                    ) : (
-                                      <><Video className="w-2.5 h-2.5 text-blue-500" /> Vídeo</>
-                                    )}
-                                  </Badge>
+                                  {(script.status === "revisao_realizada" || script.status === "aguardando_gravacao") && (
+                                    <Badge className="bg-emerald-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.3)]">
+                                      Aguardando Gravação
+                                    </Badge>
+                                  )}
+                                  {script.status === "gravado" && (
+                                    <Badge className="bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(37,99,235,0.3)]">
+                                      Aguardando Edição
+                                    </Badge>
+                                  )}
+                                  {script.status === "em_revisao" && (
+                                    <Badge className="bg-yellow-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5">
+                                      Em Revisão
+                                    </Badge>
+                                  )}
                                 </div>
                               </CardHeader>
                               
-                              <CardContent className="p-5 pt-2 flex-1 space-y-3">
-                                <div className="space-y-1.5 border-y border-zinc-100 dark:border-zinc-800/50 py-3 my-3">
+                              <CardContent className="p-5 pt-2 flex-grow space-y-4">
+                                <div className="space-y-1.5 border-y border-zinc-100 dark:border-zinc-800/50 py-3 my-2">
                                   <div className="flex items-center justify-between">
                                     <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Responsável</span>
                                     <div className="flex items-center gap-1.5">
@@ -822,17 +862,6 @@ function DashboardContent() {
                                       {script.editorId && <div className="w-4 h-4 rounded-full bg-blue-500/20 flex items-center justify-center text-[8px] font-bold text-blue-600">ED</div>}
                                     </div>
                                   </div>
-                                  {(script as any).videomakerName && (
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Gravação</span>
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">
-                                          {(script as any).videomakerName}
-                                        </span>
-                                        <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center text-[8px] font-bold text-emerald-600">GR</div>
-                                      </div>
-                                    </div>
-                                  )}
                                   <div className="flex items-center justify-between">
                                     <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Revisor</span>
                                     <div className="flex items-center gap-1.5">
@@ -871,7 +900,7 @@ function DashboardContent() {
                                   </div>
                                 ) : null}
                                 
-                                <div className="grid grid-cols-2 gap-2">
+                                <div className="grid grid-cols-2 gap-2 mt-4">
                                   <Button variant="outline" size="sm" className="h-9 text-[10px] font-black uppercase tracking-widest hover:bg-zinc-50 dark:hover:bg-zinc-800 border-2" asChild>
                                     <Link href={`/tp/${script.id}`}>
                                       <Play className="w-3 h-3 mr-1.5 text-blue-500" /> Play
@@ -963,10 +992,66 @@ function DashboardContent() {
                   </div>
                 ))}
               </div>
+            ))}
+          </div>
+        )}
+      </div>
+    ))}
+  </div>
+)}
+
+      <Dialog open={isCreateFolderOpen} onOpenChange={setIsCreateFolderOpen}>
+        <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)]">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-black text-center mb-2 uppercase tracking-widest">Nova Pasta/Subpasta</DialogTitle>
+            <DialogDescription className="text-center text-zinc-500 text-sm font-medium mb-6">
+              As pastas são criadas automaticamente ao criar um roteiro nelas.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+             <div className="space-y-2">
+              <Label className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1">Projeto</Label>
+              <Input value={newFolderData.projectName} disabled className="h-12 rounded border-zinc-200 dark:border-zinc-800 font-bold bg-zinc-50" />
             </div>
-          ))}
-        </div>
-      )}
+            <div className="space-y-2">
+              <Label htmlFor="folder-name" className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1">Nome da Pasta</Label>
+              <Input
+                id="folder-name"
+                placeholder="Ex: Módulo 1"
+                value={newFolderData.folder}
+                onChange={(e) => setNewFolderData({ ...newFolderData, folder: e.target.value })}
+                className="h-12 rounded border-zinc-200 dark:border-zinc-800 font-bold"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="subfolder-name" className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1">Subpasta (Opcional)</Label>
+              <Input
+                id="subfolder-name"
+                placeholder="Ex: Aula 1"
+                value={newFolderData.subfolder}
+                onChange={(e) => setNewFolderData({ ...newFolderData, subfolder: e.target.value })}
+                className="h-12 rounded border-zinc-200 dark:border-zinc-800 font-bold"
+              />
+            </div>
+          </div>
+          <DialogFooter className="flex gap-3">
+            <Button variant="ghost" onClick={() => setIsCreateFolderOpen(false)} className="flex-1 h-12 rounded font-bold">Cancelar</Button>
+            <Button 
+              onClick={() => {
+                const project = projects.find(p => p.name === newFolderData.projectName);
+                const pid = project?.id || "";
+                const url = `/editor/new?project=${encodeURIComponent(newFolderData.projectName)}&projectId=${pid}&folder=${encodeURIComponent(newFolderData.folder || "Raiz")}&subfolder=${encodeURIComponent(newFolderData.subfolder)}`;
+                router.push(url);
+                setIsCreateFolderOpen(false);
+              }} 
+              disabled={!newFolderData.folder.trim()}
+              className="flex-[2] h-12 rounded bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] shadow-lg"
+            >
+              CRIAR NESTA PASTA
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!assigningScript} onOpenChange={(open) => !open && setAssigningScript(null)}>
         <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded-[40px] p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)] max-h-[85vh] overflow-y-auto">
@@ -1097,7 +1182,7 @@ function DashboardContent() {
           <DialogHeader>
             <DialogTitle className="text-xl font-black text-center mb-2 uppercase tracking-widest">Mover Roteiro</DialogTitle>
             <DialogDescription className="text-center text-zinc-500 text-xs font-medium mb-6">
-              Mova &quot;{movingScript?.title}&quot; para outro projeto ou pasta.
+              Mova &ldquo;{movingScript?.title}&rdquo; para outro projeto ou pasta.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">

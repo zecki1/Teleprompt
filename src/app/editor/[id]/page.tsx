@@ -61,6 +61,7 @@ import {
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
 import { fetchZeckiProjects, createRecordingTask, ZeckiProject } from "@/lib/zecki";
+import { cn } from "@/lib/utils";
 import Link from "next/link";
 import {
   Select,
@@ -145,6 +146,7 @@ function EditorContent({ id }: { id: string }) {
   const [project, setProject] = useState("Geral");
   const [projectId, setProjectId] = useState<string | null>(null);
   const [folder, setFolder] = useState("Raiz");
+  const [subfolder, setSubfolder] = useState("");
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [loading, setLoading] = useState(!isNew);
   const [scriptStatus, setScriptStatus] = useState<ScriptStatus>("rascunho");
@@ -219,6 +221,7 @@ function EditorContent({ id }: { id: string }) {
           setProject(pName);
           setProjectId(data.projectId || null);
           setFolder(data.folder || "Raiz");
+          setSubfolder(data.subfolder || "");
           setScriptStatus(data.status || "rascunho");
           setCategory(data.category || "video");
           setIsPublic(data.isPublic || false);
@@ -237,7 +240,6 @@ function EditorContent({ id }: { id: string }) {
           const vSnap = await getDocs(vQ);
 
           if (!vSnap.empty) {
-            console.log("[Editor] Versão carregada:", vSnap.docs[0].id);
             const vData = vSnap.docs[0].data();
             const rawContent = vData.content || "";
             let loadedScenes = vData.scenes || [];
@@ -245,10 +247,8 @@ function EditorContent({ id }: { id: string }) {
               loadedScenes = parseScript(rawContent);
             }
             const finalScenes = loadedScenes.map((s: Scene) => ({ ...s, observation: s.observation || "" }));
-            setScenes(finalScenes);
+            setScenesWithRenumbering(finalScenes);
           }
-        } else {
-          console.warn("[Editor] Roteiro não encontrado no Firestore:", id);
         }
       } catch (e) {
         console.error("[Editor] Erro ao carregar roteiro:", e);
@@ -265,7 +265,6 @@ function EditorContent({ id }: { id: string }) {
     }
   }, [user]);
   
-  // Buscar pastas existentes no projeto selecionado
   useEffect(() => {
     const loadFolders = async () => {
       if (!project) return;
@@ -288,16 +287,32 @@ function EditorContent({ id }: { id: string }) {
     loadFolders();
   }, [project, workspaceId, user?.workspaceId]);
 
-  // Recuperação de ProjectID caso o roteiro tenha apenas o nome do projeto
   useEffect(() => {
     if (!projectId && project !== "Geral" && zeckiProjects.length > 0) {
        const found = zeckiProjects.find(p => p.name === project);
        if (found) {
-         console.log(`[Editor] Recuperando ID do projeto pelo nome: ${project} -> ${found.id}`);
          setProjectId(found.id);
        }
     }
   }, [project, projectId, zeckiProjects]);
+
+  const renumberScenes = (sceneList: Scene[]) => {
+    let count = 1;
+    return sceneList.map((scene) => {
+      if (scene.opening && !scene.spokenText) {
+        return { ...scene, sceneNumber: "Abertura" };
+      }
+      if (scene.closing && !scene.spokenText) {
+        return { ...scene, sceneNumber: "Encerramento" };
+      }
+      const num = String(count++).padStart(2, '0');
+      return { ...scene, sceneNumber: num };
+    });
+  };
+
+  const setScenesWithRenumbering = (newScenes: Scene[]) => {
+    setScenes(renumberScenes(newScenes));
+  };
 
   const generateRawTextFromBlocks = (currentScenes: Scene[]) => {
     let newText = "";
@@ -334,29 +349,21 @@ function EditorContent({ id }: { id: string }) {
   const handleSave = async (saveStatus: ScriptStatus) => {
     setShowSaveModal(false);
     setIsSaving(true);
-
-    // Timeout global de segurança: garante que isSaving sempre volta a false
     const safetyTimer = setTimeout(() => {
       setIsSaving(false);
-      sonnerToast.error("O salvamento demorou demais. Verifique sua conexão e tente novamente.");
+      sonnerToast.error("O salvamento demorou demais.");
     }, 30000);
 
     try {
-      console.log(`[Editor] Iniciando salvamento (${saveStatus})...`);
       const finalWorkspaceId = workspaceId || user?.workspaceId || "senai";
       let currentScriptId = id;
       const rawContent = generateRawTextFromBlocks(scenes);
       
-      console.log("[Editor] Sanitizando dados...");
-      
-      // Sempre atribui o usuário atual como Editor ao salvar, pois ele é quem está "mexendo"
       const finalEditorId = user?.uid || editorId;
       const finalEditorName = user?.displayName || user?.email || editorName;
-      
       let finalReviewerId = reviewerId;
       let finalReviewerName = reviewerName;
       
-      // Se estiver concluindo a revisão agora, marca o usuário atual como revisor
       if (saveStatus === "revisao_realizada" || saveStatus === "aguardando_gravacao") {
         finalReviewerId = user?.uid || null;
         finalReviewerName = user?.displayName || user?.email || null;
@@ -365,9 +372,10 @@ function EditorContent({ id }: { id: string }) {
       const saveData = sanitizeData({
         title,
         project,
-        projectName: project, // Sincronia com Dashboard
+        projectName: project,
         projectId,
         folder: folder || "Raiz",
+        subfolder: subfolder || "",
         category,
         workspaceId: finalWorkspaceId,
         status: saveStatus,
@@ -384,10 +392,8 @@ function EditorContent({ id }: { id: string }) {
           timestamp: new Date().toISOString()
         })
       });
-      console.log("[Editor] Dados sanitizados prontas:", saveData);
 
       if (isNew) {
-        console.log("[Editor] Criando NOVO roteiro no Teleprompt DB...");
         const docRef = await addDoc(collection(db, "scripts"), {
           ...saveData,
           createdBy: user?.uid,
@@ -396,27 +402,21 @@ function EditorContent({ id }: { id: string }) {
           lockedForEditing: false,
         });
         currentScriptId = docRef.id;
-        console.log("[Editor] Roteiro criado com ID:", currentScriptId);
       } else {
-        console.log("[Editor] Atualizando roteiro existente ID:", currentScriptId);
         await updateDoc(doc(db, "scripts", currentScriptId), saveData);
       }
 
-      console.log("[Editor] Criando nova versão...");
       const versionPayload = sanitizeData({
-        content: rawContent,
-        scenes: scenes,
+        content: rawContent as string,
+        scenes: scenes as Scene[],
         createdAt: new Date().toISOString(),
       });
-      console.log("[Editor] Payload da versão:", versionPayload);
 
       await addDoc(
         collection(db, "scripts", currentScriptId as string, "versions"), 
         versionPayload
       );
-      console.log("[Editor] Versão salva com sucesso.");
 
-      // Registra a atividade no log global
       await logActivity({
         userId: user?.uid || "",
         userName: user?.displayName || user?.name || user?.email || "Usuário",
@@ -427,107 +427,31 @@ function EditorContent({ id }: { id: string }) {
         projectId: projectId || null,
         projectName: project || null,
         folder: folder || null,
+        subfolder: subfolder || null,
         workspaceId: finalWorkspaceId
       });
 
-      // --- FINALIZAÇÃO SÍNCRONA (NÃO BLOQUEIA UI) ---
-      console.log("[Editor] Salvamento finalizado com sucesso.");
       showToast("Roteiro salvo!");
       setIsEditingMode(false);
       setIsSaving(false);
       setShowSaveModal(false);
       clearTimeout(safetyTimer);
       
-      // Redireciona para o dashboard após salvar
       setTimeout(() => {
         router.push("/dashboard");
       }, 1000);
-
-      // --- AUTOMAÇÃO DE TAREFAS KANBAN (PROCESSO EM BACKGROUND) ---
-      const runAutomations = async () => {
-        if (!projectId) return;
-
-        // Wrapper que limita cada tarefa a no máximo 10 segundos
-        const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
-          Promise.race([
-            promise,
-            new Promise<T>((_, reject) =>
-              setTimeout(() => reject(new Error(`Timeout após ${ms}ms`)), ms)
-            ),
-          ]);
-
-        const tasks: Promise<void>[] = [];
-
-        // 1. Criar tarefa de Gravação quando a revisão é concluída
-        if (saveStatus === "revisao_realizada" || saveStatus === "aguardando_gravacao") {
-          console.log("[Editor Background] Enfileirando tarefa de Gravação...");
-          tasks.push(
-            withTimeout(
-              createRecordingTask(
-                projectId, 
-                title, 
-                currentScriptId as string, 
-                user?.uid || "", 
-                finalWorkspaceId,
-                category,
-                `${window.location.origin}/editor/${currentScriptId}`
-              ),
-              15000 // Aumentado um pouco o timeout para background
-            ).then(() => {
-              sonnerToast.success(`Tarefa de Gravação criada!`, { 
-                description: `Projeto: ${project}`,
-                duration: 5000 
-              });
-            }).catch(err => console.warn("[Editor Background] Tarefa gravação ignorada:", err))
-          );
-        }
-
-        // 2. Criar tarefa de Edição quando o roteiro é marcado como Gravado
-        if (saveStatus === "gravado") {
-          console.log("[Editor Background] Enfileirando tarefa de Edição...");
-          const editingTask = async () => {
-            const { createEditingTask } = await import("@/lib/zecki");
-            await withTimeout(
-              createEditingTask(
-                projectId, 
-                title, 
-                currentScriptId as string, 
-                user?.uid || "", 
-                finalWorkspaceId,
-                category,
-                `${window.location.origin}/editor/${currentScriptId}`
-              ),
-              15000
-            );
-            sonnerToast.success(`Tarefa de Edição criada!`, { 
-              description: `Projeto: ${project}`,
-              duration: 5000 
-            });
-          };
-          tasks.push(editingTask().catch(err => console.warn("[Editor Background] Tarefa edição ignorada:", err)));
-        }
-
-        if (tasks.length > 0) {
-          console.log(`[Editor Background] Processando ${tasks.length} automações em paralelo...`);
-          await Promise.allSettled(tasks);
-        }
-      };
-
-      runAutomations();
-    } catch (e) {
-      console.error("[Editor] ERRO CRÍTICO AO SALVAR:", e);
-      sonnerToast.error("Falha ao salvar roteiro. Verifique o console.");
+    } catch (e: unknown) {
+      sonnerToast.error("Falha ao salvar roteiro.");
     } finally {
       clearTimeout(safetyTimer);
       setIsSaving(false);
     }
   };
 
-
   const updateScene = (index: number, data: Partial<Scene>) => {
     const ns = [...scenes];
     ns[index] = { ...ns[index], ...data };
-    setScenes(ns);
+    setScenesWithRenumbering(ns);
   };
 
   const copyToClipboard = (text: string, label: string) => {
@@ -539,7 +463,6 @@ function EditorContent({ id }: { id: string }) {
     const ns = [...scenes];
     const scene = ns[index];
     
-    // Tornar Locução, Abertura e Encerramento exclusivos entre si
     if (type === 'spokenText') {
       scene.spokenText = "";
       scene.opening = null;
@@ -565,7 +488,7 @@ function EditorContent({ id }: { id: string }) {
        else scene.lettering += "\n";
     }
     if (type === 'observation') scene.observation = "";
-    setScenes(ns);
+    setScenesWithRenumbering(ns);
   };
 
   const removeBlockFromScene = (index: number, type: 'spokenText' | 'imageUrl' | 'lettering' | 'observation' | 'opening' | 'closing', subIndex?: number) => {
@@ -588,7 +511,7 @@ function EditorContent({ id }: { id: string }) {
     if (type === 'opening') scene.opening = null;
     if (type === 'closing') scene.closing = null;
     if (type === 'observation') scene.observation = null;
-    setScenes(ns);
+    setScenesWithRenumbering(ns);
   };
 
   const insertTagAtCursor = (sceneIndex: number, tag: string) => {
@@ -612,19 +535,33 @@ function EditorContent({ id }: { id: string }) {
     }, 0);
   };
 
-  const addEmptyScene = (index?: number) => {
-    const newScene: Scene = { id: crypto.randomUUID(), sceneNumber: String(scenes.length + 1), spokenText: "", observation: "" };
-    if (index !== undefined) { const ns = [...scenes]; ns.splice(index + 1, 0, newScene); setScenes(ns); }
-    else { setScenes([...scenes, newScene]); }
-  };
-
   const handleImport = () => {
     if (!importText.trim()) return;
     const importedScenes = parseScript(importText).map(s => ({ ...s, observation: s.observation || "" }));
-    setScenes([...scenes, ...importedScenes]);
+    if (scenes.length > 0) {
+      if (confirm("Você já possui cenas neste roteiro. Deseja SUBSTITUIR todas as cenas atuais pelas novas? (Clique em Cancelar para ADICIONAR ao final)")) {
+        setScenesWithRenumbering(importedScenes);
+      } else {
+        setScenesWithRenumbering([...scenes, ...importedScenes]);
+      }
+    } else {
+      setScenesWithRenumbering(importedScenes);
+    }
     setShowImportModal(false);
     setImportText("");
-    showToast("Roteiro importado!");
+    showToast("Roteiro processado!");
+  };
+
+  const addEmptyScene = (index?: number) => {
+    const newScene: Scene = { id: crypto.randomUUID(), sceneNumber: "", spokenText: "", observation: "" };
+    if (index !== undefined) { 
+      const ns = [...scenes]; 
+      ns.splice(index + 1, 0, newScene); 
+      setScenesWithRenumbering(ns); 
+    }
+    else { 
+      setScenesWithRenumbering([...scenes, newScene]); 
+    }
   };
 
   const splitScene = (index: number) => {
@@ -635,9 +572,8 @@ function EditorContent({ id }: { id: string }) {
     const fullText = scene.spokenText || "";
     const ns = [...scenes];
     ns[index] = { ...scene, spokenText: fullText.substring(0, cursor) };
-    ns.splice(index + 1, 0, { id: crypto.randomUUID(), sceneNumber: String(index + 2), spokenText: fullText.substring(cursor), lettering: null, imageUrl: null, observation: "" });
-    setScenes(ns);
-    showToast("Cena dividida!");
+    ns.splice(index + 1, 0, { id: crypto.randomUUID(), sceneNumber: "", spokenText: fullText.substring(cursor), lettering: null, imageUrl: null, observation: "" });
+    setScenesWithRenumbering(ns);
   };
 
   const handleDownloadWord = async () => {
@@ -645,7 +581,6 @@ function EditorContent({ id }: { id: string }) {
       await exportToWord({ title, projectName: project }, scenes);
       showToast("Backup Word gerado!");
     } catch (error) {
-      console.error("Erro ao gerar documento Word:", error);
       sonnerToast.error("Falha ao gerar arquivo Word.");
     }
   };
@@ -655,7 +590,6 @@ function EditorContent({ id }: { id: string }) {
       await exportToPPT({ title, projectName: project }, scenes);
       showToast("Backup PPT gerado!");
     } catch (error) {
-      console.error("Erro ao gerar documento PPT:", error);
       sonnerToast.error("Falha ao gerar arquivo PPT.");
     }
   };
@@ -682,7 +616,6 @@ function EditorContent({ id }: { id: string }) {
       setNewProjectData({ name: "", code: "" });
       sonnerToast.success("Projeto criado com sucesso!");
     } catch (err) {
-      console.error("Erro ao criar projeto:", err);
       sonnerToast.error("Erro ao criar projeto.");
     } finally {
       setIsCreatingProject(false);
@@ -692,18 +625,17 @@ function EditorContent({ id }: { id: string }) {
   if (loading) return <div className="h-screen flex items-center justify-center bg-zinc-950 font-black text-blue-500 animate-pulse">CARREGANDO...</div>;
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans pb-32 transition-colors duration-500">
-      {/* HEADER FIXO */}
-      <div className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800 sticky top-0 z-[10] shadow-sm">
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans pb-32">
+      <div className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800 sticky top-0 z-[10] shadow-sm pb-2">
         <div className="container mx-auto px-4 h-16 flex items-center justify-between gap-4">
-          <div className="flex flex-col min-w-0 flex-1">
+          <div className="flex flex-col min-w-0 flex-1 pt-2">
             <div className="flex items-center gap-3">
               <Button variant="ghost" size="icon" asChild className="h-8 w-8 shrink-0">
                 <Link href="/dashboard"><ChevronLeft size={16} /></Link></Button>
               <Input 
                 value={title} 
                 onChange={(e) => setTitle(e.target.value)} 
-                className="h-7 font-black bg-transparent border-none focus-visible:ring-0 p-0 text-lg md:text-xl truncate " 
+                className="h-9 w-full font-black bg-transparent border-none focus-visible:ring-0 px-4 text-lg md:text-xl truncate" 
                 placeholder="Título do Roteiro"
               />
             </div>
@@ -728,18 +660,14 @@ function EditorContent({ id }: { id: string }) {
                     }
                   }}
                 >
-                  <SelectTrigger className="h-5 py-0 px-2 w-fit border-none shadow-none text-[10px] font-black text-blue-600 dark:text-blue-500 bg-blue-50/50 dark:bg-blue-900/20 rounded hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors gap-1.5 focus:ring-0">
+                  <SelectTrigger className={cn("h-8 px-4 flex items-center gap-2 border-none shadow-none text-[10px] font-black text-blue-600 dark:text-blue-500 bg-blue-50/50 dark:bg-blue-900/20 rounded hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors focus:ring-0")}>
                     <SelectValue placeholder="Selecionar Projeto" />
                   </SelectTrigger>
                   <SelectContent className="rounded border-none shadow-2xl bg-white dark:bg-zinc-900 p-2">
                     <SelectItem value="geral" className="text-[11px] font-bold rounded focus:bg-zinc-100 dark:focus:bg-zinc-800">Geral</SelectItem>
-                    <SelectItem value="new" className="text-[11px] font-bold rounded text-blue-500 focus:text-blue-600 focus:bg-blue-50 dark:focus:bg-blue-900/20 border-t border-zinc-100 dark:border-zinc-800 mt-1 pt-2">
-                      + Criar Novo Projeto
-                    </SelectItem>
+                    <SelectItem value="new" className="text-[11px] font-bold rounded text-blue-500 focus:text-blue-600 focus:bg-blue-50 dark:focus:bg-blue-900/20 border-t border-zinc-100 dark:border-zinc-800 mt-1 pt-2">+ Criar Novo Projeto</SelectItem>
                     {zeckiProjects.map((p) => (
-                      <SelectItem key={p.id} value={p.id} className="text-[11px] font-bold rounded focus:bg-zinc-100 dark:focus:bg-zinc-800">
-                        {p.name}
-                      </SelectItem>
+                      <SelectItem key={p.id} value={p.id} className="text-[11px] font-bold rounded focus:bg-zinc-100 dark:focus:bg-zinc-800">{p.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -751,27 +679,22 @@ function EditorContent({ id }: { id: string }) {
                   <Input 
                     value={folder} 
                     onChange={(e) => setFolder(e.target.value)}
-                    className="h-5 py-0 px-2 w-32 border-none shadow-none text-[10px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-900/20 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors focus-visible:ring-0"
-                    placeholder="Nome da Pasta..."
+                    className="h-8 px-4 w-32 border-none shadow-none text-[10px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-900/20 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors focus-visible:ring-0"
+                    placeholder="Pasta..."
                   />
-                  {existingFolders.length > 0 && (
-                    <div className="absolute top-full left-0 mt-1 w-48 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded shadow-xl opacity-0 invisible group-focus-within/folder:opacity-100 group-focus-within/folder:visible transition-all z-50 p-1">
-                      <p className="text-[8px] font-black text-zinc-400 px-2 py-1 uppercase tracking-widest border-b border-zinc-100 dark:border-zinc-800 mb-1">Pastas Existentes</p>
-                      {existingFolders.map(f => (
-                        <button 
-                          key={f}
-                          onClick={() => setFolder(f)}
-                          className="w-full text-left px-2 py-1.5 text-[10px] font-bold rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                        >
-                          {f}
-                        </button>
-                      ))}
-                    </div>
-                  )}
                 </div>
               </div>
 
-              {/* RESPONSÁVEIS */}
+              <div className="flex items-center gap-1.5 border-l border-zinc-200 dark:border-zinc-800 pl-4">
+                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter shrink-0">Subpasta:</span>
+                <Input 
+                  value={subfolder} 
+                  onChange={(e) => setSubfolder(e.target.value)}
+                  className="h-8 px-4 w-32 border-none shadow-none text-[10px] font-black text-zinc-600 dark:text-zinc-400 bg-zinc-50/50 dark:bg-zinc-900/20 rounded hover:bg-zinc-100 dark:hover:bg-zinc-900/40 transition-colors focus-visible:ring-0"
+                  placeholder="Subpasta..."
+                />
+              </div>
+
               <div className="flex items-center gap-4 border-l border-zinc-200 dark:border-zinc-800 pl-4">
                 <div className="flex flex-col">
                   <span className="text-[8px] font-black text-zinc-400 uppercase tracking-tighter">Responsável:</span>
@@ -786,43 +709,27 @@ function EditorContent({ id }: { id: string }) {
               <div className="flex items-center gap-1.5 border-l border-zinc-200 dark:border-zinc-800 pl-4">
                 <span className="text-[9px] font-black text-zinc-400 uppercase tracking-tighter shrink-0">Tipo:</span>
                 <Select value={category} onValueChange={(val: "video" | "podcast") => setCategory(val)}>
-                  <SelectTrigger className="h-5 py-0 px-2 w-fit border-none shadow-none text-[10px] font-black text-purple-600 dark:text-purple-400 bg-purple-50/50 dark:bg-purple-900/20 rounded hover:bg-purple-100 dark:hover:bg-purple-900/40 transition-colors gap-1.5 focus:ring-0">
+                  <SelectTrigger className="h-8 px-4 w-fit border-none shadow-none text-[10px] font-black text-purple-600 dark:text-purple-400 bg-purple-50/50 dark:bg-purple-900/20 rounded hover:bg-purple-100 dark:hover:bg-purple-900/40 transition-colors focus:ring-0">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="rounded border-none shadow-2xl bg-white dark:bg-zinc-900 p-2">
-                    <SelectItem value="video" className="text-[11px] font-bold rounded focus:bg-zinc-100 dark:focus:bg-zinc-800 flex items-center gap-2">
-                      Vídeo
-                    </SelectItem>
-                    <SelectItem value="podcast" className="text-[11px] font-bold rounded focus:bg-zinc-100 dark:focus:bg-zinc-800 flex items-center gap-2">
-                      Podcast
-                    </SelectItem>
+                    <SelectItem value="video" className="text-[11px] font-bold rounded focus:bg-zinc-100 dark:focus:bg-zinc-800">Vídeo</SelectItem>
+                    <SelectItem value="podcast" className="text-[11px] font-bold rounded focus:bg-zinc-100 dark:focus:bg-zinc-800">Podcast</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={handleDownloadWord} className="h-9 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 hidden lg:flex">
+              <Button variant="outline" size="sm" onClick={handleDownloadWord} className="h-9 px-4 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2">
                 <FileDown size={16} /> Word
               </Button>
-              <Button variant="outline" size="sm" onClick={handleDownloadPPT} className="h-9 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 hidden lg:flex">
+              <Button variant="outline" size="sm" onClick={handleDownloadPPT} className="h-9 px-4 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2">
                 <FileDown size={16} /> PPT
               </Button>
-             <Button variant={isEditingMode ? "outline" : "secondary"} size="sm" onClick={() => setIsEditingMode(!isEditingMode)} className="h-9 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2">
+             <Button variant={isEditingMode ? "outline" : "secondary"} size="sm" onClick={() => setIsEditingMode(!isEditingMode)} className="h-9 px-4 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2">
                 {isEditingMode ? <Eye size={16} /> : <EyeOff size={16} />} {isEditingMode ? "Ver Final" : "Editar"}
               </Button>
-              {!isNew && (
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="h-9 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 border-blue-500 text-blue-600 hover:bg-blue-50" 
-                  asChild
-                >
-                  <Link href={`/tp/${id}`}>
-                    <Monitor size={16} /> TP
-                  </Link>
-                </Button>
-              )}
               <Button 
                 onClick={handleSaveClick} 
                 className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] tracking-widest px-6 rounded shadow-lg"
@@ -841,23 +748,19 @@ function EditorContent({ id }: { id: string }) {
             <h3 className="font-black text-zinc-500 uppercase tracking-widest mb-6">Seu roteiro está vazio</h3>
             <div className="flex gap-4">
               <Button onClick={() => addEmptyScene()} className="bg-blue-600 text-[10px] font-black uppercase tracking-widest px-8 h-12 rounded shadow-xl">Nova Cena</Button>
-              <Button variant="outline" onClick={() => setShowImportModal(true)} className="text-[10px] font-black uppercase tracking-widest px-8 h-12 rounded shadow-xl">Importar Texto</Button>
             </div>
           </div>
         ) : (
           scenes.map((scene, index) => (
             <div key={scene.id} className="relative group/scene">
-              <Card className={`transition-all duration-500 border-zinc-200 dark:border-zinc-800 shadow-2xl rounded overflow-hidden ${isEditingMode ? 'bg-white dark:bg-zinc-900' : 'bg-white/50 dark:bg-zinc-900/50 shadow-none scale-[0.98]'}`}>
-                <div className="bg-zinc-50/50 dark:bg-zinc-800/20 px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 flex justify-between items-center group-focus-within/scene:bg-blue-50/20">
+              <Card className="transition-all duration-500 border-zinc-200 dark:border-zinc-800 shadow-2xl rounded overflow-hidden">
+                <div className="bg-zinc-50/50 dark:bg-zinc-800/20 px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 flex justify-between items-center">
                   <div className="flex items-center gap-4">
-                    <span className="bg-zinc-900 dark:bg-blue-600 text-white text-[11px] px-4 py-1.5 rounded font-black tracking-tighter shadow-md">CENA {scene.sceneNumber}</span>
-                    {isEditingMode ? (
-                      <Input placeholder="Tempo" value={scene.time || ""} onChange={(e) => updateScene(index, { time: e.target.value })} className="h-7 w-20 text-[10px] bg-transparent border-dashed border-zinc-300 py-0" />
-                    ) : (
-                      <Badge variant="secondary" className="text-[10px] font-bold">{scene.time || "--:--"}</Badge>
-                    )}
+                    <span className="bg-zinc-900 dark:bg-blue-600 text-white text-[11px] px-4 py-1.5 rounded font-black tracking-tighter shadow-md">
+                      {isNaN(Number(scene.sceneNumber)) ? scene.sceneNumber.toUpperCase() : `CENA ${scene.sceneNumber}`}
+                    </span>
+                    {isEditingMode && <Input placeholder="Tempo" value={scene.time || ""} onChange={(e) => updateScene(index, { time: e.target.value })} className="h-7 w-20 text-[10px] border-zinc-300 py-0" />}
 
-                    {/* NOVOS BOTÕES DE ADIÇÃO RÁPIDA (ACIMA) */}
                     {isEditingMode && (
                       <div className="flex items-center gap-1 border-l pl-4 ml-2 border-zinc-200 dark:border-zinc-800">
                         <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'spokenText')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-blue-500 transition-colors">
@@ -881,14 +784,12 @@ function EditorContent({ id }: { id: string }) {
                   {isEditingMode && (
                     <div className="flex items-center gap-1 opacity-0 group-hover/scene:opacity-100 transition-opacity">
                       <Button variant="ghost" size="icon" className="h-8 w-8 rounded" onClick={() => splitScene(index)}><Scissors size={14} /></Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded text-red-500" onClick={() => setScenes(scenes.filter((_, i) => i !== index))}><Trash2 size={14} /></Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded text-red-500" onClick={() => setScenesWithRenumbering(scenes.filter((_, i) => i !== index))}><Trash2 size={14} /></Button>
                     </div>
                   )}
                 </div>
-
                 <CardContent className="p-6 md:p-8 space-y-8">
-                  {/* LOCUÇÃO */}
-                  {(scene.spokenText != null) && (
+                  {scene.spokenText != null && (
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                          <Label className="text-[10px] uppercase font-black text-blue-500 tracking-widest flex items-center gap-2"><MessageSquare size={16} /> Locução</Label>
@@ -1058,7 +959,7 @@ function EditorContent({ id }: { id: string }) {
       {/* FOOTER FIXO */}
       {isEditingMode && (
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3">
-          <Button onClick={() => setShowImportModal(true)} variant="outline" className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl shadow-2xl rounded h-12 px-6 border-2 font-black text-[10px] tracking-widest uppercase"><Import size={18} className="mr-2" /> Importar Roteiro</Button>
+          <Button onClick={() => { setImportText(generateRawTextFromBlocks(scenes)); setShowImportModal(true); }} variant="outline" className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl shadow-2xl rounded h-12 px-6 border-2 font-black text-[10px] tracking-widest uppercase"><Import size={18} className="mr-2" /> Texto Bruto</Button>
           <Button onClick={handleSaveClick} className="bg-zinc-900 border-2 dark:bg-zinc-100 text-white dark:text-black shadow-2xl rounded h-12 px-8 font-black text-[10px] tracking-widest uppercase hover:scale-105 transition-all"><Save size={18} className="mr-2" /> Salvar Tudo</Button>
         </div>
       )}
@@ -1097,8 +998,8 @@ function EditorContent({ id }: { id: string }) {
       <Dialog open={showImportModal} onOpenChange={setShowImportModal}>
         <DialogContent className="sm:max-w-3xl bg-white dark:bg-zinc-950 border-none rounded p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)] max-h-[90vh]">
           <DialogHeader>
-            <DialogTitle className="text-2xl font-black">Importar Roteiro Bruto</DialogTitle>
-            <DialogDescription className="text-zinc-500 font-medium pt-2">Cole seu texto aqui para converter em blocos.</DialogDescription>
+            <DialogTitle className="text-2xl font-black">Roteiro Bruto</DialogTitle>
+            <DialogDescription className="text-zinc-500 font-medium pt-2">Visualize ou edite o texto bruto. Ao importar, o texto será processado em cenas.</DialogDescription>
           </DialogHeader>
           <div className="py-6  overflow-y-auto px-2">
             <Textarea value={importText} onChange={(e) => setImportText(e.target.value)} className="min-h-[400px] font-mono text-xs bg-zinc-50 dark:bg-zinc-900 rounded p-6 border-zinc-200 dark:border-zinc-800 max-h-[40vh]  overflow-y-auto" placeholder="Cena 1&#10;..." />
