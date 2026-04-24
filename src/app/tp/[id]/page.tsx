@@ -153,13 +153,13 @@ function TeleprompterContent({ id }: { id: string }) {
   // Texto para TP com marcadores ocultos mas preservados
   const getTPDisplay = (text: string | null) => {
     if (!text) return "";
-    // Converte [let1], [img1], [abe], [enc] para spans com estilo
+    // Oculta [let], [img] e marcadores numéricos, mas mantém [abe] e [enc]
     return text
-      .replace(/\[let(\d+)\]/g, '<span class="bg-red-600 text-white px-2 py-0.5 rounded-lg mx-1 font-black text-[0.4em] align-middle shadow-[0_0_15px_rgba(220,38,38,0.5)]">LET $1</span>')
-      .replace(/\[img(\d+)\]/g, '<span class="bg-blue-600 text-white px-2 py-0.5 rounded-lg mx-1 font-black text-[0.4em] align-middle shadow-[0_0_15px_rgba(37,99,235,0.5)]">IMG $1</span>')
+      .replace(/\[let(\d+)\]/g, '')
+      .replace(/\[img(\d+)\]/g, '')
+      .replace(/\[(\d+)\]/g, '')
       .replace(/\[abe\]/g, '<span class="bg-emerald-600 text-white px-2 py-0.5 rounded-lg mx-1 font-black text-[0.4em] align-middle shadow-[0_0_15px_rgba(16,185,129,0.5)]">ABERTURA</span>')
-      .replace(/\[enc\]/g, '<span class="bg-rose-600 text-white px-2 py-0.5 rounded-lg mx-1 font-black text-[0.4em] align-middle shadow-[0_0_15px_rgba(225,29,72,0.5)]">ENCERRAMENTO</span>')
-      .replace(/\[(\d+)\]/g, '<span class="bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-lg mx-1 font-black text-[0.4em] align-middle">$1</span>');
+      .replace(/\[enc\]/g, '<span class="bg-rose-600 text-white px-2 py-0.5 rounded-lg mx-1 font-black text-[0.4em] align-middle shadow-[0_0_15px_rgba(225,29,72,0.5)]">ENCERRAMENTO</span>');
   };
 
   const reconstructRawText = (scenesList: Scene[]): string => {
