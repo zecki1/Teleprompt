@@ -30,6 +30,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { updateTaskVideomaker } from "@/lib/zecki";
+import { getScriptPath } from "@/lib/pathUtils";
 import Link from "next/link";
 import { CommentsPanel } from "@/components/tp/CommentsPanel";
 import { 
@@ -66,6 +67,7 @@ function TeleprompterContent({ id }: { id: string }) {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string | null>(null);
   const [folder, setFolder] = useState<string | null>(null);
+  const [path, setPath] = useState<string[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [nextScript, setNextScript] = useState<any | null>(null);
   const [showNextModal, setShowNextModal] = useState(false);
@@ -251,6 +253,8 @@ function TeleprompterContent({ id }: { id: string }) {
         if (d.projectId) setProjectId(d.projectId);
         if (d.projectName) setProjectName(d.projectName);
         if (d.folder) setFolder(d.folder);
+        const scriptPath = getScriptPath(d as any);
+        setPath(scriptPath);
         if (d.workspaceId) setWorkspaceId(d.workspaceId);
         if (d.editorId) setEditorId(d.editorId);
         if (d.editorName) setEditorName(d.editorName);
@@ -434,7 +438,10 @@ function TeleprompterContent({ id }: { id: string }) {
           scriptTitle: scriptTitle,
           projectId: projectId || null,
           projectName: projectName || null,
-          folder: folder || null,
+          folder: folder || (path && path[0]) || null,
+          subfolder: (path && path[1]) || null,
+          lesson: (path && path[2]) || null,
+          path: path,
           workspaceId: workspaceId || "senai"
         });
       }

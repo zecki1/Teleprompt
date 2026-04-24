@@ -4,6 +4,13 @@ import { Scene } from "./parser";
 interface ExportOptions {
   title: string;
   projectName: string;
+  folder?: string;
+  subfolder?: string;
+  lesson?: string;
+  editorName?: string | null;
+  reviewerName?: string | null;
+  videomakerName?: string | null;
+  path?: string[] | null;
 }
 
 export async function exportToPPT(options: ExportOptions, scenes: Scene[]) {
@@ -30,7 +37,13 @@ export async function exportToPPT(options: ExportOptions, scenes: Scene[]) {
     fontFace: "Arial",
   });
 
-  titleSlide.addText(options.projectName, {
+  const projectPath = `Projeto: ${options.projectName || "Geral"}${
+    options.path && options.path.length > 0 
+      ? ` > ${options.path.join(" > ")}` 
+      : `${options.folder ? ` > ${options.folder}` : ""}${options.subfolder ? ` > ${options.subfolder}` : ""}${options.lesson ? ` > ${options.lesson}` : ""}`
+  }`;
+  
+  titleSlide.addText(projectPath, {
     x: 0,
     y: "55%",
     w: "100%",
@@ -39,6 +52,19 @@ export async function exportToPPT(options: ExportOptions, scenes: Scene[]) {
     fontSize: 24,
     color: "FFFFFF",
     bold: true,
+    fontFace: "Arial",
+  });
+
+  const responsiblesText = `Resp: ${options.editorName || "N/A"} | Rev: ${options.reviewerName || "N/A"} | Gravado: ${options.videomakerName || "N/A"}`;
+  
+  titleSlide.addText(responsiblesText, {
+    x: 0,
+    y: "65%",
+    w: "100%",
+    h: 0.5,
+    align: "center",
+    fontSize: 16,
+    color: "AAAAAA",
     fontFace: "Arial",
   });
 

@@ -12,6 +12,8 @@ export interface ActivityData {
   projectName?: string | null;
   folder?: string | null;
   subfolder?: string | null;
+  lesson?: string | null;
+  path?: string[] | null;
   workspaceId: string;
 }
 
