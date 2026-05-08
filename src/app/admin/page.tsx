@@ -76,13 +76,31 @@ const roleConfig: Record<Role, { label: string; color: string; icon: React.Eleme
   "publico": { label: "Público", color: "bg-zinc-500", icon: Eye },
 };
 
+interface ActivityItem {
+  id: string;
+  userId?: string;
+  userName?: string;
+  userAvatar?: string;
+  action?: string;
+  scriptId?: string;
+  scriptTitle?: string;
+  projectId?: string | null;
+  projectName?: string | null;
+  folder?: string | null;
+  subfolder?: string | null;
+  lesson?: string | null;
+  path?: string[];
+  workspaceId?: string;
+  timestamp?: unknown;
+}
+
 export default function AdminPage() {
   const { user } = useAuth();
   const router = useRouter();
   const [usersList, setUsersList] = useState<ExtendedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
-  const [activities, setActivities] = useState<Record<string, unknown>[]>([]);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(true);
   
   const handleCopyInvite = () => {
@@ -473,7 +491,7 @@ export default function AdminPage() {
                         <TableCell>
                           <div className="flex flex-col">
                             <span className="font-bold text-sm line-clamp-1">{act.scriptTitle}</span>
-                            <span className="text-[9px] text-muted-foreground font-mono">ID: {act.scriptId.slice(0, 8)}</span>
+                            <span className="text-[9px] text-muted-foreground font-mono">ID: {act.scriptId?.slice(0, 8)}</span>
                           </div>
                         </TableCell>
                         <TableCell>

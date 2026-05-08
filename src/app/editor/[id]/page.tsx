@@ -4,6 +4,8 @@ import React, { useEffect, useState, use, Suspense, useRef, useMemo, useCallback
 import Image from "next/image";
 import { Scene, parseScript } from "@/lib/parser";
 import { sanitizeData } from "@/lib/firebase-utils";
+import { ScriptDoc } from "@/types/script";
+import { Comment } from "@/components/tp/CommentsPanel";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -219,7 +221,7 @@ function EditorContent({ id }: { id: string }) {
   const [showComments, setShowComments] = useState(false);
 
   const [commentCounts, setCommentCounts] = useState<Record<number, number>>({});
-  const [comments, setComments] = useState<Record<string, unknown>[]>([]);
+  const [comments, setComments] = useState<Comment[]>([]);
   const [focusedField, setFocusedField] = useState<Record<string, 'spokenText' | 'opening' | 'closing'>>({});
   const textareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
 
@@ -228,10 +230,17 @@ function EditorContent({ id }: { id: string }) {
     const q = query(collection(db, "scripts", id, "comments"));
     const unsub = onSnapshot(q, (snapshot) => {
       const counts: Record<number, number> = {};
-      const allComments: Record<string, unknown>[] = [];
+      const allComments: Comment[] = [];
       snapshot.docs.forEach(doc => {
         const data = doc.data();
-        allComments.push({ id: doc.id, ...data });
+        allComments.push({ 
+          id: doc.id, 
+          text: data.text || "", 
+          userId: data.userId || "", 
+          userName: data.userName || "", 
+          marker: data.marker,
+          createdAt: data.createdAt || null 
+        });
         if (data.marker) {
           counts[data.marker] = (counts[data.marker] || 0) + 1;
         }
@@ -1167,7 +1176,7 @@ function EditorContent({ id }: { id: string }) {
                     {(() => {
                       const sceneMarkers = Array.from(scene.spokenText?.matchAll(/\[([1-5])\]/g) || []).map(m => parseInt(m[1]));
                       const uniqueMarkers = Array.from(new Set(sceneMarkers));
-                      const relevantComments = comments.filter(c => uniqueMarkers.includes(c.marker));
+                      const relevantComments = comments.filter(c => c.marker !== undefined && uniqueMarkers.includes(c.marker));
                       
                       if (relevantComments.length === 0) return null;
 
@@ -1177,7 +1186,7 @@ function EditorContent({ id }: { id: string }) {
                             <MessageSquare size={10} /> Notas da Equipe
                           </p>
                           <div className="space-y-1.5">
-                            {relevantComments.sort((a, b) => a.marker - b.marker).map(comment => (
+                            {relevantComments.sort((a, b) => a.marker! - b.marker!).map(comment => (
                               <div key={comment.id} className="bg-amber-50/50 dark:bg-amber-900/10 border border-amber-100/50 dark:border-amber-900/30 rounded p-2 text-[11px]">
                                 <div className="flex justify-between items-start mb-1">
                                   <span className="font-black text-[9px] text-amber-600 bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 rounded">

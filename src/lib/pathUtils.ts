@@ -34,6 +34,7 @@ export function buildTree(scripts: ScriptDoc[]): Record<string, FolderNode> {
       children: {},
       scripts: rootScripts,
       totalScripts: rootScripts.length,
+      allScriptsRecursive: rootScripts,
     };
   }
 
