@@ -5,6 +5,7 @@ import { doc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, up
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
 import { Scene } from "@/lib/parser";
+import { ScriptDoc } from "@/types/script";
 import { RemoteControlUI } from "@/components/tp/RemoteControlUI";
 import { useAuth } from "@/contexts/AuthContext";
 import { 
@@ -87,7 +88,7 @@ function TeleprompterContent({ id }: { id: string }) {
   const [folder, setFolder] = useState<string | null>(null);
   const [path, setPath] = useState<string[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [nextScript, setNextScript] = useState<Record<string, unknown> | null>(null);
+  const [nextScript, setNextScript] = useState<ScriptDoc | null>(null);
   const [showNextModal, setShowNextModal] = useState(false);
   const [editorId, setEditorId] = useState<string | null>(null);
   const [isSavingChecklist, setIsSavingChecklist] = useState(false);
