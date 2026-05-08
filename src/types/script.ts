@@ -47,6 +47,13 @@ export interface ScriptDoc {
   videomakerName?: string;
   commentCount?: number;
   commentAuthors?: string[];
+  
+  // Teleprompter settings
+  isMirrored?: boolean;
+  fontSize?: number;
+  bgColor?: string;
+  textColor?: string;
+  isPlaceholder?: boolean;
 }
 
 /** A node in the virtual folder tree built from scripts */
@@ -61,4 +68,6 @@ export interface FolderNode {
   scripts: ScriptDoc[];
   /** Total scripts count including all descendants */
   totalScripts: number;
+  /** All scripts in this node and its children */
+  allScriptsRecursive: ScriptDoc[];
 }

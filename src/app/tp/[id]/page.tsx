@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, use, Suspense } from "react";
-import { doc, onSnapshot, getDocs, collection, query, orderBy, limit, updateDoc, serverTimestamp, arrayUnion, where } from "firebase/firestore";
+import { doc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, arrayUnion, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
 import { Scene } from "@/lib/parser";
@@ -25,7 +25,9 @@ import {
   Play,
   Pause,
   MessageSquare,
-  ChevronRight
+  ChevronRight,
+  ClipboardCheck,
+  Check
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,6 +60,22 @@ function TeleprompterContent({ id }: { id: string }) {
   
   // App State
   const [isPlaying, setIsPlaying] = useState(false);
+  const [scriptStatus, setScriptStatus] = useState<string | null>(null);
+  const [showChecklist, setShowChecklist] = useState(false);
+  const [checklistDone, setChecklistDone] = useState(false);
+  const [checklistLoading, setChecklistLoading] = useState(true);
+  const [checklistItems, setChecklistItems] = useState({
+    estudio: false,
+    tp: false,
+    de: false,
+    cartao: false,
+    audio: false,
+    imagem: false,
+    dinamica: false,
+    roteiro: false
+  });
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const isEditingRef = useRef(false);
   const [speed, setSpeed] = useState(3);
   const [duration, setDuration] = useState(0);
   const [localProgress, setLocalProgress] = useState(0);
@@ -69,10 +87,10 @@ function TeleprompterContent({ id }: { id: string }) {
   const [folder, setFolder] = useState<string | null>(null);
   const [path, setPath] = useState<string[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [nextScript, setNextScript] = useState<any | null>(null);
+  const [nextScript, setNextScript] = useState<Record<string, unknown> | null>(null);
   const [showNextModal, setShowNextModal] = useState(false);
   const [editorId, setEditorId] = useState<string | null>(null);
-  const [editorName, setEditorName] = useState<string | null>(null);
+  const [isSavingChecklist, setIsSavingChecklist] = useState(false);
   const router = useRouter();
 
   // Refs para Motor de Scroll (Evita lag de estado)
@@ -95,16 +113,26 @@ function TeleprompterContent({ id }: { id: string }) {
   const [bgColor, setBgColor] = useState("#000000");
   const [textColor, setTextColor] = useState("#ffffff");
 
-  // CSS para ocultar marcadores no TP
+  // CSS para ocultar marcadores no TP e garantir estabilidade na edição
   useEffect(() => {
     const style = document.createElement('style');
     style.textContent = `
-      .tp-hidden-marker {
-        display: none !important;
+      .tp-hidden-marker { display: none !important; }
+      [contenteditable] { 
+        outline: none; 
+        min-height: 1.2em; 
+        white-space: pre-wrap; 
+        word-break: break-word;
+        overflow-wrap: break-word;
+      }
+      [contenteditable]:focus { 
+        box-shadow: -4px 0 0 rgba(59, 130, 246, 0.5);
+        padding-left: 8px;
+        transition: all 0.2s;
       }
     `;
     document.head.appendChild(style);
-    return () => { document.head.removeChild(style); };
+    return () => { try { document.head.removeChild(style); } catch { } };
   }, []);
 
   // --- 1. LÓGICA DE FULLSCREEN E SUPORTE ---
@@ -122,7 +150,7 @@ function TeleprompterContent({ id }: { id: string }) {
       } else {
         if (document.exitFullscreen) await document.exitFullscreen();
       }
-    } catch (e) { console.error(e); }
+    } catch { console.error("Fullscreen error"); }
   };
 
   const calculateDuration = (scenesList: Scene[]) => {
@@ -130,24 +158,49 @@ function TeleprompterContent({ id }: { id: string }) {
     return Math.max(10, Math.floor((wordCount / 130) * 60));
   };
 
-  const handleSceneBlur = (sceneId: string, newText: string) => {
+  const handleSceneBlur = async (sceneId: string, newText: string) => {
     const updatedScenes = scenes.map(scene => {
       if (scene.id === sceneId) {
-        // Limpa labels e preserva o lettering original intacto
-        const cleanNewText = newText
+        // Extract opening/closing if they were manually typed
+        let opening = scene.opening;
+        let closing = scene.closing;
+        let spoken = newText;
+
+        const abeMatch = newText.match(/\[abe\]\s*(.*)/i);
+        if (abeMatch) {
+          opening = abeMatch[1].split('\n')[0].trim();
+          spoken = spoken.replace(/\[abe\].*/i, "").trim();
+        }
+        const encMatch = newText.match(/\[enc\]\s*(.*)/i);
+        if (encMatch) {
+          closing = encMatch[1].split('\n')[0].trim();
+          spoken = spoken.replace(/\[enc\].*/i, "").trim();
+        }
+
+        const cleanNewText = spoken
           .replace(/^\[?Locução\]?|^\[?Legenda\]?|^(Tempo|Cena|Descrição|GC|Texto em tela|Link|url|img|let)\s*[:\-]?\s*/gim, '')
           .trim();
         
-        // Preserva o lettering original - não tentamos extrair mais
-        return { ...scene, spokenText: cleanNewText };
+        return { ...scene, spokenText: cleanNewText, opening, closing };
       }
       return scene;
     });
     
     setScenes(updatedScenes);
-    const rawContent = reconstructRawText(updatedScenes);
-    updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes: updatedScenes, content: rawContent });
-    updateDoc(doc(db, "scripts", id), { duration: calculateDuration(updatedScenes) });
+    if (versionId) {
+      try {
+        const rawContent = reconstructRawText(updatedScenes);
+        await updateDoc(doc(db, "scripts", id, "versions", versionId), { scenes: updatedScenes, content: rawContent });
+        await updateDoc(doc(db, "scripts", id), { 
+          duration: calculateDuration(updatedScenes),
+          updatedAt: serverTimestamp()
+        });
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus(null), 2000);
+      } catch (e) {
+        console.error("Erro ao salvar:", e);
+      }
+    }
   };
 
   // Texto para TP com marcadores ocultos mas preservados
@@ -227,11 +280,47 @@ function TeleprompterContent({ id }: { id: string }) {
     loadScenes();
   }, [id]);
 
+  // --- CHECK SE CHECKLIST JÁ FOI FEITO PARA ESTE ROTEIRO ---
+  useEffect(() => {
+    if (!user?.uid || isMirrorWindow) {
+      setChecklistDone(true);
+      setChecklistLoading(false);
+      return;
+    }
+    setChecklistDone(false);
+    setChecklistLoading(true);
+    const checkDone = async () => {
+      try {
+        const snap = await getDocs(
+          query(
+            collection(db, "scripts", id, "checklist_confirmations"),
+            where("userId", "==", user.uid)
+          )
+        );
+        if (!snap.empty) setChecklistDone(true);
+      } catch { /* ignore */ }
+      setChecklistLoading(false);
+    };
+    checkDone();
+  }, [id, user?.uid, isMirrorWindow]);
+
+  // Se o roteiro já está gravado, não precisa do checklist
+  useEffect(() => {
+    if (scriptStatus === 'gravado') setChecklistDone(true);
+  }, [scriptStatus]);
+
   useEffect(() => {
     const unsub = onSnapshot(doc(db, "scripts", id), (docObj) => {
       if (docObj.exists()) {
         const d = docObj.data();
-        if (typeof d.isPlaying === "boolean") {
+        const userNeedsChecklist = user?.requiresChecklist !== false;
+
+        if (d.isPlaying && !isPlayingRef.current && !checklistDone && !checklistLoading && !isMirrorWindow && userNeedsChecklist) {
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+          setShowChecklist(true);
+          updateDoc(doc(db, "scripts", id), { isPlaying: false });
+        } else if (typeof d.isPlaying === "boolean") {
           setIsPlaying(d.isPlaying);
           isPlayingRef.current = d.isPlaying;
         }
@@ -239,7 +328,6 @@ function TeleprompterContent({ id }: { id: string }) {
           setSpeed(d.speed);
           speedRef.current = d.speed;
         }
-        // Sincronizar estilos salvos
         if (d.fontSize) setFontSize(d.fontSize);
         if (d.textAlign) setTextAlign(d.textAlign);
         if (d.bgColor) setBgColor(d.bgColor);
@@ -249,15 +337,15 @@ function TeleprompterContent({ id }: { id: string }) {
         if (d.fontWeight) setFontWeight(d.fontWeight);
         if (d.lineHeight) setLineHeight(d.lineHeight);
         if (d.title) setScriptTitle(d.title);
+        if (d.status) setScriptStatus(d.status);
         if (d.recordingTaskId) setRecordingTaskId(d.recordingTaskId);
         if (d.projectId) setProjectId(d.projectId);
         if (d.projectName) setProjectName(d.projectName);
         if (d.folder) setFolder(d.folder);
-        const scriptPath = getScriptPath(d as any);
+        const scriptPath = getScriptPath(d as ScriptDoc);
         setPath(scriptPath);
         if (d.workspaceId) setWorkspaceId(d.workspaceId);
         if (d.editorId) setEditorId(d.editorId);
-        if (d.editorName) setEditorName(d.editorName);
 
         if (d.resetRequest && d.resetRequest !== lastProcessedReset.current) {
           if (containerRef.current) containerRef.current.scrollTop = 0;
@@ -266,17 +354,15 @@ function TeleprompterContent({ id }: { id: string }) {
       }
     });
     return () => unsub();
-  }, [id]);
+  }, [id, user?.requiresChecklist, checklistDone, checklistLoading, isMirrorWindow]);
 
   // --- 3. ATALHOS DE TECLADO (POWERPOINT / CONTROLE) ---
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Permite Ctrl+Z (undo) mesmo durante edição
       if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
-        return; // Deixa o navegador lidar com o undo nativamente
+        return;
       }
-      
       if (e.target instanceof HTMLElement && (
         e.target.isContentEditable || 
         e.target.tagName === 'INPUT' || 
@@ -288,15 +374,22 @@ function TeleprompterContent({ id }: { id: string }) {
       switch(e.code) {
         case 'Space':
           e.preventDefault();
-          updateDoc(doc(db, "scripts", id), { isPlaying: !isPlayingRef.current });
+          const needsChecklist = user?.requiresChecklist !== false;
+          if (isPlayingRef.current) {
+            updateDoc(doc(db, "scripts", id), { isPlaying: false });
+          } else if (!checklistDone && needsChecklist) {
+            setShowChecklist(true);
+          } else {
+            updateDoc(doc(db, "scripts", id), { isPlaying: true });
+          }
           break;
         case 'ArrowRight':
           e.preventDefault();
-          updateDoc(doc(db, "scripts", id), { speed: Math.min(speedRef.current + 1, 20) });
+          updateDoc(doc(db, "scripts", id), { speed: Math.min(speedRef.current + 0.5, 30) });
           break;
         case 'ArrowLeft':
           e.preventDefault();
-          updateDoc(doc(db, "scripts", id), { speed: Math.max(speedRef.current - 1, 0) });
+          updateDoc(doc(db, "scripts", id), { speed: Math.max(speedRef.current - 0.5, 0) });
           break;
         case 'ArrowUp':
         case 'PageUp':
@@ -314,21 +407,19 @@ function TeleprompterContent({ id }: { id: string }) {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [id, isCommentsVisible]);
+  }, [id, isCommentsVisible, user?.requiresChecklist, checklistDone]);
 
   // --- 4. MOTOR DE SCROLL E BROADCAST ---
-
   useEffect(() => {
     const scrollFn = () => {
       if (containerRef.current && !isMirrorWindow) {
         if (isPlayingRef.current) {
-          containerRef.current.scrollTop += (speedRef.current * 0.4);
+          const scrollStep = speedRef.current * 0.5;
+          containerRef.current.scrollTop += scrollStep;
         }
-        
         const maxScroll = containerRef.current.scrollHeight - containerRef.current.clientHeight;
         const currentProgress = maxScroll > 0 ? containerRef.current.scrollTop / maxScroll : 0;
         setLocalProgress(currentProgress);
-
         if (bcRef.current) {
           bcRef.current.postMessage({ 
             type: 'syncScroll', 
@@ -336,7 +427,6 @@ function TeleprompterContent({ id }: { id: string }) {
             progress: currentProgress 
           });
         }
-
         const now = Date.now();
         if (now - lastFirebaseUpdate.current > 1000) {
           updateDoc(doc(db, "scripts", id), { progress: currentProgress }).catch(() => {});
@@ -382,45 +472,40 @@ function TeleprompterContent({ id }: { id: string }) {
       });
     }
   }, [fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, isMirrorWindow]);
+  
   if (loading) return <div className="fixed inset-0 bg-black flex items-center justify-center text-white font-bold animate-pulse">SINCRONIZANDO...</div>;
 
   const handleSetRecorded = async () => {
     try {
       const rawContent = reconstructRawText(scenes);
       await updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes, content: rawContent });
-      await updateDoc(doc(db, "scripts", id), { 
+      
+      const updateData: Record<string, unknown> = {
         status: 'gravado',
         updatedAt: serverTimestamp(),
         duration: calculateDuration(scenes),
-        videomakerId: user?.uid,
+        recordedAt: serverTimestamp(),
+        videomakerId: user?.uid || null,
         videomakerName: user?.displayName || user?.name || "Videomaker"
-      });
+      };
 
-      console.log("[TP] Iniciando handleSetRecorded para ID:", id);
-      
-      // Atribui videomaker à tarefa no Zecki se houver uma tarefa vinculada
       if (projectId && recordingTaskId && user?.uid) {
         try {
           await updateTaskVideomaker(projectId, recordingTaskId, user.uid);
-          console.log("Videomaker atribuído à tarefa do Zecki com sucesso.");
         } catch (zeckiError) {
           console.error("Erro ao atribuir videomaker no Zecki:", zeckiError);
         }
       }
 
-      // Adiciona o usuário como colaborador e atribui responsabilidade se necessário
       if (user?.uid) {
         const scriptRef = doc(db, "scripts", id);
-        const updateData: any = {
-          collaborators: arrayUnion({
-            uid: user.uid,
-            name: user.displayName || user.name || user.email || "Usuário",
-            role: "Videomaker",
-            timestamp: new Date().toISOString()
-          })
-        };
+        updateData.collaborators = arrayUnion({
+          uid: user.uid,
+          name: user.displayName || user.name || user.email || "Usuário",
+          role: "Videomaker",
+          timestamp: new Date().toISOString()
+        });
 
-        // Se não houver responsável definido, define o usuário atual
         if (!editorId) {
           updateData.editorId = user.uid;
           updateData.editorName = user.displayName || user.name || user.email || "Videomaker";
@@ -470,7 +555,7 @@ function TeleprompterContent({ id }: { id: string }) {
       );
       
       const snapshot = await getDocs(q);
-      const allScripts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+      const allScripts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as ScriptDoc[];
       
       console.log(`[NextScript] Total de roteiros encontrados no workspace ${activeWorkspaceId}:`, allScripts.length);
       
@@ -560,20 +645,29 @@ function TeleprompterContent({ id }: { id: string }) {
           {scenes.map((s, idx) => (
             <div 
               key={s.id} 
-              ref={el => { sceneRefs.current[idx] = el; }} 
+              ref={el => { 
+                sceneRefs.current[idx] = el; 
+                if (el && focusedId !== s.id) {
+                  const html = getTPDisplay(
+                    (s.opening ? `[abe] ${s.opening}\n` : '') + 
+                    (s.spokenText || '') + 
+                    (s.closing ? `\n[enc] ${s.closing}` : '')
+                  );
+                  if (el.innerHTML !== html) el.innerHTML = html;
+                }
+              }}
               className={`mb-32 break-words outline-none whitespace-pre-wrap transition-opacity duration-700 ${textAlign} ${fontWeight} ${fontSize} ${lineHeight} ${isPlaying ? 'opacity-100' : 'opacity-30'}`} 
               contentEditable={!isMirrorWindow} 
               suppressContentEditableWarning={true}
-              onBlur={(e) => {
-                const rawText = e.currentTarget.innerText;
-                handleSceneBlur(s.id, rawText);
+              onFocus={() => {
+                setFocusedId(s.id);
+                isEditingRef.current = true;
               }}
-              dangerouslySetInnerHTML={{ 
-                __html: getTPDisplay(
-                  (s.opening ? `[abe] ${s.opening}\n` : '') + 
-                  (s.spokenText || '') + 
-                  (s.closing ? `\n[enc] ${s.closing}` : '')
-                ) 
+              onBlur={(ev) => {
+                setFocusedId(null);
+                isEditingRef.current = false;
+                const rawText = ev.currentTarget.innerText;
+                handleSceneBlur(s.id, rawText);
               }}
             />
           ))}
@@ -723,7 +817,14 @@ function TeleprompterContent({ id }: { id: string }) {
                      speed={speed}
                      duration={duration}
                      progress={localProgress}
-                     update={(data) => updateDoc(doc(db, "scripts", id), data)}
+                     update={(data) => {
+                       const needsChecklist = user?.requiresChecklist !== false;
+                       if (data.isPlaying === true && !checklistDone && needsChecklist) {
+                         setShowChecklist(true);
+                       } else {
+                         updateDoc(doc(db, "scripts", id), data);
+                       }
+                     }}
                      manualScroll={(amt) => { if (containerRef.current) containerRef.current.scrollBy({ top: amt, behavior: 'smooth' }); }}
                      isCommentsVisible={isCommentsVisible}
                      setIsCommentsVisible={setIsCommentsVisible}
@@ -747,12 +848,12 @@ function TeleprompterContent({ id }: { id: string }) {
              <div className="flex flex-col">
                <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">Velocidade</span>
                <div className="flex items-center gap-2">
-                 <button onClick={() => updateGlobalStyle({speed: Math.max(speed - 1, 0)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronDown size={14}/></button>
+                 <button onClick={() => updateGlobalStyle({speed: Math.max(speed - 0.5, 0)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronDown size={14}/></button>
                  <div className="flex items-baseline gap-1">
                    <span className="text-xl font-black text-white">{speed}</span>
                    <span className="text-[10px] font-bold text-zinc-600 uppercase">x</span>
                  </div>
-                 <button onClick={() => updateGlobalStyle({speed: Math.min(speed + 1, 20)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronUp size={14}/></button>
+                 <button onClick={() => updateGlobalStyle({speed: Math.min(speed + 0.5, 60)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronUp size={14}/></button>
                </div>
              </div>
 
@@ -760,8 +861,13 @@ function TeleprompterContent({ id }: { id: string }) {
 
              {/* 2. PLAY / PAUSE */}
              <div className="flex items-center gap-3">
-                <button 
-                  onClick={() => updateGlobalStyle({ isPlaying: !isPlaying })}
+                 <button 
+                   onClick={() => {
+                     const needsChecklist = user?.requiresChecklist !== false;
+                    if (isPlaying) updateGlobalStyle({ isPlaying: false });
+                    else if (!checklistDone && needsChecklist) setShowChecklist(true);
+                    else updateGlobalStyle({ isPlaying: true });
+                  }}
                   className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isPlaying ? 'bg-red-500/20 text-red-500 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'bg-emerald-500/20 text-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]'}`}
                 >
                   {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
@@ -817,7 +923,7 @@ function TeleprompterContent({ id }: { id: string }) {
             <DialogHeader>
               <DialogTitle className="text-2xl font-black text-white tracking-tight uppercase">Gravação Concluída!</DialogTitle>
               <DialogDescription className="text-zinc-400 font-medium">
-                O roteiro <span className="text-white font-bold">"{scriptTitle}"</span> foi marcado como gravado com sucesso.
+                O roteiro <span className="text-white font-bold">&quot;{scriptTitle}&quot;</span> foi marcado como gravado com sucesso.
               </DialogDescription>
             </DialogHeader>
           </div>
@@ -860,6 +966,99 @@ function TeleprompterContent({ id }: { id: string }) {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Checklist Modal */}
+      <Dialog open={showChecklist} onOpenChange={setShowChecklist}>
+        <DialogContent className="sm:max-w-xl bg-white dark:bg-zinc-950 border-none rounded-[32px] p-0 shadow-[0_0_100px_rgba(0,0,0,0.3)] overflow-hidden">
+          <div className="bg-emerald-600 p-8 flex flex-col items-center text-center">
+             <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mb-4 backdrop-blur-sm">
+                <ClipboardCheck size={32} className="text-white" />
+             </div>
+             <DialogHeader>
+               <DialogTitle className="text-2xl font-black text-white uppercase tracking-tight">Checklist Pré-Gravação</DialogTitle>
+               <DialogDescription className="text-emerald-100 font-medium">
+                 Certifique-se de que tudo está pronto antes de iniciar a captura.
+               </DialogDescription>
+             </DialogHeader>
+          </div>
+
+          <div className="p-8 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
+            {[
+              { id: 'estudio', label: 'Montar estúdio' },
+              { id: 'tp', label: 'Verificar se tem que montar tp (conferir tamanho da letra, velocidade do texto na tela)' },
+              { id: 'de', label: 'Ver se o DE vai acompanhar/atrapalhar' },
+              { id: 'cartao', label: 'Conferir cartão de memória, formatar' },
+              { id: 'audio', label: 'Conferir audio (volume, bateria do boya, conectar receptor na câmera, colocar mic no prof)' },
+              { id: 'imagem', label: 'Conferir se a imagem na câmera está boa (velocidade, exposição, foco, zoom, câmera na altura dos olhos e as vezes bater o branco)' },
+              { id: 'dinamica', label: 'Explicar a dinâmica se o professor nunca gravou antes' },
+              { id: 'roteiro', label: 'Tentar evitar alterações extras no roteiro na hora da gravação' }
+            ].map((item) => (
+              <div 
+                key={item.id} 
+                className={`flex items-center gap-4 p-4 rounded-2xl border-2 transition-all cursor-pointer ${
+                  checklistItems[item.id as keyof typeof checklistItems] 
+                  ? "bg-emerald-50 border-emerald-500 dark:bg-emerald-900/10" 
+                  : "bg-zinc-50 border-zinc-100 hover:border-zinc-200 dark:bg-zinc-900 dark:border-zinc-800"
+                }`}
+                onClick={() => setChecklistItems(prev => ({ ...prev, [item.id]: !prev[item.id as keyof typeof prev] }))}
+              >
+                <div className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all ${
+                  checklistItems[item.id as keyof typeof checklistItems] 
+                  ? "bg-emerald-500 text-white" 
+                  : "bg-zinc-200 dark:bg-zinc-800 text-transparent"
+                }`}>
+                  <Check size={16} strokeWidth={4} />
+                </div>
+                <span className={`text-[12px] font-bold ${
+                  checklistItems[item.id as keyof typeof checklistItems] 
+                  ? "text-emerald-900 dark:text-emerald-100" 
+                  : "text-zinc-600 dark:text-zinc-400"
+                }`}>
+                  {item.label}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <DialogFooter className="p-8 pt-0 flex gap-4">
+            <Button 
+              variant="ghost" 
+              onClick={() => setShowChecklist(false)}
+              className="flex-1 h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest text-zinc-400"
+            >
+              Cancelar
+            </Button>
+            <Button 
+              onClick={async () => {
+                if (!Object.values(checklistItems).every(Boolean)) return;
+                setIsSavingChecklist(true);
+                try {
+                  await addDoc(collection(db, "scripts", id, "checklist_confirmations"), {
+                    userId: user?.uid || null,
+                    userName: user?.displayName || user?.name || user?.email || "Anônimo",
+                    userEmail: user?.email || null,
+                    checkedAt: serverTimestamp(),
+                    items: checklistItems,
+                    scriptId: id,
+                    scriptTitle: scriptTitle,
+                  });
+                } catch (e) {
+                  console.error("Erro ao salvar checklist:", e);
+                } finally {
+                  setIsSavingChecklist(false);
+                }
+                setChecklistDone(true);
+                setShowChecklist(false);
+                updateGlobalStyle({ isPlaying: true });
+              }}
+              disabled={!Object.values(checklistItems).every(Boolean) || isSavingChecklist}
+              className="flex-[2] h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-600/20 disabled:opacity-50"
+            >
+              {isSavingChecklist ? "Salvando..." : "Estou ciente, gravar!"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

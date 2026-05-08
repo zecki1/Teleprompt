@@ -154,7 +154,7 @@ export function RemoteControlUI({
         {/* AJUSTE DE VELOCIDADE */}
         <div className="flex items-center w-full justify-between bg-zinc-900/40 rounded-[2.5rem] p-4 border border-zinc-800/50 backdrop-blur-sm">
           <button 
-            onClick={() => update({ speed: Math.max(speed - 1, 0) })} 
+            onClick={() => update({ speed: Math.max(speed - 0.5, 0) })} 
             className="w-14 h-14 rounded-full bg-zinc-800 flex items-center justify-center active:scale-90 hover:bg-zinc-700 text-zinc-400 border border-zinc-700/50 transition-colors"
           >
             <ArrowDown size={24} />
@@ -169,7 +169,7 @@ export function RemoteControlUI({
           </div>
 
           <button 
-            onClick={() => update({ speed: Math.min(speed + 1, 20) })} 
+            onClick={() => update({ speed: Math.min(speed + 0.5, 30) })} 
             className="w-14 h-14 rounded-full bg-zinc-800 flex items-center justify-center active:scale-90 hover:bg-zinc-700 text-zinc-400 border border-zinc-700/50 transition-colors"
           >
             <ArrowUp size={24} />

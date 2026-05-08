@@ -47,6 +47,7 @@ export const UserSchema = z.object({
   isSuperAdmin: z.boolean().default(false),
   isEditor: z.boolean().default(false),
   isRevisor: z.boolean().default(false),
+  requiresChecklist: z.boolean().default(true),
   avatarUrl: z.string().optional().default(""),
   photoURL: z.string().nullable().optional(),
   status: z.enum(USER_STATUSES).default("active"),

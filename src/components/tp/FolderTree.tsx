@@ -10,6 +10,8 @@ import {
   Edit2,
   Check,
   X,
+  FolderInput,
+  Trash2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,8 +51,12 @@ interface FolderTreeProps {
   onCreateScript: (path: string[]) => void;
   /** Called when user wants to add a sub-folder node */
   onCreateSubfolder: (parentPath: string[]) => void;
+  /** Called when user wants to move a folder */
+  onMoveFolder: (folderPath: string[]) => void;
   /** Render the script cards for a given node */
   renderScripts: (scripts: ScriptDoc[], path: string[]) => React.ReactNode;
+  /** Called when user wants to delete a folder */
+  onDeleteFolder: (scripts: ScriptDoc[]) => void;
   /** Initial depth (used internally for recursion) */
   depth?: number;
 }
@@ -63,7 +69,9 @@ export function FolderTree({
   onScriptsChanged,
   onCreateScript,
   onCreateSubfolder,
+  onMoveFolder,
   renderScripts,
+  onDeleteFolder,
   depth = 0,
 }: FolderTreeProps) {
   const sortedEntries = Object.entries(nodes).sort((a, b) =>
@@ -82,7 +90,9 @@ export function FolderTree({
           onScriptsChanged={onScriptsChanged}
           onCreateScript={onCreateScript}
           onCreateSubfolder={onCreateSubfolder}
+          onMoveFolder={onMoveFolder}
           renderScripts={renderScripts}
+          onDeleteFolder={onDeleteFolder}
           depth={depth}
         />
       ))}
@@ -98,7 +108,9 @@ interface FolderNodeItemProps {
   onScriptsChanged: () => void;
   onCreateScript: (path: string[]) => void;
   onCreateSubfolder: (parentPath: string[]) => void;
+  onMoveFolder: (folderPath: string[]) => void;
   renderScripts: (scripts: ScriptDoc[], path: string[]) => React.ReactNode;
+  onDeleteFolder: (scripts: ScriptDoc[]) => void;
   depth: number;
 }
 
@@ -110,7 +122,9 @@ function FolderNodeItem({
   onScriptsChanged,
   onCreateScript,
   onCreateSubfolder,
+  onMoveFolder,
   renderScripts,
+  onDeleteFolder,
   depth,
 }: FolderNodeItemProps) {
   const [collapsed, setCollapsed] = useState(false);
@@ -255,11 +269,29 @@ function FolderNodeItem({
           <Button
             variant="ghost"
             size="sm"
+            className="h-6 text-[9px] font-black uppercase tracking-widest text-zinc-400 hover:text-purple-500 px-2"
+            onClick={() => onMoveFolder(node.fullPath)}
+            title="Mover pasta"
+          >
+            <FolderInput className="w-3 h-3 mr-0.5" /> Mover
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             className="h-6 text-[9px] font-black uppercase tracking-widest text-zinc-400 hover:text-emerald-500 px-2"
             onClick={() => onCreateScript(node.fullPath)}
             title="Criar roteiro aqui"
           >
             <Plus className="w-3 h-3 mr-0.5" /> Roteiro
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 text-[9px] font-black uppercase tracking-widest text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 px-2"
+            onClick={() => onDeleteFolder(node.allScriptsRecursive)}
+            title="Excluir esta pasta"
+          >
+            <Trash2 className="w-3 h-3 mr-0.5" /> Excluir
           </Button>
         </div>
       </div>
@@ -286,7 +318,9 @@ function FolderNodeItem({
               onScriptsChanged={onScriptsChanged}
               onCreateScript={onCreateScript}
               onCreateSubfolder={onCreateSubfolder}
+              onMoveFolder={onMoveFolder}
               renderScripts={renderScripts}
+              onDeleteFolder={onDeleteFolder}
               depth={depth + 1}
             />
           )}

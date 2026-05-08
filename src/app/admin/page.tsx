@@ -82,7 +82,7 @@ export default function AdminPage() {
   const [usersList, setUsersList] = useState<ExtendedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
-  const [activities, setActivities] = useState<any[]>([]);
+  const [activities, setActivities] = useState<Record<string, unknown>[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(true);
   
   const handleCopyInvite = () => {
@@ -153,7 +153,7 @@ export default function AdminPage() {
     }
   };
 
-  const togglePermission = async (uid: string, field: 'isEditor' | 'isRevisor', value: boolean) => {
+  const togglePermission = async (uid: string, field: 'isEditor' | 'isRevisor' | 'requiresChecklist', value: boolean) => {
     setUpdating(uid);
     try {
       const userRef = doc(dbZecki, "users", uid);
@@ -162,7 +162,13 @@ export default function AdminPage() {
         updatedAt: serverTimestamp()
       });
       setUsersList(usersList.map(u => u.uid === uid ? { ...u, [field]: value } : u));
-      toast.success(`Permissão de "${field === 'isEditor' ? 'Editor' : 'Revisor'}" atualizada!`);
+      
+      let label = "";
+      if (field === 'isEditor') label = "Editor";
+      else if (field === 'isRevisor') label = "Revisor";
+      else label = "Checklist";
+
+      toast.success(`Permissão de "${label}" atualizada!`);
     } catch (error) {
       console.error("Erro ao atualizar permissão:", error);
       toast.error("Erro ao atualizar permissão.");
@@ -346,6 +352,7 @@ export default function AdminPage() {
                     <TableHead className="w-[300px] h-14 px-8 font-bold text-zinc-900 dark:text-zinc-100">Colaborador</TableHead>
                     <TableHead className="w-[150px] text-center font-bold text-zinc-900 dark:text-zinc-100">Editor</TableHead>
                     <TableHead className="w-[150px] text-center font-bold text-zinc-900 dark:text-zinc-100">Revisor</TableHead>
+                    <TableHead className="w-[150px] text-center font-bold text-zinc-900 dark:text-zinc-100">Checklist</TableHead>
                     <TableHead className="font-bold text-zinc-900 dark:text-zinc-100">Status Atual</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -378,6 +385,15 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.isRevisor} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'isRevisor', val)}
+                            disabled={updating === userItem.uid}
+                          />
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex justify-center">
+                          <Switch 
+                            checked={userItem.requiresChecklist ?? true} 
+                            onCheckedChange={(val) => togglePermission(userItem.uid, 'requiresChecklist', val)}
                             disabled={updating === userItem.uid}
                           />
                         </div>
