@@ -5,6 +5,7 @@ import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, increm
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { MessageSquare, Send, Clock, X } from "lucide-react";
 import { format } from "date-fns";
@@ -16,6 +17,7 @@ interface Comment {
   text: string;
   userId: string;
   userName: string;
+  marker?: number;
   createdAt: { toDate: () => Date } | null;
 }
 
@@ -23,6 +25,7 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
   const { user } = useAuth();
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState("");
+  const [selectedMarker, setSelectedMarker] = useState<number | null>(null);
   const [isSending, setIsSending] = useState(false);
 
   useEffect(() => {
@@ -53,6 +56,7 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
         text: newComment,
         userId: user.uid,
         userName: user.displayName || user.email,
+        marker: selectedMarker,
         createdAt: serverTimestamp(),
       });
 
@@ -64,6 +68,7 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
       });
 
       setNewComment("");
+      setSelectedMarker(null);
     } catch (error) {
       console.error("Error adding comment:", error);
     } finally {
@@ -111,6 +116,11 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
                     {comment.createdAt?.toDate ? format(comment.createdAt.toDate(), "HH:mm '•' dd/MM", { locale: ptBR }) : "Enviando..."}
                   </span>
                 </div>
+                {comment.marker && (
+                  <Badge className="ml-auto bg-red-600 hover:bg-red-700 text-white border-none text-[9px] h-4">
+                    [{comment.marker}]
+                  </Badge>
+                )}
               </div>
               <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800/50">
                 <p className="text-xs text-zinc-300 leading-relaxed">{comment.text}</p>
@@ -122,6 +132,25 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
 
       <div className="p-4 border-t border-zinc-800 bg-zinc-950/50 backdrop-blur-sm">
         <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="flex flex-col gap-2">
+            <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Vincular a marcador:</span>
+            <div className="flex gap-1.5">
+              {[1, 2, 3, 4, 5].map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setSelectedMarker(selectedMarker === m ? null : m)}
+                  className={`w-7 h-7 rounded-lg text-[10px] font-black transition-all ${
+                    selectedMarker === m 
+                    ? "bg-red-600 text-white shadow-[0_0_10px_rgba(220,38,38,0.5)]" 
+                    : "bg-zinc-900 text-zinc-500 hover:bg-zinc-800"
+                  }`}
+                >
+                  [{m}]
+                </button>
+              ))}
+            </div>
+          </div>
           <Textarea
             value={newComment}
             onChange={(e) => setNewComment(e.target.value)}

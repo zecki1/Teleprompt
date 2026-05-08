@@ -54,6 +54,7 @@ export const getUsers = async (workspaceId?: string): Promise<ExtendedUser[]> =>
         workspaces: data.workspaces || [SENAI_WORKSPACE_ID],
         isEditor: data.isEditor || false,
         isRevisor: data.isRevisor || false,
+        requiresChecklist: data.requiresChecklist ?? true,
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
       } as ExtendedUser;
@@ -86,6 +87,7 @@ export const getUserById = async (uid: string): Promise<ExtendedUser | null> => 
       workspaces: data.workspaces || [SENAI_WORKSPACE_ID],
       isEditor: data.isEditor || false,
       isRevisor: data.isRevisor || false,
+      requiresChecklist: data.requiresChecklist ?? true,
     } as ExtendedUser;
   }
 };

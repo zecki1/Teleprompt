@@ -66,6 +66,7 @@ function insertIntoTree(
       children: {},
       scripts: [],
       totalScripts: 0,
+      allScriptsRecursive: [],
     };
   }
 
@@ -95,6 +96,7 @@ function insertIntoSubTree(
       children: {},
       scripts: [],
       totalScripts: 0,
+      allScriptsRecursive: [],
     };
   }
 
@@ -109,7 +111,15 @@ function calcTotals(tree: Record<string, FolderNode>): number {
   let total = 0;
   for (const node of Object.values(tree)) {
     const childTotal = calcTotals(node.children);
-    node.totalScripts = node.scripts.length + childTotal;
+    
+    // allScriptsRecursive should include placeholders (so we can delete empty folders)
+    const descendantScripts = Object.values(node.children).flatMap(c => c.allScriptsRecursive);
+    node.allScriptsRecursive = [...node.scripts, ...descendantScripts];
+    
+    // totalScripts usually excludes placeholders for UI count, let's keep that logic
+    const scriptCount = node.scripts.filter(s => !s.isPlaceholder).length;
+    node.totalScripts = scriptCount + childTotal;
+    
     total += node.totalScripts;
   }
   return total;
@@ -151,6 +161,36 @@ export async function renameFolder(
       const sp = getScriptPath(s);
       const newPath = [...sp];
       newPath[idx] = newName;
+      return moveScript(s.id, newPath);
+    });
+
+  await Promise.all(updates);
+}
+
+/** 
+ * Moves an entire folder (and subfolders) into a new parent path 
+ */
+export async function moveFolder(
+  scripts: ScriptDoc[],
+  sourcePath: string[],
+  destinationParentPath: string[]
+): Promise<void> {
+  const updates = scripts
+    .filter(s => {
+      const sp = getScriptPath(s);
+      // Only scripts that ARE in the sourcePath or its subdirectories
+      return sourcePath.every((seg, i) => sp[i] === seg);
+    })
+    .map(s => {
+      const sp = getScriptPath(s);
+      // Remove sourcePath part and prepend destinationParentPath
+      const relativePart = sp.slice(sourcePath.length);
+      const newPath = [...destinationParentPath, ...sourcePath.slice(-1), ...relativePart];
+      
+      if (newPath.length > MAX_PATH_DEPTH) {
+        throw new Error("Caminho resultante excede o limite de pastas.");
+      }
+      
       return moveScript(s.id, newPath);
     });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, use, Suspense, useRef, useMemo } from "react";
+import React, { useEffect, useState, use, Suspense, useRef, useMemo, useCallback } from "react";
 import Image from "next/image";
 import { Scene, parseScript } from "@/lib/parser";
 import { sanitizeData } from "@/lib/firebase-utils";
@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
@@ -43,6 +42,7 @@ import {
   Loader2,
   Monitor,
   ChevronRight,
+  ChevronDown,
   X,
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -59,10 +59,11 @@ import {
   serverTimestamp,
   where,
   arrayUnion,
+  onSnapshot,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
-import { fetchZeckiProjects, createRecordingTask, ZeckiProject } from "@/lib/zecki";
+import { fetchZeckiProjects, ZeckiProject } from "@/lib/zecki";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import {
@@ -75,15 +76,13 @@ import {
 import { toast as sonnerToast } from "sonner";
 import { exportToWord } from "@/lib/export-word";
 import { exportToPPT } from "@/lib/export-ppt";
+import { CommentsPanel } from "@/components/tp/CommentsPanel";
 import { getScriptPath } from "@/lib/pathUtils";
 import { 
   Breadcrumb, 
   BreadcrumbItem, 
-  BreadcrumbLink, 
   BreadcrumbList, 
-  BreadcrumbPage, 
   BreadcrumbSeparator,
-  BreadcrumbEllipsis
 } from "@/components/ui/breadcrumb";
 import {
   DropdownMenu,
@@ -102,7 +101,8 @@ function HighlightedSpokenText({
   textareaRef, 
   disabled,
   isEditing,
-  placeholder = "Escreva o que será dito..."
+  placeholder = "Escreva o que será dito...",
+  commentCounts = {}
 }: { 
   text: string; 
   onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
@@ -110,10 +110,11 @@ function HighlightedSpokenText({
   disabled?: boolean;
   isEditing: boolean;
   placeholder?: string;
+  commentCounts?: Record<number, number>;
 }) {
   const highlights = useMemo(() => {
     if (!text || isEditing) return null;
-    const regex = /(\[(?:let|img)\d+\]|\[\d+\])/g;
+    const regex = /(\[(?:let|img)\d+\]|\[(\d+)\])/g;
     const parts: React.ReactNode[] = [];
     let lastIndex = 0;
     let match;
@@ -121,20 +122,33 @@ function HighlightedSpokenText({
       if (match.index > lastIndex) {
         parts.push(text.slice(lastIndex, match.index));
       }
-      const isImg = match[0].startsWith('[img');
+      
+      const fullMatch = match[0];
+      const markerNum = match[2] ? parseInt(match[2]) : null;
+      const isImg = fullMatch.startsWith('[img');
       const bgClass = isImg ? 'bg-purple-500 text-white shadow-[0_0_10px_purple] px-1.5' : 'bg-red-600 text-white shadow-[0_0_10px_red] px-1.5';
+      
+      const count = markerNum ? commentCounts[markerNum] : 0;
+
       parts.push(
-        <span key={`highlight-${match.index}`} className={`${bgClass} font-black rounded mx-0.5 inline-block text-[10px] leading-none py-0.5`}>
-          {match[0]}
-        </span>
+        <div key={`highlight-${match.index}`} className="relative inline-block mx-0.5">
+          <span className={`${bgClass} font-black rounded text-[10px] leading-none py-0.5`}>
+            {fullMatch}
+          </span>
+          {count > 0 && (
+            <span className="absolute -top-2 -right-2 bg-blue-500 text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center border border-white dark:border-zinc-950 animate-bounce shadow-lg">
+              {count}
+            </span>
+          )}
+        </div>
       );
-      lastIndex = match.index + match[0].length;
+      lastIndex = match.index + fullMatch.length;
     }
     if (lastIndex < text.length) {
       parts.push(text.slice(lastIndex));
     }
     return parts;
-  }, [text, isEditing]);
+  }, [text, isEditing, commentCounts]);
 
   return (
     <div className="relative w-full group/textarea">
@@ -168,6 +182,7 @@ function EditorContent({ id }: { id: string }) {
   const [lesson, setLesson] = useState("");
   const [path, setPath] = useState<string[]>([]);
   const [scenes, setScenes] = useState<Scene[]>([]);
+  const [isMirrored, setIsMirrored] = useState(false);
   const [loading, setLoading] = useState(!isNew);
   const [scriptStatus, setScriptStatus] = useState<ScriptStatus>("rascunho");
   const [category, setCategory] = useState<"video" | "podcast">("video");
@@ -190,6 +205,8 @@ function EditorContent({ id }: { id: string }) {
   const [isEditingMode, setIsEditingMode] = useState(true);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showImportConfirmModal, setShowImportConfirmModal] = useState(false);
+  const [importedScenesPending, setImportedScenesPending] = useState<Scene[]>([]);
   const [importText, setImportText] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({
@@ -199,9 +216,49 @@ function EditorContent({ id }: { id: string }) {
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [newProjectData, setNewProjectData] = useState({ name: "", code: "" });
   const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [showComments, setShowComments] = useState(false);
 
+  const [commentCounts, setCommentCounts] = useState<Record<number, number>>({});
+  const [comments, setComments] = useState<Record<string, unknown>[]>([]);
   const [focusedField, setFocusedField] = useState<Record<string, 'spokenText' | 'opening' | 'closing'>>({});
   const textareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+
+  useEffect(() => {
+    if (isNew || !id) return;
+    const q = query(collection(db, "scripts", id, "comments"));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const counts: Record<number, number> = {};
+      const allComments: Record<string, unknown>[] = [];
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        allComments.push({ id: doc.id, ...data });
+        if (data.marker) {
+          counts[data.marker] = (counts[data.marker] || 0) + 1;
+        }
+      });
+      setCommentCounts(counts);
+      setComments(allComments);
+    });
+    return () => unsub();
+  }, [id, isNew]);
+
+  const renumberScenes = useCallback((sceneList: Scene[]) => {
+    let count = 1;
+    return sceneList.map((scene) => {
+      if (scene.opening && !scene.spokenText) {
+        return { ...scene, sceneNumber: "Abertura" };
+      }
+      if (scene.closing && !scene.spokenText) {
+        return { ...scene, sceneNumber: "Encerramento" };
+      }
+      const num = String(count++).padStart(2, '0');
+      return { ...scene, sceneNumber: num };
+    });
+  }, []);
+
+  const setScenesWithRenumbering = useCallback((newScenes: Scene[]) => {
+    setScenes(renumberScenes(newScenes));
+  }, [renumberScenes]);
 
   const showToast = (message: string) => {
     setToast({ message, visible: true });
@@ -268,7 +325,7 @@ function EditorContent({ id }: { id: string }) {
           setProject(pName);
           setProjectId(data.projectId || null);
           
-          const scriptPath = getScriptPath(data as any);
+          const scriptPath = getScriptPath(data as ScriptDoc);
           setPath(scriptPath);
           
           setFolder(data.folder || scriptPath[0] || "Raiz");
@@ -285,6 +342,7 @@ function EditorContent({ id }: { id: string }) {
           setEditorId(data.editorId || null);
           setEditorName(data.editorName || null);
           setVideomakerName(data.videomakerName || null);
+          setIsMirrored(data.isMirrored || false);
 
           const vQ = query(
             collection(db, "scripts", id, "versions"),
@@ -311,34 +369,39 @@ function EditorContent({ id }: { id: string }) {
       }
     }
     loadScript();
-  }, [id, isNew, searchParams, user]);
+  }, [id, isNew, searchParams, user, setScenesWithRenumbering]);
 
   useEffect(() => {
     if (user?.workspaceId) {
       fetchZeckiProjects(user.workspaceId).then(setZeckiProjects);
     }
-  }, [user]);
+  }, [user?.workspaceId]);
   
   useEffect(() => {
-    const loadFolders = async () => {
-      if (!project) return;
-      try {
-        const q = query(
-          collection(db, "scripts"),
-          where("workspaceId", "==", workspaceId || user?.workspaceId || "senai"),
-          where("projectName", "==", project)
-        );
-        const snap = await getDocs(q);
-        const folders = new Set<string>();
-        snap.docs.forEach(doc => {
-          if (doc.data().folder) folders.add(doc.data().folder);
-        });
-        setExistingFolders(Array.from(folders).sort());
-      } catch (err) {
-        console.error("Erro ao carregar pastas:", err);
-      }
-    };
-    loadFolders();
+    if (!project) {
+      setExistingFolders([]);
+      return;
+    }
+
+    const q = query(
+      collection(db, "scripts"),
+      where("workspaceId", "==", workspaceId || user?.workspaceId || "senai"),
+      where("projectName", "==", project)
+    );
+
+    const unsub = onSnapshot(q, (snap) => {
+      const folders = new Set<string>();
+      snap.docs.forEach(doc => {
+        const d = doc.data();
+        if (d.folder) folders.add(d.folder);
+        if (d.path && Array.isArray(d.path)) {
+          d.path.forEach(p => { if (p) folders.add(p); });
+        }
+      });
+      setExistingFolders(Array.from(folders).sort());
+    });
+
+    return () => unsub();
   }, [project, workspaceId, user?.workspaceId]);
 
   useEffect(() => {
@@ -350,23 +413,7 @@ function EditorContent({ id }: { id: string }) {
     }
   }, [project, projectId, zeckiProjects]);
 
-  const renumberScenes = (sceneList: Scene[]) => {
-    let count = 1;
-    return sceneList.map((scene) => {
-      if (scene.opening && !scene.spokenText) {
-        return { ...scene, sceneNumber: "Abertura" };
-      }
-      if (scene.closing && !scene.spokenText) {
-        return { ...scene, sceneNumber: "Encerramento" };
-      }
-      const num = String(count++).padStart(2, '0');
-      return { ...scene, sceneNumber: num };
-    });
-  };
 
-  const setScenesWithRenumbering = (newScenes: Scene[]) => {
-    setScenes(renumberScenes(newScenes));
-  };
 
   const generateRawTextFromBlocks = (currentScenes: Scene[]) => {
     let newText = "";
@@ -440,6 +487,7 @@ function EditorContent({ id }: { id: string }) {
         reviewerName: finalReviewerName,
         editorId: finalEditorId,
         editorName: finalEditorName,
+        isMirrored,
         collaborators: arrayUnion({
           uid: user?.uid,
           name: user?.displayName || user?.name || user?.email || "Usuário",
@@ -497,7 +545,7 @@ function EditorContent({ id }: { id: string }) {
       setTimeout(() => {
         router.push("/dashboard");
       }, 1000);
-    } catch (e: unknown) {
+    } catch {
       sonnerToast.error("Falha ao salvar roteiro.");
     } finally {
       clearTimeout(safetyTimer);
@@ -596,17 +644,15 @@ function EditorContent({ id }: { id: string }) {
     if (!importText.trim()) return;
     const importedScenes = parseScript(importText).map(s => ({ ...s, observation: s.observation || "" }));
     if (scenes.length > 0) {
-      if (confirm("Você já possui cenas neste roteiro. Deseja SUBSTITUIR todas as cenas atuais pelas novas? (Clique em Cancelar para ADICIONAR ao final)")) {
-        setScenesWithRenumbering(importedScenes);
-      } else {
-        setScenesWithRenumbering([...scenes, ...importedScenes]);
-      }
+      // Show modal instead of browser confirm()
+      setImportedScenesPending(importedScenes);
+      setShowImportConfirmModal(true);
     } else {
       setScenesWithRenumbering(importedScenes);
+      setShowImportModal(false);
+      setImportText("");
+      showToast("Roteiro processado!");
     }
-    setShowImportModal(false);
-    setImportText("");
-    showToast("Roteiro processado!");
   };
 
   const addEmptyScene = (index?: number) => {
@@ -646,7 +692,7 @@ function EditorContent({ id }: { id: string }) {
         videomakerName
       }, scenes);
       showToast("Backup Word gerado!");
-    } catch (error) {
+    } catch {
       sonnerToast.error("Falha ao gerar arquivo Word.");
     }
   };
@@ -661,10 +707,11 @@ function EditorContent({ id }: { id: string }) {
         lesson,
         editorName,
         reviewerName,
-        videomakerName
+        videomakerName,
+        isMirrored,
       }, scenes);
       showToast("Backup PPT gerado!");
-    } catch (error) {
+    } catch {
       sonnerToast.error("Falha ao gerar arquivo PPT.");
     }
   };
@@ -690,7 +737,7 @@ function EditorContent({ id }: { id: string }) {
       setIsCreateProjectOpen(false);
       setNewProjectData({ name: "", code: "" });
       sonnerToast.success("Projeto criado com sucesso!");
-    } catch (err) {
+    } catch {
       sonnerToast.error("Erro ao criar projeto.");
     } finally {
       setIsCreatingProject(false);
@@ -755,7 +802,36 @@ function EditorContent({ id }: { id: string }) {
                     {path.map((segment, index) => (
                       <React.Fragment key={index}>
                         <BreadcrumbItem>
-                          <div className="group/segment relative">
+                          <div className="group/segment relative flex items-center">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button className="absolute left-1 opacity-0 group-hover/segment:opacity-100 transition-opacity text-zinc-400 hover:text-blue-500 z-30">
+                                  <ChevronDown className="w-3 h-3" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent className="max-h-[300px] overflow-y-auto bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl">
+                                {existingFolders.length === 0 ? (
+                                  <div className="p-4 text-[10px] text-zinc-500 italic">Nenhuma pasta sugerida</div>
+                                ) : (
+                                  existingFolders.map((f) => (
+                                    <DropdownMenuItem 
+                                      key={f} 
+                                      onClick={() => {
+                                        const newPath = [...path];
+                                        newPath[index] = f;
+                                        setPath(newPath);
+                                        if (index === 0) setFolder(f);
+                                        if (index === 1) setSubfolder(f);
+                                        if (index === 2) setLesson(f);
+                                      }}
+                                      className="text-[10px] font-bold uppercase tracking-widest rounded-lg focus:bg-blue-50 dark:focus:bg-blue-900/20 focus:text-blue-600 cursor-pointer"
+                                    >
+                                      {f}
+                                    </DropdownMenuItem>
+                                  ))
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                             <Input
                               value={segment}
                               onChange={(e) => {
@@ -769,12 +845,12 @@ function EditorContent({ id }: { id: string }) {
                               }}
                               disabled={!canEdit}
                               className={cn(
-                                "h-7 px-2 border-none shadow-none text-[9px] font-black uppercase tracking-widest transition-all focus-visible:ring-1 focus-visible:ring-zinc-200 w-auto min-w-[40px]",
+                                "h-7 px-4 border-none shadow-none text-[9px] font-black uppercase tracking-widest transition-all focus-visible:ring-1 focus-visible:ring-zinc-200 w-auto min-w-[40px]",
                                 index === 0 ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-900/20" : 
                                 index === 1 ? "text-blue-600 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-900/20" :
                                 "text-purple-600 dark:text-purple-400 bg-purple-50/50 dark:bg-purple-900/20"
                               )}
-                              style={{ width: `${Math.max(segment.length + 2, 8)}ch` }}
+                              style={{ width: `${Math.max(segment.length + 3, 10)}ch` }}
                             />
                             {canEdit && (
                               <button 
@@ -871,6 +947,15 @@ function EditorContent({ id }: { id: string }) {
               )}
 
               <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => setShowComments(true)}
+                className="h-9 px-4 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 border-amber-200 dark:border-amber-900 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+              >
+                <MessageSquare size={16} /> {Object.values(commentCounts).reduce((a, b) => a + b, 0) || 0}
+              </Button>
+
+              <Button 
                 onClick={handleSaveClick} 
                 className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] tracking-widest px-6 rounded shadow-lg"
                 disabled={isSaving}
@@ -944,6 +1029,7 @@ function EditorContent({ id }: { id: string }) {
                         textareaRef={(el) => { if (el) { textareaRefs.current[`${scene.id}-spokenText`] = el; el.onfocus = () => setFocusedField(prev => ({...prev, [scene.id]: 'spokenText'})); } }} 
                         disabled={!canEdit} 
                         isEditing={isEditingMode} 
+                        commentCounts={commentCounts}
                       />
                     </div>
                   )}
@@ -964,6 +1050,7 @@ function EditorContent({ id }: { id: string }) {
                         textareaRef={(el) => { if (el) { textareaRefs.current[`${scene.id}-opening`] = el; el.onfocus = () => setFocusedField(prev => ({...prev, [scene.id]: 'opening'})); } }} 
                         disabled={!canEdit} 
                         isEditing={isEditingMode} 
+                        commentCounts={commentCounts}
                         placeholder="Texto da abertura..."
                       />
                     </div>
@@ -985,6 +1072,7 @@ function EditorContent({ id }: { id: string }) {
                         textareaRef={(el) => { if (el) { textareaRefs.current[`${scene.id}-closing`] = el; el.onfocus = () => setFocusedField(prev => ({...prev, [scene.id]: 'closing'})); } }} 
                         disabled={!canEdit} 
                         isEditing={isEditingMode} 
+                        commentCounts={commentCounts}
                         placeholder="Texto do encerramento..."
                       />
                     </div>
@@ -1067,7 +1155,6 @@ function EditorContent({ id }: { id: string }) {
                     </div>
                   )}
 
-                  {/* NOTAS (Sempre presente) */}
                   <div className="pt-6 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
                     <Label className="text-[10px] uppercase font-black text-zinc-500 tracking-widest flex items-center gap-2">Notas do Editor</Label>
                     {isEditingMode ? (
@@ -1075,6 +1162,36 @@ function EditorContent({ id }: { id: string }) {
                     ) : (
                       <p className="text-[12px] italic text-zinc-600 dark:text-zinc-400 p-3 bg-zinc-100/50 dark:bg-zinc-800/30 rounded">{scene.observation || "Nenhuma observação."}</p>
                     )}
+
+                    {/* Scene-linked Comments */}
+                    {(() => {
+                      const sceneMarkers = Array.from(scene.spokenText?.matchAll(/\[([1-5])\]/g) || []).map(m => parseInt(m[1]));
+                      const uniqueMarkers = Array.from(new Set(sceneMarkers));
+                      const relevantComments = comments.filter(c => uniqueMarkers.includes(c.marker));
+                      
+                      if (relevantComments.length === 0) return null;
+
+                      return (
+                        <div className="mt-4 space-y-2">
+                          <p className="text-[9px] font-black uppercase text-amber-500 tracking-widest flex items-center gap-2">
+                            <MessageSquare size={10} /> Notas da Equipe
+                          </p>
+                          <div className="space-y-1.5">
+                            {relevantComments.sort((a, b) => a.marker - b.marker).map(comment => (
+                              <div key={comment.id} className="bg-amber-50/50 dark:bg-amber-900/10 border border-amber-100/50 dark:border-amber-900/30 rounded p-2 text-[11px]">
+                                <div className="flex justify-between items-start mb-1">
+                                  <span className="font-black text-[9px] text-amber-600 bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 rounded">
+                                    MARCADOR [{comment.marker}]
+                                  </span>
+                                  <span className="text-[9px] text-zinc-400 font-bold">{comment.userName}</span>
+                                </div>
+                                <p className="text-zinc-700 dark:text-zinc-300 leading-relaxed italic">&ldquo;{comment.text}&rdquo;</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </CardContent>
               </Card>
@@ -1197,6 +1314,63 @@ function EditorContent({ id }: { id: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* MODAL CONFIRMAÇÃO DE IMPORTAÇÃO */}
+      <Dialog open={showImportConfirmModal} onOpenChange={setShowImportConfirmModal}>
+        <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded-2xl p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)]">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-center uppercase tracking-widest">Importar Roteiro</DialogTitle>
+            <DialogDescription className="text-center text-zinc-500 text-sm">
+              Você já possui <strong>{scenes.length}</strong> cena(s) neste roteiro. O que deseja fazer?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 pt-4">
+            <Button
+              className="h-14 rounded bg-red-600 hover:bg-red-700 text-white font-black uppercase tracking-widest text-[10px]"
+              onClick={() => {
+                setScenesWithRenumbering(importedScenesPending);
+                setShowImportConfirmModal(false);
+                setShowImportModal(false);
+                setImportText("");
+                setImportedScenesPending([]);
+                showToast("Roteiro substituído!");
+              }}
+            >
+              Substituir todas as cenas atuais
+            </Button>
+            <Button
+              variant="outline"
+              className="h-14 rounded font-black uppercase tracking-widest text-[10px] border-zinc-300 dark:border-zinc-700"
+              onClick={() => {
+                setScenesWithRenumbering([...scenes, ...importedScenesPending]);
+                setShowImportConfirmModal(false);
+                setShowImportModal(false);
+                setImportText("");
+                setImportedScenesPending([]);
+                showToast("Cenas adicionadas ao final!");
+              }}
+            >
+              Adicionar ao final do roteiro
+            </Button>
+            <Button
+              variant="ghost"
+              className="h-12 rounded font-bold text-zinc-400"
+              onClick={() => setShowImportConfirmModal(false)}
+            >
+              Cancelar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {showComments && !isNew && (
+        <div className="fixed inset-0 z-[100] flex justify-end bg-black/40 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="h-full shadow-2xl">
+            <CommentsPanel 
+              scriptId={id} 
+              onClose={() => setShowComments(false)} 
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

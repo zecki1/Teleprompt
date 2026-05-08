@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { collection, query, getDocs, deleteDoc, doc, updateDoc, writeBatch, where } from "firebase/firestore";
+import { collection, query, deleteDoc, doc, updateDoc, writeBatch, where, addDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { SENAI_WORKSPACE_ID } from "@/lib/constants";
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, Check, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Loader2, Users, UserPlus, PlusSquare, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video } from "lucide-react";
+import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Loader2, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
@@ -36,9 +36,11 @@ import {
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScriptDoc, ScriptStatus } from "@/types/script";
-import { buildTree, getScriptPath, renameFolder } from "@/lib/pathUtils";
+import { buildTree } from "@/lib/pathUtils";
 import { FolderTree } from "@/components/tp/FolderTree";
 import { MoveScriptModal } from "@/components/tp/MoveScriptModal";
+import { MoveFolderModal } from "@/components/tp/MoveFolderModal";
+import { CommentsPanel } from "@/components/tp/CommentsPanel";
 
 type ScriptCategory = "video" | "podcast";
 
@@ -50,7 +52,6 @@ const statusConfig: Record<ScriptStatus, { label: string; color: string; icon: R
   gravado: { label: "Gravado", color: "bg-blue-600", icon: Send },
   rejeitado: { label: "Rejeitado", color: "bg-red-500", icon: X },
 };
-// Re-export for pages that still import from here
 export type { ScriptStatus };
 
 export default function DashboardPage() {
@@ -80,6 +81,7 @@ function DashboardContent() {
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [newProjectData, setNewProjectData] = useState({ name: "", code: "" });
   const [filterCommenter, setFilterCommenter] = useState<string>("all");
+  const [openCommentsScriptId, setOpenCommentsScriptId] = useState<string | null>(null);
   
   const handleCopyInvite = () => {
     if (!user?.workspaceId) {
@@ -104,6 +106,9 @@ function DashboardContent() {
   };
 
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
+  const [isMoveFolderOpen, setIsMoveFolderOpen] = useState(false);
+  const [movingFolder, setMovingFolder] = useState<{ path: string[], projectId: string, projectName: string } | null>(null);
+  const [newFolderName, setNewFolderName] = useState("");
   const [newFolderData, setNewFolderData] = useState({ 
     projectName: "", 
     folder: "", 
@@ -112,8 +117,27 @@ function DashboardContent() {
     path: [] as string[] 
   });
 
+  const handleDownloadProjectBackup = (projectName: string, projectScripts: ScriptDoc[]) => {
+    const backupData = {
+      project: projectName,
+      exportedAt: new Date().toISOString(),
+      scripts: projectScripts
+    };
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `backup_${projectName.replace(/[^a-z0-9]/gi, "_")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success(`Backup do projeto "${projectName}" baixado!`);
+  };
+
   const handleCreateFolderClick = (projectName: string) => {
     setNewFolderData({ projectName, folder: "", subfolder: "", lesson: "", path: [] });
+    setNewFolderName("");
     setIsCreateFolderOpen(true);
   };
 
@@ -132,67 +156,60 @@ function DashboardContent() {
     }
   }, [user?.workspaceId]);
 
-  useEffect(() => {
+    useEffect(() => {
     if (!user) {
       router.push("/login");
       return;
     }
 
-    async function fetchData() {
-      if (!user) {
-        setLoading(false);
-        setLoadingProjects(false);
-        return;
-      }
-      
-      const activeWorkspaceId = user.workspaceId || SENAI_WORKSPACE_ID;
+    const activeWorkspaceId = user.workspaceId || SENAI_WORKSPACE_ID;
+    
+    // 1. Load projects once (they change less often)
+    loadProjects();
 
-      try {
-        await loadProjects();
+    // 2. Real-time scripts sync
+    const scriptsRef = collection(db, "scripts");
+    const q = activeWorkspaceId === SENAI_WORKSPACE_ID 
+      ? query(scriptsRef) 
+      : query(scriptsRef, where("workspaceId", "==", activeWorkspaceId)); 
 
-        const scriptsRef = collection(db, "scripts");
-        const q = activeWorkspaceId === SENAI_WORKSPACE_ID 
-          ? query(scriptsRef) 
-          : query(scriptsRef, where("workspaceId", "==", activeWorkspaceId)); 
+    const unsub = onSnapshot(q, (snapshot) => {
+      const fetched = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          status: data.status || "rascunho",
+          createdAt: toDate(data.createdAt).toISOString()
+        };
+      }) as ScriptDoc[];
 
-        const snapshot = await getDocs(q);
+      fetched.sort((a, b) => {
+        const priority: Record<string, number> = {
+          'aguardando_gravacao': 0,
+          'rascunho': 1,
+          'em_revisao': 1,
+          'revisao_realizada': 1,
+          'gravado': 2,
+          'rejeitado': 3
+        };
         
-        const fetched = snapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            ...data,
-            status: data.status || "rascunho",
-            createdAt: toDate(data.createdAt).toISOString()
-          };
-        }) as ScriptDoc[];
+        const pA = priority[a.status] ?? 1;
+        const pB = priority[b.status] ?? 1;
+        
+        if (pA !== pB) return pA - pB;
+        return a.title.localeCompare(b.title);
+      });
 
-        fetched.sort((a, b) => {
-          const priority: Record<string, number> = {
-            'aguardando_gravacao': 0,
-            'rascunho': 1,
-            'em_revisao': 1,
-            'revisao_realizada': 1,
-            'gravado': 2,
-            'rejeitado': 3
-          };
-          
-          const pA = priority[a.status] ?? 1;
-          const pB = priority[b.status] ?? 1;
-          
-          if (pA !== pB) return pA - pB;
-          return a.title.localeCompare(b.title);
-        });
+      setScripts(fetched);
+      setLoading(false);
+    }, (err) => {
+      console.error("ERRO CRÍTICO AO CARREGAR DADOS:", err);
+      toast.error("Erro ao carregar dados do dashboard.");
+      setLoading(false);
+    });
 
-        setScripts(fetched);
-      } catch (err) {
-        console.error("ERRO CRÍTICO AO CARREGAR DADOS:", err);
-        toast.error("Erro ao carregar dados do dashboard.");
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchData();
+    return () => unsub();
   }, [user?.workspaceId, router, user, loadProjects]);
 
   const filteredScripts = scripts.filter(s => {
@@ -311,7 +328,12 @@ function DashboardContent() {
       return;
     }
 
-    if (!confirm("Tem certeza que deseja excluir este roteiro?")) return;
+    const script = scripts.find(s => s.id === id);
+    const msg = script?.isPlaceholder 
+      ? "Tem certeza que deseja excluir esta pasta vazia?" 
+      : "Tem certeza que deseja excluir este roteiro?";
+      
+    if (!confirm(msg)) return;
     try {
       await deleteDoc(doc(db, "scripts", id));
       setScripts(scripts.filter(s => s.id !== id));
@@ -319,6 +341,30 @@ function DashboardContent() {
     } catch (e) {
       console.error(e);
       toast.error("Erro ao excluir roteiro.");
+    }
+  };
+
+  const deleteFolder = async (folderScripts: ScriptDoc[]) => {
+    if (user?.role === "Estagiário") {
+      toast.error("Acesso negado: Estagiários não possuem permissão para excluir pastas.");
+      return;
+    }
+
+    if (!confirm(`Tem certeza que deseja excluir esta pasta e todos os seus ${folderScripts.length} itens? Esta ação não pode ser desfeita.`)) return;
+    
+    try {
+      const batch = writeBatch(db);
+      folderScripts.forEach(s => {
+        batch.delete(doc(db, "scripts", s.id));
+      });
+      await batch.commit();
+      
+      // Update local state if needed (onSnapshot will handle most of it)
+      setScripts(scripts.filter(s => !folderScripts.some(fs => fs.id === s.id)));
+      toast.success("Pasta excluída com sucesso.");
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao excluir pasta.");
     }
   };
 
@@ -361,8 +407,6 @@ function DashboardContent() {
     }
   };
 
-  const [editingFolderName, setEditingFolderName] = useState<{project: string, folder: string} | null>(null);
-  const [newFolderTitle, setNewFolderTitle] = useState("");
   const [movingScript, setMovingScript] = useState<ScriptDoc | null>(null);
 
   const handleCreateNewProject = async () => {
@@ -653,6 +697,14 @@ function DashboardContent() {
                       <Button
                         variant="ghost"
                         size="sm"
+                        className="h-8 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-emerald-500"
+                        onClick={() => handleDownloadProjectBackup(projectName, projectScripts)}
+                      >
+                        <Download className="w-3.5 h-3.5 mr-1.5" /> BACKUP
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         className="h-8 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-blue-500"
                         onClick={() => router.push(`/editor/new?project=${encodeURIComponent(projectName)}&projectId=${pid}`)}
                       >
@@ -696,11 +748,14 @@ function DashboardContent() {
                             lesson: parentPath[2] ?? "",
                             path: parentPath,
                           });
+                          setNewFolderName("");
                           setIsCreateFolderOpen(true);
                         }}
-                        renderScripts={(scripts, _path) => (
+                        onMoveFolder={(folderPath) => { setMovingFolder({ path: folderPath, projectId: pid, projectName: projectName }); setIsMoveFolderOpen(true); }}
+                        onDeleteFolder={deleteFolder}
+                        renderScripts={(scripts) => (
                           <>
-                            {scripts.map(script => (
+                            {scripts.filter(s => !s.isPlaceholder).map(script => (
                               <div key={script.id} className="min-w-[300px] md:min-w-[350px] snap-start relative pl-2">
                                 {script.status === "rascunho" && (
                                   <div className="absolute -top-1 -right-1 z-20 bg-orange-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
@@ -720,6 +775,11 @@ function DashboardContent() {
                                 {script.status === "gravado" && (
                                   <div className="absolute -top-1 -right-1 z-20 bg-blue-600 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
                                     <Send className="w-3 h-3" /> Gravado
+                                  </div>
+                                )}
+                                {(script.commentCount || 0) > 0 && (
+                                  <div className="absolute -top-1 -left-1 z-20 bg-blue-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
+                                    <MessageSquare className="w-3 h-3" /> {script.commentCount}
                                   </div>
                                 )}
                                 <Card className={`h-full border-zinc-200 dark:border-zinc-800 hover:shadow-xl transition-all group flex flex-col 
@@ -814,9 +874,25 @@ function DashboardContent() {
                                   </CardContent>
 
                                   <CardFooter className="bg-zinc-50/50 dark:bg-zinc-900/50 border-t border-zinc-100 dark:border-zinc-800/50 p-3 h-12 flex justify-between">
+                                    <div className="flex items-center gap-1">
+                                      <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
+                                        onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/tp/${script.id}`); toast.success("Link copiado!"); }}>
+                                        <LinkIcon className="w-3 h-3 mr-1.5" /> Link
+                                      </Button>
+                                      {script.isPlaceholder && (
+                                        <Button 
+                                          variant="ghost" 
+                                          size="sm" 
+                                          className="h-7 text-[9px] font-black text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 uppercase tracking-widest px-1"
+                                          onClick={() => deleteScript(script.id)}
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </Button>
+                                      )}
+                                    </div>
                                     <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
-                                      onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/tp/${script.id}`); toast.success("Link copiado!"); }}>
-                                      <LinkIcon className="w-3 h-3 mr-1.5" /> Link
+                                      onClick={() => setOpenCommentsScriptId(script.id)}>
+                                      <MessageSquare className="w-3 h-3 mr-1.5" /> Comentar
                                     </Button>
                                     <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
                                       onClick={() => setMovingScript(script)}>
@@ -858,6 +934,18 @@ function DashboardContent() {
         }}
       />
 
+      {/* Move Folder Modal */}
+      <MoveFolderModal
+        open={!!movingFolder}
+        folderPath={movingFolder?.path || null}
+        projectScripts={movingFolder ? scripts.filter(s => s.projectId === movingFolder.projectId || s.project === movingFolder.projectName) : []}
+        onClose={() => setMovingFolder(null)}
+        onMoved={() => {
+          setMovingFolder(null);
+          window.location.reload();
+        }}
+      />
+
 
 
       <Dialog open={isCreateFolderOpen} onOpenChange={setIsCreateFolderOpen}>
@@ -894,18 +982,8 @@ function DashboardContent() {
               <Input
                 id="new-level-name"
                 placeholder="Ex: Módulo 1, Aula 5..."
-                value={newFolderData.path[newFolderData.path.length] || ""}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  // For backward compatibility, we still set folder/subfolder/lesson based on path length
-                  if (newFolderData.path.length === 0) setNewFolderData({ ...newFolderData, folder: val });
-                  else if (newFolderData.path.length === 1) setNewFolderData({ ...newFolderData, subfolder: val });
-                  else if (newFolderData.path.length === 2) setNewFolderData({ ...newFolderData, lesson: val });
-                  else {
-                    // Just update a temporary field if needed, but the primary way is the Editor
-                    setNewFolderData({ ...newFolderData, folder: newFolderData.folder || val });
-                  }
-                }}
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
                 className="h-12 rounded border-zinc-200 dark:border-zinc-800 font-bold"
               />
               <p className="text-[10px] text-zinc-400 italic px-1">
@@ -916,32 +994,45 @@ function DashboardContent() {
           <DialogFooter className="flex gap-3">
             <Button variant="ghost" onClick={() => setIsCreateFolderOpen(false)} className="flex-1 h-12 rounded font-bold">Cancelar</Button>
             <Button 
-              onClick={() => {
+              onClick={async () => {
                 const project = projects.find(p => p.name === newFolderData.projectName);
                 const pid = project?.id || "";
-                const val = (document.getElementById("new-level-name") as HTMLInputElement)?.value || "";
                 
                 const finalPath = [...newFolderData.path];
-                if (val) finalPath.push(val);
+                if (newFolderName) finalPath.push(newFolderName);
                 if (finalPath.length === 0) finalPath.push("Raiz");
 
-                const params = new URLSearchParams({
-                  project: newFolderData.projectName,
-                  projectId: pid,
-                  path: JSON.stringify(finalPath)
-                });
-                
-                // Legacy support
-                params.set("folder", finalPath[0] || "Raiz");
-                if (finalPath[1]) params.set("subfolder", finalPath[1]);
-                if (finalPath[2]) params.set("lesson", finalPath[2]);
-
-                router.push(`/editor/new?${params.toString()}`);
-                setIsCreateFolderOpen(false);
+                try {
+                  const docRef = await addDoc(collection(db, "scripts"), {
+                    title: "Roteiro Inicial",
+                    project: newFolderData.projectName,
+                    projectId: pid,
+                    path: finalPath,
+                    status: "rascunho",
+                    createdAt: serverTimestamp(),
+                    updatedAt: serverTimestamp(),
+                    workspaceId: user?.workspaceId || SENAI_WORKSPACE_ID,
+                    isPlaceholder: true,
+                  });
+                  
+                  await addDoc(collection(db, "scripts", docRef.id, "versions"), {
+                    content: "",
+                    scenes: [],
+                    createdAt: serverTimestamp(),
+                  });
+                  
+                  toast.success("Pasta criada com sucesso!");
+                  setIsCreateFolderOpen(false);
+                  setNewFolderName("");
+                  window.location.reload();
+                } catch (e) {
+                  console.error(e);
+                  toast.error("Erro ao criar pasta.");
+                }
               }} 
               className="flex-[2] h-12 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-widest text-[10px] shadow-lg"
             >
-              CRIAR E ABRIR EDITOR
+              CRIAR PASTA
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1069,11 +1160,21 @@ function DashboardContent() {
           </div>
         </DialogContent>
       </Dialog>
+      <MoveScriptModal
+        open={!!movingScript}
+        script={movingScript}
+        projectScripts={scripts.filter(s => (s.projectName || s.project || "Geral") === (movingScript?.projectName || movingScript?.project || "Geral"))}
+        onClose={() => setMovingScript(null)}
+        onMoved={() => { setScripts([...scripts]); }}
+      />
 
-
-
-      
-      {/* DIALOG CRIAR PROJETO */}
+      <MoveFolderModal
+        open={isMoveFolderOpen}
+        folderPath={movingFolder?.path || null}
+        projectScripts={scripts.filter(s => (s.projectName || s.project || "Geral") === (movingFolder?.projectName || "Geral"))}
+        onClose={() => setIsMoveFolderOpen(false)}
+        onMoved={() => { setScripts([...scripts]); }}
+      />      {/* DIALOG CRIAR PROJETO */}
       <Dialog open={isCreateProjectOpen} onOpenChange={setIsCreateProjectOpen}>
         <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)]">
           <DialogHeader>
@@ -1121,6 +1222,17 @@ function DashboardContent() {
         </DialogContent>
       </Dialog>
       
+      {/* Comments Panel Overlay */}
+      {openCommentsScriptId && (
+        <div className="fixed inset-0 z-[100] flex justify-end bg-black/40 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="h-full shadow-2xl">
+            <CommentsPanel 
+              scriptId={openCommentsScriptId} 
+              onClose={() => setOpenCommentsScriptId(null)} 
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
