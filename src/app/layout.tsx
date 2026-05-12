@@ -7,6 +7,7 @@ import { SiteFooter } from "@/components/layout/site-footer";
 import { AOSInit } from "@/components/providers/aos-init";
 import { ThemeProvider } from "next-themes";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -80,6 +81,7 @@ export default function RootLayout({
               </main>
               <SiteFooter />
               <VlibrasWidget />
+              <Toaster />
             </PreferencesProvider>
           </AuthProvider>
         </ThemeProvider>

@@ -28,6 +28,16 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -82,6 +92,8 @@ function DashboardContent() {
   const [newProjectData, setNewProjectData] = useState({ name: "", code: "" });
   const [filterCommenter, setFilterCommenter] = useState<string>("all");
   const [openCommentsScriptId, setOpenCommentsScriptId] = useState<string | null>(null);
+  const [deleteConfirmScript, setDeleteConfirmScript] = useState<string | null>(null);
+  const [deleteConfirmFolder, setDeleteConfirmFolder] = useState<ScriptDoc[] | null>(null);
   
   const handleCopyInvite = () => {
     if (!user?.workspaceId) {
@@ -327,13 +339,13 @@ function DashboardContent() {
       toast.error("Acesso negado: Estagiários não possuem permissão para excluir roteiros.");
       return;
     }
+    setDeleteConfirmScript(id);
+  };
 
-    const script = scripts.find(s => s.id === id);
-    const msg = script?.isPlaceholder 
-      ? "Tem certeza que deseja excluir esta pasta vazia?" 
-      : "Tem certeza que deseja excluir este roteiro?";
-      
-    if (!confirm(msg)) return;
+  const confirmDeleteScript = async () => {
+    if (!deleteConfirmScript) return;
+    const id = deleteConfirmScript;
+    setDeleteConfirmScript(null);
     try {
       await deleteDoc(doc(db, "scripts", id));
       setScripts(scripts.filter(s => s.id !== id));
@@ -349,9 +361,13 @@ function DashboardContent() {
       toast.error("Acesso negado: Estagiários não possuem permissão para excluir pastas.");
       return;
     }
+    setDeleteConfirmFolder(folderScripts);
+  };
 
-    if (!confirm(`Tem certeza que deseja excluir esta pasta e todos os seus ${folderScripts.length} itens? Esta ação não pode ser desfeita.`)) return;
-    
+  const confirmDeleteFolder = async () => {
+    if (!deleteConfirmFolder) return;
+    const folderScripts = deleteConfirmFolder;
+    setDeleteConfirmFolder(null);
     try {
       const batch = writeBatch(db);
       folderScripts.forEach(s => {
@@ -359,7 +375,6 @@ function DashboardContent() {
       });
       await batch.commit();
       
-      // Update local state if needed (onSnapshot will handle most of it)
       setScripts(scripts.filter(s => !folderScripts.some(fs => fs.id === s.id)));
       toast.success("Pasta excluída com sucesso.");
     } catch (e) {
@@ -1222,6 +1237,41 @@ function DashboardContent() {
         </DialogContent>
       </Dialog>
       
+      {/* Delete Script Confirmation */}
+      <AlertDialog open={deleteConfirmScript !== null} onOpenChange={(open) => !open && setDeleteConfirmScript(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir Roteiro</AlertDialogTitle>
+            <AlertDialogDescription>
+              {scripts.find(s => s.id === deleteConfirmScript)?.isPlaceholder
+                ? "Tem certeza que deseja excluir esta pasta vazia?"
+                : "Tem certeza que deseja excluir este roteiro?"
+              }
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteScript} className="bg-red-600 hover:bg-red-700">Excluir</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Folder Confirmation */}
+      <AlertDialog open={deleteConfirmFolder !== null} onOpenChange={(open) => !open && setDeleteConfirmFolder(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir Pasta</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir esta pasta e todos os seus {deleteConfirmFolder?.length ?? 0} itens? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteFolder} className="bg-red-600 hover:bg-red-700">Excluir</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Comments Panel Overlay */}
       {openCommentsScriptId && (
         <div className="fixed inset-0 z-[100] flex justify-end bg-black/40 backdrop-blur-sm animate-in fade-in duration-300">

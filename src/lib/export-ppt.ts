@@ -1,4 +1,5 @@
 import pptxgen from "pptxgenjs";
+import JSZip from "jszip";
 import { Scene } from "./parser";
 
 interface ExportOptions {
@@ -14,18 +15,56 @@ interface ExportOptions {
   isMirrored?: boolean;
 }
 
+const SCENE_3D_XML =
+  '<a:scene3d>' +
+  '<a:camera prst="orthographicFront">' +
+  '<a:rot lat="0" lon="10800000" rev="0"/>' +
+  "</a:camera>" +
+  "<a:backdrop>" +
+  '<a:anchor x="0" y="0" z="0"/>' +
+  '<a:norm dx="0" dy="0" dz="1"/>' +
+  '<a:up dx="0" dy="1" dz="0"/>' +
+  "</a:backdrop>" +
+  "</a:scene3d>" +
+  '<a:sp3d extrusionH="0" contourW="0">' +
+  '<a:bevelT w="0" h="0"/>' +
+  '<a:bevelB w="0" h="0"/>' +
+  '<a:extrusionClr><a:srgbClr val="000000"/></a:extrusionClr>' +
+  '<a:contourClr><a:srgbClr val="000000"/></a:contourClr>' +
+  "</a:sp3d>";
+
+async function add3dRotationX(zip: JSZip): Promise<JSZip> {
+  const slideFiles = Object.keys(zip.files).filter(
+    (f) => /^ppt\/slides\/slide\d+\.xml$/.test(f)
+  );
+
+  for (const slideFile of slideFiles) {
+    const content = await zip.files[slideFile].async("string");
+
+    const modified = content.replace(
+      /(<p:sp(?!Tree)[\s\S]*?<p:spPr>)([\s\S]*?)(<\/p:spPr>[\s\S]*?<p:txBody>)/g,
+      (match: string, open: string, inner: string, close: string) => {
+        if (/sp3d/.test(inner)) return match;
+        return `${open}${inner}${SCENE_3D_XML}${close}`;
+      }
+    );
+
+    zip.file(slideFile, modified);
+  }
+
+  return zip;
+}
+
 export async function exportToPPT(options: ExportOptions, scenes: Scene[]) {
   const pptx = new pptxgen();
 
-  // Set presentation info
   pptx.title = options.title;
   pptx.subject = `Roteiro: ${options.title}`;
   pptx.author = "Antigravity Teleprompt";
 
-  // Title Slide
   const titleSlide = pptx.addSlide();
   titleSlide.background = { color: "000000" };
-  
+
   titleSlide.addText(options.title, {
     x: 0,
     y: "35%",
@@ -36,15 +75,14 @@ export async function exportToPPT(options: ExportOptions, scenes: Scene[]) {
     color: "FFFF00",
     bold: true,
     fontFace: "Arial",
-    flipH: true, // Mirror title
   });
 
   const projectPath = `Projeto: ${options.projectName || "Geral"}${
-    options.path && options.path.length > 0 
-      ? ` > ${options.path.join(" > ")}` 
+    options.path && options.path.length > 0
+      ? ` > ${options.path.join(" > ")}`
       : `${options.folder ? ` > ${options.folder}` : ""}${options.subfolder ? ` > ${options.subfolder}` : ""}${options.lesson ? ` > ${options.lesson}` : ""}`
   }`;
-  
+
   titleSlide.addText(projectPath, {
     x: 0,
     y: "55%",
@@ -55,11 +93,10 @@ export async function exportToPPT(options: ExportOptions, scenes: Scene[]) {
     color: "FFFFFF",
     bold: true,
     fontFace: "Arial",
-    flipH: true, // Mirror path
   });
 
   const responsiblesText = `Resp: ${options.editorName || "N/A"} | Rev: ${options.reviewerName || "N/A"} | Gravado: ${options.videomakerName || "N/A"}`;
-  
+
   titleSlide.addText(responsiblesText, {
     x: 0,
     y: "65%",
@@ -69,12 +106,9 @@ export async function exportToPPT(options: ExportOptions, scenes: Scene[]) {
     fontSize: 16,
     color: "AAAAAA",
     fontFace: "Arial",
-    flipH: true, // Mirror responsibles
   });
 
-  // Scenes Slides
   scenes.forEach((scene) => {
-    // Strip tags from spokenText for backup
     const fullText = (scene.spokenText || "")
       .replace(/\[abe\]/gi, "")
       .replace(/\[enc\]/gi, "")
@@ -82,10 +116,10 @@ export async function exportToPPT(options: ExportOptions, scenes: Scene[]) {
 
     if (!fullText) return;
 
-    const wordsPerSlide = 30; // Even fewer words for better visibility at 36pt
+    const wordsPerSlide = 30;
     const words = fullText.split(/\s+/);
     const textChunks: string[] = [];
-    
+
     for (let i = 0; i < words.length; i += wordsPerSlide) {
       textChunks.push(words.slice(i, i + wordsPerSlide).join(" "));
     }
@@ -102,16 +136,34 @@ export async function exportToPPT(options: ExportOptions, scenes: Scene[]) {
           h: "90%",
           fontSize: 36,
           color: "FFFF00",
-          align: "center", 
+          align: "center",
           valign: "middle",
-          fontFace: "Arial", 
+          fontFace: "Arial",
           bold: true,
-          flipH: true, 
         });
       }
     });
   });
 
-  // Save the presentation
-  await pptx.writeFile({ fileName: `${options.title.replace(/[^a-z0-9]/gi, "_")}.pptx` });
+  const array = await pptx.write({ outputType: "uint8array" });
+  const zip = await JSZip.loadAsync(array);
+
+  await add3dRotationX(zip);
+
+  const finalArray = await zip.generateAsync({ type: "uint8array" });
+  const finalBlob = new Blob([finalArray as BlobPart], {
+    type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  });
+
+  const fileName = `${options.title.replace(/[^a-z0-9]/gi, "_")}.pptx`;
+  const url = URL.createObjectURL(finalBlob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  return fileName;
 }

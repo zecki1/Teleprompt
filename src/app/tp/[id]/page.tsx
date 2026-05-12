@@ -916,7 +916,7 @@ function TeleprompterContent({ id }: { id: string }) {
 
       {/* MODAL DE PRÓXIMO ROTEIRO */}
       <Dialog open={showNextModal} onOpenChange={setShowNextModal}>
-        <DialogContent className="sm:max-w-[500px] bg-zinc-950 border-zinc-800 rounded-[32px] p-0 overflow-hidden shadow-[0_0_100px_rgba(37,99,235,0.2)]">
+        <DialogContent className="sm:max-w-[500px] bg-zinc-950 border-zinc-800 rounded-[32px] p-0 shadow-[0_0_100px_rgba(37,99,235,0.2)] max-h-[90vh] overflow-y-auto">
           <div className="bg-gradient-to-br from-blue-600/20 to-purple-600/20 p-8 border-b border-zinc-800">
             <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mb-6 shadow-xl shadow-blue-600/20">
               <Zap size={32} className="text-white" />
@@ -935,7 +935,7 @@ function TeleprompterContent({ id }: { id: string }) {
               <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-2xl group hover:border-blue-500/50 transition-all cursor-pointer" onClick={() => router.push(`/tp/${nextScript?.id}`)}>
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
-                    <h4 className="text-lg font-black text-white group-hover:text-blue-400 transition-colors line-clamp-2">{nextScript?.title}</h4>
+                    <h4 className="text-lg font-black text-white group-hover:text-blue-400 transition-colors">{nextScript?.title}</h4>
                     <div className="flex items-center gap-2">
                        <Badge variant="secondary" className="text-[9px] font-black uppercase tracking-widest bg-zinc-800 text-zinc-400 border-none px-2 h-5">
                          {nextScript?.projectName || "Geral"}
