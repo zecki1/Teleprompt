@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, use, Suspense } from "react";
-import { doc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, arrayUnion, where } from "firebase/firestore";
+import { doc, getDoc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, arrayUnion, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
 import { Scene } from "@/lib/parser";
@@ -500,6 +500,9 @@ function TeleprompterContent({ id }: { id: string }) {
 
       if (user?.uid) {
         const scriptRef = doc(db, "scripts", id);
+        const prevSnap = await getDoc(scriptRef);
+        const previousScriptData = prevSnap.exists() ? prevSnap.data() : undefined;
+
         updateData.collaborators = arrayUnion({
           uid: user.uid,
           name: user.displayName || user.name || user.email || "Usuário",
@@ -528,6 +531,7 @@ function TeleprompterContent({ id }: { id: string }) {
           subfolder: (path && path[1]) || null,
           lesson: (path && path[2]) || null,
           path: path,
+          snapshot: previousScriptData as Record<string, unknown> | undefined,
           workspaceId: workspaceId || "senai"
         });
       }

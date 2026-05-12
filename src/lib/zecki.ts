@@ -224,6 +224,23 @@ export async function deleteZeckiProject(projectId: string) {
 }
 
 /**
+ * Atualiza dados de um projeto no Zecki
+ */
+export async function updateZeckiProject(projectId: string, data: Partial<ZeckiProject>) {
+  try {
+    const projectRef = doc(dbZecki, "projects", projectId);
+    await setDoc(projectRef, {
+      ...data,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+    return true;
+  } catch (error) {
+    console.error("Erro ao atualizar projeto no Zecki:", error);
+    throw error;
+  }
+}
+
+/**
  * Atribui o videomaker à tarefa de gravação quando o roteiro é marcado como gravado
  */
 export async function updateTaskVideomaker(projectId: string, taskId: string, videomakerId: string) {

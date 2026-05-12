@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { collection, query, deleteDoc, doc, updateDoc, writeBatch, where, addDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
+import { collection, query, deleteDoc, doc, updateDoc, writeBatch, where, addDoc, serverTimestamp, onSnapshot, orderBy, limit, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { SENAI_WORKSPACE_ID } from "@/lib/constants";
@@ -16,7 +16,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Suspense } from "react";
-import { fetchZeckiProjects, ZeckiProject, createRecordingTask, createEditingTask, createZeckiProject, deleteZeckiProject } from "@/lib/zecki";
+import { fetchZeckiProjects, ZeckiProject, createRecordingTask, createEditingTask, createZeckiProject, deleteZeckiProject, updateZeckiProject } from "@/lib/zecki";
 import { toDate } from "@/lib/firebase-utils";
 import { toast } from "sonner";
 import {
@@ -51,6 +51,16 @@ import { FolderTree } from "@/components/tp/FolderTree";
 import { MoveScriptModal } from "@/components/tp/MoveScriptModal";
 import { MoveFolderModal } from "@/components/tp/MoveFolderModal";
 import { CommentsPanel } from "@/components/tp/CommentsPanel";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { Scene, parseScript } from "@/lib/parser";
+import { exportAllToWord } from "@/lib/export-all-word";
+import { exportAllToPPT } from "@/lib/export-all-ppt";
 
 type ScriptCategory = "video" | "podcast";
 
@@ -94,6 +104,9 @@ function DashboardContent() {
   const [openCommentsScriptId, setOpenCommentsScriptId] = useState<string | null>(null);
   const [deleteConfirmScript, setDeleteConfirmScript] = useState<string | null>(null);
   const [deleteConfirmFolder, setDeleteConfirmFolder] = useState<ScriptDoc[] | null>(null);
+  const [deleteConfirmProject, setDeleteConfirmProject] = useState<string | null>(null);
+  const [exportingProject, setExportingProject] = useState<string | null>(null);
+  const [showConcluded, setShowConcluded] = useState(false);
   
   const handleCopyInvite = () => {
     if (!user?.workspaceId) {
@@ -129,7 +142,7 @@ function DashboardContent() {
     path: [] as string[] 
   });
 
-  const handleDownloadProjectBackup = (projectName: string, projectScripts: ScriptDoc[]) => {
+  const handleDownloadProjectBackup = async (projectName: string, projectScripts: ScriptDoc[]) => {
     const backupData = {
       project: projectName,
       exportedAt: new Date().toISOString(),
@@ -144,7 +157,118 @@ function DashboardContent() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    if (user) {
+      const { logActivity } = await import("@/lib/activity");
+      await logActivity({
+        userId: user.uid,
+        userName: user.displayName || user.name || user.email || "Usuário",
+        userAvatar: user.photoURL || null,
+        action: "ExportouBackup",
+        metadata: "JSON",
+        projectName,
+        workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+      });
+    }
     toast.success(`Backup do projeto "${projectName}" baixado!`);
+  };
+
+  const fetchScriptScenes = async (script: ScriptDoc): Promise<Scene[]> => {
+    try {
+      const vQ = query(
+        collection(db, "scripts", script.id, "versions"),
+        orderBy("createdAt", "desc"),
+        limit(1)
+      );
+      const vSnap = await getDocs(vQ);
+      if (!vSnap.empty) {
+        const vData = vSnap.docs[0].data();
+        const rawContent = vData.content || "";
+        let loadedScenes = vData.scenes || [];
+        if (loadedScenes.length === 0 && rawContent) {
+          loadedScenes = parseScript(rawContent);
+        }
+        return loadedScenes.map((s: Scene) => ({ ...s }));
+      }
+    } catch (e) {
+      console.error(`Erro ao buscar cenas do roteiro "${script.title}":`, e);
+    }
+    return [];
+  };
+
+  const handleExportProjectWord = async (projectName: string, projectScripts: ScriptDoc[]) => {
+    setExportingProject(projectName);
+    try {
+      const scriptsWithScenes = await Promise.all(
+        projectScripts.map(async (script) => ({
+          title: script.title,
+          path: script.path,
+          folder: script.folder,
+          subfolder: script.subfolder,
+          lesson: script.lesson,
+          editorName: script.editorName,
+          reviewerName: script.reviewerName,
+          videomakerName: script.videomakerName,
+          scenes: await fetchScriptScenes(script),
+        }))
+      );
+      await exportAllToWord(projectName, scriptsWithScenes);
+      if (user) {
+        const { logActivity } = await import("@/lib/activity");
+        await logActivity({
+          userId: user.uid,
+          userName: user.displayName || user.name || user.email || "Usuário",
+          userAvatar: user.photoURL || null,
+          action: "ExportouBackup",
+          metadata: "Word",
+          projectName,
+          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+        });
+      }
+      toast.success(`Word exportado com sucesso para o projeto "${projectName}"!`);
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao exportar para Word.");
+    } finally {
+      setExportingProject(null);
+    }
+  };
+
+  const handleExportProjectPPT = async (projectName: string, projectScripts: ScriptDoc[]) => {
+    setExportingProject(projectName);
+    try {
+      const scriptsWithScenes = await Promise.all(
+        projectScripts.map(async (script) => ({
+          title: script.title,
+          path: script.path,
+          folder: script.folder,
+          subfolder: script.subfolder,
+          lesson: script.lesson,
+          editorName: script.editorName,
+          reviewerName: script.reviewerName,
+          videomakerName: script.videomakerName,
+          scenes: await fetchScriptScenes(script),
+        }))
+      );
+      await exportAllToPPT(projectName, scriptsWithScenes);
+      if (user) {
+        const { logActivity } = await import("@/lib/activity");
+        await logActivity({
+          userId: user.uid,
+          userName: user.displayName || user.name || user.email || "Usuário",
+          userAvatar: user.photoURL || null,
+          action: "ExportouBackup",
+          metadata: "PPT",
+          projectName,
+          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+        });
+      }
+      toast.success(`PPT exportado com sucesso para o projeto "${projectName}"!`);
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao exportar para PPT.");
+    } finally {
+      setExportingProject(null);
+    }
   };
 
   const handleCreateFolderClick = (projectName: string) => {
@@ -155,6 +279,44 @@ function DashboardContent() {
 
   const projectIdFilter = searchParams.get("projectId");
   const selectedProject = projects.find(p => p.id === projectIdFilter);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("teleprompt_dashboard_filters");
+    if (saved) {
+      try {
+        const p = JSON.parse(saved);
+        if (p.statusFilter) setStatusFilter(p.statusFilter);
+        if (p.filterCommenter) setFilterCommenter(p.filterCommenter);
+        if (typeof p.showConcluded === "boolean") setShowConcluded(p.showConcluded);
+      } catch {}
+    }
+
+    const statusParam = searchParams.get("status");
+    const commenterParam = searchParams.get("commenter");
+    const concludedParam = searchParams.get("concluded");
+    if (statusParam) setStatusFilter(statusParam as ScriptStatus | "all");
+    if (commenterParam) setFilterCommenter(commenterParam);
+    if (concludedParam === "1") setShowConcluded(true);
+    else if (concludedParam === "0") setShowConcluded(false);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("teleprompt_dashboard_filters", JSON.stringify({
+      statusFilter,
+      filterCommenter,
+      showConcluded,
+    }));
+  }, [statusFilter, filterCommenter, showConcluded]);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (projectIdFilter) params.set("projectId", projectIdFilter);
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (filterCommenter !== "all") params.set("commenter", filterCommenter);
+    params.set("concluded", showConcluded ? "1" : "0");
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState(null, "", newUrl);
+  }, [statusFilter, filterCommenter, showConcluded, projectIdFilter]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -243,11 +405,30 @@ function DashboardContent() {
 
   const handleDeleteProject = async (e: React.MouseEvent, projectId: string) => {
     e.stopPropagation();
-    if (!confirm("Tem certeza que deseja excluir este projeto?")) return;
+    setDeleteConfirmProject(projectId);
+  };
+
+  const confirmDeleteProject = async () => {
+    if (!deleteConfirmProject) return;
+    const projectId = deleteConfirmProject;
+    const projectName = projects.find(p => p.id === projectId)?.name || "";
+    setDeleteConfirmProject(null);
     try {
       await deleteZeckiProject(projectId);
       setProjects(projects.filter(p => p.id !== projectId));
       if (projectIdFilter === projectId) router.push("/dashboard");
+      if (user) {
+        const { logActivity } = await import("@/lib/activity");
+        await logActivity({
+          userId: user.uid,
+          userName: user.displayName || user.name || user.email || "Usuário",
+          action: "ExcluiuProjeto",
+          projectId,
+          projectName,
+          snapshot: projects.find(p => p.id === projectId) as unknown as Record<string, unknown> | undefined,
+          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+        });
+      }
       toast.success("Projeto excluído com sucesso!");
     } catch {
       toast.error("Erro ao excluir projeto.");
@@ -345,10 +526,27 @@ function DashboardContent() {
   const confirmDeleteScript = async () => {
     if (!deleteConfirmScript) return;
     const id = deleteConfirmScript;
+    const scriptData = scripts.find(s => s.id === id);
     setDeleteConfirmScript(null);
     try {
       await deleteDoc(doc(db, "scripts", id));
       setScripts(scripts.filter(s => s.id !== id));
+      if (user) {
+        const { logActivity } = await import("@/lib/activity");
+        await logActivity({
+          userId: user.uid,
+          userName: user.displayName || user.name || user.email || "Usuário",
+          userAvatar: user.photoURL || null,
+          action: "ExcluiuRoteiro",
+          scriptId: id,
+          scriptTitle: scriptData?.title || "",
+          projectId: scriptData?.projectId || null,
+          projectName: scriptData?.projectName || scriptData?.project || null,
+          path: scriptData?.path || null,
+          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+          snapshot: scriptData as unknown as Record<string, unknown>,
+        });
+      }
       toast.success("Roteiro excluído com sucesso.");
     } catch (e) {
       console.error(e);
@@ -367,6 +565,7 @@ function DashboardContent() {
   const confirmDeleteFolder = async () => {
     if (!deleteConfirmFolder) return;
     const folderScripts = deleteConfirmFolder;
+    const folderName = folderScripts[0]?.path?.slice(-1)[0] || "Pasta";
     setDeleteConfirmFolder(null);
     try {
       const batch = writeBatch(db);
@@ -376,6 +575,23 @@ function DashboardContent() {
       await batch.commit();
       
       setScripts(scripts.filter(s => !folderScripts.some(fs => fs.id === s.id)));
+      if (user) {
+        const { logActivity } = await import("@/lib/activity");
+        const folderSnapshot: Record<string, unknown> = {};
+        folderScripts.forEach(s => { folderSnapshot[`snapshot_${s.id}`] = s as unknown as Record<string, unknown>; });
+        await logActivity({
+          userId: user.uid,
+          userName: user.displayName || user.name || user.email || "Usuário",
+          userAvatar: user.photoURL || null,
+          action: "ExcluiuPasta",
+          projectName: folderScripts[0]?.projectName || folderScripts[0]?.project || null,
+          path: folderScripts[0]?.path || null,
+          folder: folderName,
+          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+          snapshotIds: folderScripts.map(s => s.id),
+          snapshot: folderSnapshot,
+        });
+      }
       toast.success("Pasta excluída com sucesso.");
     } catch (e) {
       console.error(e);
@@ -413,8 +629,29 @@ function DashboardContent() {
       });
 
       await batch.commit();
+
+      const project = projects.find(p => p.name === oldName);
+      if (project) {
+        await updateZeckiProject(project.id, { name: newProjectTitle });
+      }
+
       setScripts(scripts.map(s => (s.projectName || s.project || "Geral") === oldName ? { ...s, projectName: newProjectTitle } : s));
+      setProjects(projects.map(p => p.name === oldName ? { ...p, name: newProjectTitle } : p));
       setEditingProjectName(null);
+      if (user) {
+        const { logActivity } = await import("@/lib/activity");
+        await logActivity({
+          userId: user.uid,
+          userName: user.displayName || user.name || user.email || "Usuário",
+          userAvatar: user.photoURL || null,
+          action: "EditouProjeto",
+          projectId: project?.id || null,
+          projectName: newProjectTitle,
+          metadata: `Renomeado de "${oldName}"`,
+          snapshot: { previousName: oldName, previousCode: project?.code || "" } as Record<string, unknown>,
+          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+        });
+      }
       toast.success("Projeto renomeado com sucesso!");
     } catch (e) {
       console.error(e);
@@ -461,19 +698,23 @@ function DashboardContent() {
     return acc;
   }, {} as Record<string, ScriptDoc[]>);
 
+  const terminalStatuses = new Set(["gravado", "rejeitado"]);
+  const concludedProjects = new Set<string>();
+  Object.entries(scriptsByProject).forEach(([name, projectScripts]) => {
+    const allTerminal = projectScripts.every(s => terminalStatuses.has(s.status));
+    if (allTerminal) concludedProjects.add(name);
+  });
+
+  const visibleProjects = showConcluded
+    ? scriptsByProject
+    : Object.fromEntries(
+        Object.entries(scriptsByProject).filter(([name]) => !concludedProjects.has(name))
+      );
+
   return (
     <div className="container mx-auto py-10 px-4 max-w-6xl">
       <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-black tracking-tight flex items-center gap-3">
-             {selectedProject ? `Projeto: ${selectedProject.name}` : "Meus Roteiros"}
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            {selectedProject 
-              ? `Gerenciando roteiros do projeto ${selectedProject.name}.` 
-              : "Gerencie seus Roteiros do Teleprompter aqui."}
-          </p>
-        </div>
+       
         <div className="flex gap-3">
           <Button 
             variant="outline" 
@@ -515,7 +756,16 @@ function DashboardContent() {
           </Button>
         </div>
       </div>
-
+ <div>
+          <h1 className="text-3xl font-black tracking-tight flex items-center gap-3">
+             {selectedProject ? `Projeto: ${selectedProject.name}` : "Meus Roteiros"}
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            {selectedProject 
+              ? `Gerenciando roteiros do projeto ${selectedProject.name}.` 
+              : "Gerencie seus Roteiros do Teleprompter aqui."}
+          </p>
+        </div>
       <div className="mb-10">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-bold uppercase tracking-widest text-zinc-500 flex items-center gap-2">
@@ -607,8 +857,28 @@ function DashboardContent() {
         })}
       </div>
 
-      {allCommenters.length > 0 && (
-        <div className="flex items-center gap-4 mb-8">
+      <div className="flex items-center gap-4 mb-8">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            const allNames = Object.keys(scriptsByProject);
+            const allCollapsed = allNames.every(n => collapsedProjects.has(n));
+            if (allCollapsed) {
+              setCollapsedProjects(new Set());
+            } else {
+              setCollapsedProjects(new Set(allNames));
+            }
+          }}
+          className="h-7 text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-zinc-600 gap-1.5"
+        >
+          {Object.keys(scriptsByProject).every(n => collapsedProjects.has(n)) ? (
+            <><ChevronDown className="w-3.5 h-3.5" /> Expandir Todos</>
+          ) : (
+            <><ChevronRight className="w-3.5 h-3.5" /> Minimizar Todos</>
+          )}
+        </Button>
+        {allCommenters.length > 0 && (
           <div className="flex items-center gap-2 px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800">
             <MessageSquare className="w-4 h-4 text-blue-500" />
             <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Comentários de:</span>
@@ -624,8 +894,20 @@ function DashboardContent() {
               </SelectContent>
             </Select>
           </div>
+        )}
+        <div className="flex items-center gap-2 px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800">
+          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Concluídos:</span>
+          <Select value={showConcluded ? "show" : "hide"} onValueChange={(v) => setShowConcluded(v === "show")}>
+            <SelectTrigger className="w-[140px] h-7 border-none bg-transparent shadow-none text-[10px] font-bold focus:ring-0">
+              <SelectValue placeholder={showConcluded ? "Mostrar" : `Ocultar (${concludedProjects.size})`} />
+            </SelectTrigger>
+            <SelectContent className="rounded-xl border-zinc-200 dark:border-zinc-800">
+              <SelectItem value="hide" className="text-[10px] font-black uppercase">Ocultar ({concludedProjects.size})</SelectItem>
+              <SelectItem value="show" className="text-[10px] font-black uppercase">Mostrar</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-      )}
+      </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -643,7 +925,7 @@ function DashboardContent() {
         </div>
       ) : (
         <div className="space-y-16">
-          {Object.entries(scriptsByProject)
+          {Object.entries(visibleProjects)
             .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: "base" }))
             .map(([projectName, projectScripts]) => {
               const tree = buildTree(projectScripts);
@@ -688,6 +970,11 @@ function DashboardContent() {
                           <h2 className="text-lg font-black tracking-tight text-zinc-900 dark:text-zinc-100 uppercase tracking-widest">
                             {projectName}
                           </h2>
+                          {concludedProjects.has(projectName) && (
+                            <Badge className="bg-zinc-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5">
+                              CONCLUÍDO
+                            </Badge>
+                          )}
                           <button
                             onClick={e => { e.stopPropagation(); setEditingProjectName(projectName); setNewProjectTitle(projectName); }}
                             className="opacity-0 group-hover/header:opacity-100 p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-all"
@@ -709,14 +996,49 @@ function DashboardContent() {
                       >
                         <FolderPlus className="w-3.5 h-3.5 mr-1.5" /> NOVA PASTA
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-emerald-500"
-                        onClick={() => handleDownloadProjectBackup(projectName, projectScripts)}
-                      >
-                        <Download className="w-3.5 h-3.5 mr-1.5" /> BACKUP
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-emerald-500"
+                            disabled={exportingProject === projectName}
+                          >
+                            {exportingProject === projectName ? (
+                              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                            ) : (
+                              <Download className="w-3.5 h-3.5 mr-1.5" />
+                            )}
+                            {exportingProject === projectName ? "EXPORTANDO..." : "BACKUP"}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="rounded-xl border-zinc-200 dark:border-zinc-800 min-w-[200px]">
+                          <DropdownMenuItem
+                            className="text-[11px] font-bold gap-3 py-2.5 cursor-pointer"
+                            onClick={() => handleDownloadProjectBackup(projectName, projectScripts)}
+                          >
+                            <Download className="w-4 h-4 text-emerald-500" />
+                            Backup JSON
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-[11px] font-bold gap-3 py-2.5 cursor-pointer"
+                            onClick={() => handleExportProjectWord(projectName, projectScripts)}
+                            disabled={exportingProject === projectName}
+                          >
+                            <FileText className="w-4 h-4 text-blue-500" />
+                            Exportar Word (.docx)
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-[11px] font-bold gap-3 py-2.5 cursor-pointer"
+                            onClick={() => handleExportProjectPPT(projectName, projectScripts)}
+                            disabled={exportingProject === projectName}
+                          >
+                            <Video className="w-4 h-4 text-orange-500" />
+                            Exportar PPT (.pptx)
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -768,10 +1090,21 @@ function DashboardContent() {
                         }}
                         onMoveFolder={(folderPath) => { setMovingFolder({ path: folderPath, projectId: pid, projectName: projectName }); setIsMoveFolderOpen(true); }}
                         onDeleteFolder={deleteFolder}
+                        onBackupFolder={(folderPath, folderScripts, format) => {
+                          const scripts = folderScripts.filter(s => !s.isPlaceholder);
+                          const folderLabel = `${projectName} > ${folderPath.join(" > ")}`;
+                          if (format === 'json') {
+                            handleDownloadProjectBackup(folderLabel, scripts);
+                          } else if (format === 'word') {
+                            handleExportProjectWord(folderLabel, scripts);
+                          } else if (format === 'ppt') {
+                            handleExportProjectPPT(folderLabel, scripts);
+                          }
+                        }}
                         renderScripts={(scripts) => (
                           <>
                             {scripts.filter(s => !s.isPlaceholder).map(script => (
-                              <div key={script.id} className="min-w-[300px] md:min-w-[350px] snap-start relative pl-2">
+                              <div key={script.id} className="min-w-[400px] md:min-w-[450px] snap-start relative pl-2">
                                 {script.status === "rascunho" && (
                                   <div className="absolute -top-1 -right-1 z-20 bg-orange-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
                                     <FileText className="w-3 h-3" /> Rascunho
@@ -888,34 +1221,32 @@ function DashboardContent() {
                                     </div>
                                   </CardContent>
 
-                                  <CardFooter className="bg-zinc-50/50 dark:bg-zinc-900/50 border-t border-zinc-100 dark:border-zinc-800/50 p-3 h-12 flex justify-between">
-                                    <div className="flex items-center gap-1">
-                                      <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
-                                        onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/tp/${script.id}`); toast.success("Link copiado!"); }}>
-                                        <LinkIcon className="w-3 h-3 mr-1.5" /> Link
+                                  <CardFooter className="bg-zinc-50/50 dark:bg-zinc-900/50 border-t border-zinc-100 dark:border-zinc-800/50 p-2 flex flex-wrap gap-0.5">
+                                    <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
+                                      onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/tp/${script.id}`); toast.success("Link copiado!"); }}>
+                                      <LinkIcon className="w-3 h-3 mr-1" /> Link
+                                    </Button>
+                                    {script.isPlaceholder && (
+                                      <Button 
+                                        variant="ghost" 
+                                        size="sm" 
+                                        className="h-7 text-[9px] font-black text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 uppercase tracking-widest px-1"
+                                        onClick={() => deleteScript(script.id)}
+                                      >
+                                        <Trash2 className="w-3 h-3" />
                                       </Button>
-                                      {script.isPlaceholder && (
-                                        <Button 
-                                          variant="ghost" 
-                                          size="sm" 
-                                          className="h-7 text-[9px] font-black text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 uppercase tracking-widest px-1"
-                                          onClick={() => deleteScript(script.id)}
-                                        >
-                                          <Trash2 className="w-3 h-3" />
-                                        </Button>
-                                      )}
-                                    </div>
+                                    )}
                                     <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
                                       onClick={() => setOpenCommentsScriptId(script.id)}>
-                                      <MessageSquare className="w-3 h-3 mr-1.5" /> Comentar
+                                      <MessageSquare className="w-3 h-3 mr-1" /> Comentar
                                     </Button>
                                     <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
                                       onClick={() => setMovingScript(script)}>
-                                      <FolderInput className="w-3 h-3 mr-1.5" /> Mover
+                                      <FolderInput className="w-3 h-3 mr-1" /> Mover
                                     </Button>
                                     {(user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br" || user?.role === "SuperAdmin") && (
                                       <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-blue-500 uppercase tracking-widest" onClick={() => setAssigningScript(script)}>
-                                        <UserPlus className="w-3 h-3 mr-1.5" /> Equipe
+                                        <UserPlus className="w-3 h-3 mr-1" /> Equipe
                                       </Button>
                                     )}
                                     <Button variant="ghost" size="sm" className="h-7 w-7 text-red-500/50 hover:text-red-500 hover:bg-red-500/10" onClick={() => deleteScript(script.id)}>
@@ -1021,6 +1352,7 @@ function DashboardContent() {
                   const docRef = await addDoc(collection(db, "scripts"), {
                     title: "Roteiro Inicial",
                     project: newFolderData.projectName,
+                    projectName: newFolderData.projectName,
                     projectId: pid,
                     path: finalPath,
                     status: "rascunho",
@@ -1252,6 +1584,22 @@ function DashboardContent() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={confirmDeleteScript} className="bg-red-600 hover:bg-red-700">Excluir</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Project Confirmation */}
+      <AlertDialog open={deleteConfirmProject !== null} onOpenChange={(open) => !open && setDeleteConfirmProject(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir Projeto</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir este projeto? O projeto será desativado, mas os roteiros permanecerão no dashboard.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteProject} className="bg-red-600 hover:bg-red-700">Excluir</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
