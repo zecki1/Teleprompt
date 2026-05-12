@@ -12,10 +12,20 @@ import {
   X,
   FolderInput,
   Trash2,
+  Download,
+  FileText,
+  Video,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { FolderNode, ScriptDoc } from "@/types/script";
 import { renameFolder } from "@/lib/pathUtils";
 import { toast } from "sonner";
@@ -57,6 +67,8 @@ interface FolderTreeProps {
   renderScripts: (scripts: ScriptDoc[], path: string[]) => React.ReactNode;
   /** Called when user wants to delete a folder */
   onDeleteFolder: (scripts: ScriptDoc[]) => void;
+  /** Called when user wants to backup a folder */
+  onBackupFolder?: (folderPath: string[], scripts: ScriptDoc[], format: 'json' | 'word' | 'ppt') => void;
   /** Initial depth (used internally for recursion) */
   depth?: number;
 }
@@ -72,6 +84,7 @@ export function FolderTree({
   onMoveFolder,
   renderScripts,
   onDeleteFolder,
+  onBackupFolder,
   depth = 0,
 }: FolderTreeProps) {
   const sortedEntries = Object.entries(nodes).sort((a, b) =>
@@ -93,6 +106,7 @@ export function FolderTree({
           onMoveFolder={onMoveFolder}
           renderScripts={renderScripts}
           onDeleteFolder={onDeleteFolder}
+          onBackupFolder={onBackupFolder}
           depth={depth}
         />
       ))}
@@ -111,6 +125,7 @@ interface FolderNodeItemProps {
   onMoveFolder: (folderPath: string[]) => void;
   renderScripts: (scripts: ScriptDoc[], path: string[]) => React.ReactNode;
   onDeleteFolder: (scripts: ScriptDoc[]) => void;
+  onBackupFolder?: (folderPath: string[], scripts: ScriptDoc[], format: 'json' | 'word' | 'ppt') => void;
   depth: number;
 }
 
@@ -125,6 +140,7 @@ function FolderNodeItem({
   onMoveFolder,
   renderScripts,
   onDeleteFolder,
+  onBackupFolder,
   depth,
 }: FolderNodeItemProps) {
   const [collapsed, setCollapsed] = useState(false);
@@ -275,6 +291,42 @@ function FolderNodeItem({
           >
             <FolderInput className="w-3 h-3 mr-0.5" /> Mover
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 text-[9px] font-black uppercase tracking-widest text-zinc-400 hover:text-emerald-500 px-2"
+                title="Fazer backup da pasta"
+              >
+                <Download className="w-3 h-3 mr-0.5" /> Backup
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="rounded-xl border-zinc-200 dark:border-zinc-800 min-w-[160px]">
+              <DropdownMenuItem
+                className="text-[10px] font-bold gap-2 py-2 cursor-pointer"
+                onClick={() => onBackupFolder?.(node.fullPath, node.allScriptsRecursive, 'json')}
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-500" />
+                Backup JSON
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-[10px] font-bold gap-2 py-2 cursor-pointer"
+                onClick={() => onBackupFolder?.(node.fullPath, node.allScriptsRecursive, 'word')}
+              >
+                <FileText className="w-3.5 h-3.5 text-blue-500" />
+                Exportar Word (.docx)
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-[10px] font-bold gap-2 py-2 cursor-pointer"
+                onClick={() => onBackupFolder?.(node.fullPath, node.allScriptsRecursive, 'ppt')}
+              >
+                <Video className="w-3.5 h-3.5 text-orange-500" />
+                Exportar PPT (.pptx)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="ghost"
             size="sm"
@@ -321,6 +373,7 @@ function FolderNodeItem({
               onMoveFolder={onMoveFolder}
               renderScripts={renderScripts}
               onDeleteFolder={onDeleteFolder}
+              onBackupFolder={onBackupFolder}
               depth={depth + 1}
             />
           )}

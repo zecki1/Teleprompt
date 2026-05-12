@@ -43,7 +43,14 @@ import {
   Calendar,
   Shield,
   Eye,
-  Link2 as LinkIcon
+  Link2 as LinkIcon,
+  RotateCcw,
+  Trash2,
+  Download,
+  FileText,
+  Video,
+  CheckCircle2,
+  Edit2,
 } from "lucide-react";
 import { 
   Select, 
@@ -57,6 +64,17 @@ import { toast } from "sonner";
 import { updateDoc, doc, serverTimestamp, collection, getDocs, query, orderBy, limit } from "firebase/firestore";
 import { db, dbZecki } from "@/lib/firebase";
 import { toDate } from "@/lib/firebase-utils";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { SENAI_WORKSPACE_ID } from "@/lib/constants";
 
 const roleConfig: Record<Role, { label: string; color: string; icon: React.ElementType }> = {
   "SuperAdmin": { label: "Super Admin", color: "bg-red-600", icon: ShieldAlert },
@@ -76,6 +94,20 @@ const roleConfig: Record<Role, { label: string; color: string; icon: React.Eleme
   "publico": { label: "Público", color: "bg-zinc-500", icon: Eye },
 };
 
+const actionConfig: Record<string, { label: string; color: string; icon: React.ElementType }> = {
+  Criou: { label: "Criou", color: "bg-zinc-100 text-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-400", icon: FileText },
+  Editou: { label: "Editou", color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", icon: FileText },
+  Revisou: { label: "Revisou", color: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400", icon: CheckCircle2 },
+  Gravou: { label: "Gravou", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400", icon: Video },
+  Comentou: { label: "Comentou", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400", icon: Activity },
+  ExcluiuRoteiro: { label: "Excluiu Roteiro", color: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400", icon: Trash2 },
+  ExcluiuPasta: { label: "Excluiu Pasta", color: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400", icon: Trash2 },
+  ExcluiuProjeto: { label: "Excluiu Projeto", color: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400", icon: Trash2 },
+   ExportouBackup: { label: "Exportou Backup", color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", icon: Download },
+   Reverteu: { label: "Reverteu", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400", icon: RotateCcw },
+   EditouProjeto: { label: "Editou Projeto", color: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400", icon: Edit2 },
+ };
+
 interface ActivityItem {
   id: string;
   userId?: string;
@@ -92,6 +124,7 @@ interface ActivityItem {
   path?: string[];
   workspaceId?: string;
   timestamp?: unknown;
+  metadata?: string | null;
 }
 
 export default function AdminPage() {
@@ -102,6 +135,9 @@ export default function AdminPage() {
   const [updating, setUpdating] = useState<string | null>(null);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(true);
+  const [revertingId, setRevertingId] = useState<string | null>(null);
+  const [revertConfirmId, setRevertConfirmId] = useState<string | null>(null);
+  const [actionFilter, setActionFilter] = useState<string>("all");
   
   const handleCopyInvite = () => {
     if (!user?.workspaceId) {
@@ -114,7 +150,6 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
-    // Apenas zecki1@hotmail.com ou ezequiel.rmoncao@sp.senai.br têm acesso ao painel de admin global por enquanto
     const isAdmin = user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br" || user?.role === "SuperAdmin";
     
     if (user && !isAdmin) {
@@ -133,7 +168,7 @@ export default function AdminPage() {
       const q = query(
         collection(db, "activities"),
         orderBy("timestamp", "desc"),
-        limit(50)
+        limit(100)
       );
       const snapshot = await getDocs(q);
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -142,6 +177,39 @@ export default function AdminPage() {
       console.error("Erro ao carregar atividades:", error);
     } finally {
       setLoadingActivities(false);
+    }
+  };
+
+  const handleRevert = async () => {
+    if (!revertConfirmId) return;
+    const id = revertConfirmId;
+    setRevertConfirmId(null);
+    setRevertingId(id);
+    try {
+      const { revertActivity } = await import("@/lib/activity");
+      const success = await revertActivity(id);
+      if (success) {
+        if (user) {
+          const { logActivity } = await import("@/lib/activity");
+          await logActivity({
+            userId: user.uid,
+            userName: user.displayName || user.name || user.email || "Usuário",
+            userAvatar: user.photoURL || null,
+            action: "Reverteu",
+            metadata: `Reverteu atividade ${id}`,
+            workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+          });
+        }
+        toast.success("Item restaurado com sucesso!");
+        loadActivities();
+      } else {
+        toast.error("Não foi possível reverter. Pode ter excedido 30 dias.");
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao reverter.");
+    } finally {
+      setRevertingId(null);
     }
   };
 
@@ -171,7 +239,7 @@ export default function AdminPage() {
     }
   };
 
-  const togglePermission = async (uid: string, field: 'isEditor' | 'isRevisor' | 'requiresChecklist', value: boolean) => {
+  const togglePermission = async (uid: string, field: 'isEditor' | 'isRevisor' | 'requiresChecklist' | 'canRevert', value: boolean) => {
     setUpdating(uid);
     try {
       const userRef = doc(dbZecki, "users", uid);
@@ -184,6 +252,7 @@ export default function AdminPage() {
       let label = "";
       if (field === 'isEditor') label = "Editor";
       else if (field === 'isRevisor') label = "Revisor";
+      else if (field === 'canRevert') label = "Reverter";
       else label = "Checklist";
 
       toast.success(`Permissão de "${label}" atualizada!`);
@@ -199,6 +268,23 @@ export default function AdminPage() {
     if (!name) return "U";
     return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
   };
+
+  const isRevertible = (action: string | undefined): boolean => {
+    return action === "ExcluiuRoteiro" || action === "ExcluiuPasta" || action === "ExcluiuProjeto"
+      || action === "EditouProjeto" || action === "Editou" || action === "Criou" || action === "Gravou";
+  };
+
+  const isWithin30Days = (timestamp: unknown): boolean => {
+    if (!timestamp) return false;
+    const date = toDate(timestamp);
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    return date > thirtyDaysAgo;
+  };
+
+  const filteredActivities = actionFilter === "all"
+    ? activities
+    : activities.filter(a => a.action === actionFilter);
 
   if (loading) {
     return (
@@ -216,7 +302,7 @@ export default function AdminPage() {
             <UserCog className="w-10 h-10 text-primary" />
             Administração
           </h1>
-          <p className="text-muted-foreground mt-2 text-lg">Gerencie usuários, cargos e permissões de todos os Workspaces.</p>
+          <p className="text-muted-foreground mt-2 text-lg">Gerencie usuários, cargos, permissões e histórico de ações.</p>
         </div>
         <div className="flex items-center gap-4">
           <Button 
@@ -248,7 +334,7 @@ export default function AdminPage() {
             <Shield className="w-4 h-4" /> Permissões e Cargos
           </TabsTrigger>
           <TabsTrigger value="atividades" className="rounded-xl px-8 h-full data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-800 data-[state=active]:shadow-lg font-bold flex gap-2">
-            <Activity className="w-4 h-4" /> Registro de Atividades
+            <Activity className="w-4 h-4" /> Histórico de Atividades
           </TabsTrigger>
         </TabsList>
 
@@ -368,9 +454,10 @@ export default function AdminPage() {
                 <TableHeader className="bg-zinc-50/30 dark:bg-zinc-900/30">
                   <TableRow className="hover:bg-transparent border-zinc-100 dark:border-zinc-900">
                     <TableHead className="w-[300px] h-14 px-8 font-bold text-zinc-900 dark:text-zinc-100">Colaborador</TableHead>
-                    <TableHead className="w-[150px] text-center font-bold text-zinc-900 dark:text-zinc-100">Editor</TableHead>
-                    <TableHead className="w-[150px] text-center font-bold text-zinc-900 dark:text-zinc-100">Revisor</TableHead>
-                    <TableHead className="w-[150px] text-center font-bold text-zinc-900 dark:text-zinc-100">Checklist</TableHead>
+                    <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Editor</TableHead>
+                    <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Revisor</TableHead>
+                    <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Reverter</TableHead>
+                    <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Checklist</TableHead>
                     <TableHead className="font-bold text-zinc-900 dark:text-zinc-100">Status Atual</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -410,6 +497,15 @@ export default function AdminPage() {
                       <TableCell className="text-center">
                         <div className="flex justify-center">
                           <Switch 
+                            checked={userItem.canRevert} 
+                            onCheckedChange={(val) => togglePermission(userItem.uid, 'canRevert', val)}
+                            disabled={updating === userItem.uid}
+                          />
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex justify-center">
+                          <Switch 
                             checked={userItem.requiresChecklist ?? true} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'requiresChecklist', val)}
                             disabled={updating === userItem.uid}
@@ -417,10 +513,11 @@ export default function AdminPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                         <div className="flex gap-2">
-                            {userItem.isEditor && <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-none">EDITOR</Badge>}
-                            {userItem.isRevisor && <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border-none">REVISOR</Badge>}
-                            {!userItem.isEditor && !userItem.isRevisor && <span className="text-zinc-400 text-xs italic">Sem atribuições</span>}
+                         <div className="flex gap-1 flex-wrap">
+                            {userItem.isEditor && <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-none text-[9px]">EDITOR</Badge>}
+                            {userItem.isRevisor && <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border-none text-[9px]">REVISOR</Badge>}
+                            {userItem.canRevert && <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-none text-[9px]">REVERTER</Badge>}
+                            {!userItem.isEditor && !userItem.isRevisor && !userItem.canRevert && <span className="text-zinc-400 text-xs italic">Sem atribuições</span>}
                          </div>
                       </TableCell>
                     </TableRow>
@@ -434,82 +531,124 @@ export default function AdminPage() {
         <TabsContent value="atividades">
           <Card className="border-none shadow-2xl bg-white dark:bg-zinc-950 overflow-hidden rounded-[32px]">
             <CardHeader className="bg-zinc-50/50 dark:bg-zinc-900/50 border-b border-zinc-100 dark:border-zinc-900 p-8">
-              <CardTitle className="text-2xl font-bold">Registro de Atividades</CardTitle>
-              <CardDescription className="text-base">
-                Histórico recente de ações realizadas pelos colaboradores no Teleprompter.
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-2xl font-bold">Histórico de Atividades</CardTitle>
+                  <CardDescription className="text-base">
+                    Registro completo de ações. Exclusões podem ser revertidas em até 30 dias.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Filtrar:</span>
+                  <Select value={actionFilter} onValueChange={setActionFilter}>
+                    <SelectTrigger className="w-[180px] h-9 rounded-xl border-zinc-200 dark:border-zinc-800 text-xs font-bold">
+                      <SelectValue placeholder="Todas" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl border-zinc-200 dark:border-zinc-800">
+                      <SelectItem value="all" className="text-xs font-bold">Todas</SelectItem>
+                      {Object.entries(actionConfig).map(([key, config]) => (
+                        <SelectItem key={key} value={key} className="text-xs font-bold">{config.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               <Table>
                 <TableHeader className="bg-zinc-50/30 dark:bg-zinc-900/30">
                   <TableRow className="hover:bg-transparent border-zinc-100 dark:border-zinc-900">
-                    <TableHead className="w-[250px] h-14 px-8 font-bold text-zinc-900 dark:text-zinc-100">Colaborador</TableHead>
-                    <TableHead className="w-[120px] font-bold text-zinc-900 dark:text-zinc-100">Ação</TableHead>
-                    <TableHead className="font-bold text-zinc-900 dark:text-zinc-100">Roteiro</TableHead>
-                    <TableHead className="w-[200px] font-bold text-zinc-900 dark:text-zinc-100">Projeto / Pasta</TableHead>
+                    <TableHead className="w-[220px] h-14 px-8 font-bold text-zinc-900 dark:text-zinc-100">Colaborador</TableHead>
+                    <TableHead className="w-[140px] font-bold text-zinc-900 dark:text-zinc-100">Ação</TableHead>
+                    <TableHead className="font-bold text-zinc-900 dark:text-zinc-100">Roteiro / Detalhes</TableHead>
+                    <TableHead className="w-[180px] font-bold text-zinc-900 dark:text-zinc-100">Projeto / Pasta</TableHead>
                     <TableHead className="text-right px-8 font-bold text-zinc-900 dark:text-zinc-100">Data/Hora</TableHead>
+                    <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100">Ação</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loadingActivities ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="h-32 text-center">
+                      <TableCell colSpan={6} className="h-32 text-center">
                         <Loader2 className="w-6 h-6 animate-spin mx-auto text-primary" />
                       </TableCell>
                     </TableRow>
-                  ) : activities.length === 0 ? (
+                  ) : filteredActivities.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="h-32 text-center text-muted-foreground italic">
+                      <TableCell colSpan={6} className="h-32 text-center text-muted-foreground italic">
                         Nenhuma atividade registrada ainda.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    activities.map((act) => (
-                      <TableRow key={act.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 border-zinc-100 dark:border-zinc-900 transition-colors group">
-                        <TableCell className="px-8 py-4">
-                          <div className="flex items-center gap-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src={act.userAvatar} />
-                              <AvatarFallback className="text-[10px] bg-zinc-100">{getInitials(act.userName)}</AvatarFallback>
-                            </Avatar>
-                            <span className="font-bold text-sm">{act.userName}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge 
-                            variant="outline" 
-                            className={`
-                              text-[10px] font-black uppercase tracking-widest px-2 h-5 border-none
-                              ${act.action === 'Gravou' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : ''}
-                              ${act.action === 'Editou' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : ''}
-                              ${act.action === 'Criou' ? 'bg-zinc-100 text-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-400' : ''}
-                            `}
-                          >
-                            {act.action}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-bold text-sm line-clamp-1">{act.scriptTitle}</span>
-                            <span className="text-[9px] text-muted-foreground font-mono">ID: {act.scriptId?.slice(0, 8)}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                           <div className="flex flex-col gap-0.5">
-                              <span className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-tighter">{act.projectName || "Geral"}</span>
-                              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">{act.folder || "Sem Pasta"}</span>
-                           </div>
-                        </TableCell>
-                        <TableCell className="text-right px-8 font-medium text-xs text-zinc-500">
-                          {act.timestamp ? toDate(act.timestamp).toLocaleString("pt-BR", {
-                            day: '2-digit',
-                            month: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          }) : "N/A"}
-                        </TableCell>
-                      </TableRow>
-                    ))
+                    filteredActivities.map((act) => {
+                      const actionConf = actionConfig[act.action || ""] || { label: act.action || "Desconhecido", color: "", icon: Activity };
+                      const ActionIcon = actionConf.icon;
+                      const canRevert = isRevertible(act.action) && isWithin30Days(act.timestamp) && (user?.canRevert || user?.role === "SuperAdmin");
+
+                      return (
+                        <TableRow key={act.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 border-zinc-100 dark:border-zinc-900 transition-colors group">
+                          <TableCell className="px-8 py-4">
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-8 w-8">
+                                <AvatarImage src={act.userAvatar} />
+                                <AvatarFallback className="text-[10px] bg-zinc-100">{getInitials(act.userName)}</AvatarFallback>
+                              </Avatar>
+                              <span className="font-bold text-sm">{act.userName}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge 
+                              variant="outline" 
+                              className={`text-[10px] font-black uppercase tracking-widest px-2 h-5 border-none ${actionConf.color}`}
+                            >
+                              <ActionIcon className="w-3 h-3 mr-1" />
+                              {actionConf.label}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="font-bold text-sm line-clamp-1">{act.scriptTitle || act.metadata || "-"}</span>
+                              {act.scriptId && <span className="text-[9px] text-muted-foreground font-mono">ID: {act.scriptId.slice(0, 8)}</span>}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                             <div className="flex flex-col gap-0.5">
+                                <span className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-tighter">{act.projectName || "Geral"}</span>
+                                {act.folder && <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">{act.folder}</span>}
+                                {act.metadata === "Word" && <span className="text-[9px] text-emerald-500 font-black">Word</span>}
+                                {act.metadata === "PPT" && <span className="text-[9px] text-orange-500 font-black">PPT</span>}
+                                {act.metadata === "JSON" && <span className="text-[9px] text-zinc-500 font-black">JSON</span>}
+                             </div>
+                          </TableCell>
+                          <TableCell className="text-right px-8 font-medium text-xs text-zinc-500">
+                            {act.timestamp ? toDate(act.timestamp).toLocaleString("pt-BR", {
+                              day: '2-digit',
+                              month: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            }) : "N/A"}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {canRevert ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                                onClick={() => setRevertConfirmId(act.id)}
+                                disabled={revertingId === act.id}
+                              >
+                                {revertingId === act.id ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="w-3 h-3 mr-1" />
+                                )}
+                                Reverter
+                              </Button>
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
                   )}
                 </TableBody>
               </Table>
@@ -517,7 +656,24 @@ export default function AdminPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Revert Confirmation */}
+      <AlertDialog open={revertConfirmId !== null} onOpenChange={(open) => !open && setRevertConfirmId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reverter Ação</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja reverter esta ação? O estado anterior será restaurado. Esta ação é registrada no histórico.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRevert} className="bg-blue-600 hover:bg-blue-700">
+              Reverter
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
-

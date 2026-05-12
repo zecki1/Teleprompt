@@ -505,6 +505,8 @@ function EditorContent({ id }: { id: string }) {
         })
       });
 
+      let previousScriptData: Record<string, unknown> | undefined;
+
       if (isNew) {
         const docRef = await addDoc(collection(db, "scripts"), {
           ...saveData,
@@ -515,6 +517,8 @@ function EditorContent({ id }: { id: string }) {
         });
         currentScriptId = docRef.id;
       } else {
+        const prevSnap = await getDoc(doc(db, "scripts", currentScriptId));
+        previousScriptData = prevSnap.data() as Record<string, unknown> | undefined;
         await updateDoc(doc(db, "scripts", currentScriptId), saveData);
       }
 
@@ -542,6 +546,7 @@ function EditorContent({ id }: { id: string }) {
         subfolder: subfolder || null,
         lesson: lesson || null,
         path: path || null,
+        snapshot: previousScriptData,
         workspaceId: finalWorkspaceId
       });
 

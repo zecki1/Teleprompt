@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { fetchZeckiProjects as getProjects, ZeckiProject as Project, createZeckiProject as createProject, deleteZeckiProject as deleteProject } from "@/lib/zecki";
+import { fetchZeckiProjects as getProjects, ZeckiProject as Project, createZeckiProject as createProject, deleteZeckiProject as deleteProject, updateZeckiProject } from "@/lib/zecki";
 import { SENAI_WORKSPACE_ID } from "@/lib/constants";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,15 +34,20 @@ import {
   FolderOpen, 
   Loader2, 
   Link2, 
-  CheckCircle2,
   Calendar,
   Eye,
-  Trash2
+  Trash2,
+  Check,
+  Edit2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { collection, query, where, getDocs, writeBatch, doc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { ScriptDoc } from "@/types/script";
 
 export default function ProjectsPage() {
   const { user } = useAuth();
@@ -53,12 +58,35 @@ export default function ProjectsPage() {
   const [creating, setCreating] = useState(false);
   const [newProject, setNewProject] = useState({ name: "", code: "" });
   const [deleteConfirmProject, setDeleteConfirmProject] = useState<string | null>(null);
+  const [scriptsByProject, setScriptsByProject] = useState<Record<string, ScriptDoc[]>>({});
+  const [editingProjectCode, setEditingProjectCode] = useState<string | null>(null);
+  const [editCodeValue, setEditCodeValue] = useState("");
+  const [editingProjectName, setEditingProjectName] = useState<string | null>(null);
+  const [editNameValue, setEditNameValue] = useState("");
 
   const loadProjects = useCallback(async () => {
     try {
       const workspaceId = user?.workspaceId || SENAI_WORKSPACE_ID;
       const projectsData = await getProjects(workspaceId);
       setProjects(projectsData);
+
+      const scriptsRef = collection(db, "scripts");
+      const q = workspaceId === SENAI_WORKSPACE_ID
+        ? query(scriptsRef)
+        : query(scriptsRef, where("workspaceId", "==", workspaceId));
+      const snapshot = await getDocs(q);
+      const allScripts = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as ScriptDoc[];
+
+      const grouped: Record<string, ScriptDoc[]> = {};
+      allScripts.forEach(s => {
+        const pName = s.projectName || s.project || "Geral";
+        if (!grouped[pName]) grouped[pName] = [];
+        grouped[pName].push(s);
+      });
+      setScriptsByProject(grouped);
     } catch (error) {
       console.error("Erro ao carregar projetos:", error);
     } finally {
@@ -71,9 +99,14 @@ export default function ProjectsPage() {
       router.push("/login");
       return;
     }
-
     loadProjects();
   }, [user, router, loadProjects]);
+
+  const isProjectConcluded = (projectName: string): boolean => {
+    const projectScripts = scriptsByProject[projectName] || [];
+    if (projectScripts.length === 0) return true;
+    return projectScripts.every(s => s.status === "gravado" || s.status === "rejeitado");
+  };
 
   const handleCreateProject = async () => {
     if (!newProject.name.trim() || !newProject.code.trim()) return;
@@ -92,9 +125,6 @@ export default function ProjectsPage() {
       setProjects([created, ...projects]);
       setIsCreateOpen(false);
       setNewProject({ name: "", code: "" });
-      
-      // Aqui futuramente chamaria API para criar no Zecki
-      console.log("Projeto criado:", created);
     } catch (error) {
       console.error("Erro ao criar projeto:", error);
     } finally {
@@ -110,10 +140,23 @@ export default function ProjectsPage() {
   const confirmDeleteProject = async () => {
     if (!deleteConfirmProject) return;
     const projectId = deleteConfirmProject;
+    const projectName = projects.find(p => p.id === projectId)?.name || "";
     setDeleteConfirmProject(null);
     try {
       await deleteProject(projectId);
       setProjects(projects.filter(p => p.id !== projectId));
+      if (user) {
+        const { logActivity } = await import("@/lib/activity");
+        await logActivity({
+          userId: user.uid,
+          userName: user.displayName || user.name || user.email || "Usuário",
+          action: "ExcluiuProjeto",
+          projectId,
+          projectName,
+          snapshot: projects.find(p => p.id === projectId) as unknown as Record<string, unknown> | undefined,
+          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+        });
+      }
       toast.success("Projeto excluído com sucesso!");
     } catch (error) {
       console.error("Erro ao excluir projeto:", error);
@@ -128,6 +171,84 @@ export default function ProjectsPage() {
       .slice(0, 3);
     const num = String(projects.length + 1).padStart(3, "0");
     return `${prefix}-${num}`;
+  };
+
+  const handleEditCode = (projectId: string, currentCode: string) => {
+    setEditingProjectCode(projectId);
+    setEditCodeValue(currentCode);
+  };
+
+  const handleSaveCode = async (projectId: string) => {
+    if (!editCodeValue.trim()) {
+      setEditingProjectCode(null);
+      return;
+    }
+    try {
+      await updateZeckiProject(projectId, { code: editCodeValue.trim() });
+      setProjects(projects.map(p => p.id === projectId ? { ...p, code: editCodeValue.trim() } : p));
+      if (user) {
+        const { logActivity } = await import("@/lib/activity");
+        const project = projects.find(p => p.id === projectId);
+        await logActivity({
+          userId: user.uid,
+          userName: user.displayName || user.name || user.email || "Usuário",
+          action: "EditouProjeto",
+          projectId,
+          projectName: project?.name || "",
+          metadata: `Código alterado para "${editCodeValue.trim()}"`,
+          snapshot: { previousName: project?.name || "", previousCode: project?.code || "" } as Record<string, unknown>,
+          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+        });
+      }
+      toast.success("Código do projeto atualizado!");
+    } catch {
+      toast.error("Erro ao atualizar código.");
+    }
+    setEditingProjectCode(null);
+  };
+
+  const handleEditName = (projectId: string, currentName: string) => {
+    setEditingProjectName(projectId);
+    setEditNameValue(currentName);
+  };
+
+  const handleSaveName = async (projectId: string, oldName: string) => {
+    if (!editNameValue.trim() || editNameValue.trim() === oldName) {
+      setEditingProjectName(null);
+      return;
+    }
+    const newName = editNameValue.trim();
+    try {
+      await updateZeckiProject(projectId, { name: newName });
+      setProjects(projects.map(p => p.id === projectId ? { ...p, name: newName } : p));
+
+      const scriptsRef = collection(db, "scripts");
+      const q = query(scriptsRef, where("projectName", "==", oldName));
+      const snapshot = await getDocs(q);
+      const fbBatch = writeBatch(db);
+      snapshot.docs.forEach(d => fbBatch.update(doc(db, "scripts", d.id), { projectName: newName }));
+      await fbBatch.commit();
+
+      if (user) {
+        const { logActivity } = await import("@/lib/activity");
+        const project = projects.find(p => p.id === projectId);
+        await logActivity({
+          userId: user.uid,
+          userName: user.displayName || user.name || user.email || "Usuário",
+          action: "EditouProjeto",
+          projectId,
+          projectName: newName,
+          metadata: `Renomeado de "${oldName}"`,
+          snapshot: { previousName: oldName, previousCode: project?.code || "" } as Record<string, unknown>,
+          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+        });
+      }
+
+      toast.success("Projeto renomeado com sucesso!");
+    } catch {
+      toast.error("Erro ao renomear projeto.");
+    }
+    setEditingProjectName(null);
   };
 
   if (loading) {
@@ -220,80 +341,139 @@ export default function ProjectsPage() {
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {projects.map((project) => (
-            <Card 
-              key={project.id} 
-              className="hover:shadow-lg transition-all cursor-pointer group border-zinc-200 dark:border-zinc-800 "
-              onClick={() => router.push(`/dashboard?projectId=${project.id}`)}
-            >
-              <CardHeader className="pb-3 border-b border-zinc-100 dark:border-zinc-800/50 bg-zinc-50/50 dark:bg-zinc-900/50 pt-4">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <CardTitle className="text-lg group-hover:text-blue-600 transition-colors">{project.name}</CardTitle>
-                    <CardDescription className="font-mono text-xs mt-1 ">
-                      {project.code || "PB-000"}
-                    </CardDescription>
+          {projects.map((project) => {
+            const concluded = isProjectConcluded(project.name);
+            return (
+              <Card 
+                key={project.id} 
+                className={`hover:shadow-lg transition-all cursor-pointer group border-zinc-200 dark:border-zinc-800 ${
+                  concluded ? 'opacity-75 hover:opacity-100' : ''
+                }`}
+                onClick={() => router.push(`/dashboard?projectId=${project.id}`)}
+              >
+                <CardHeader className="pb-3 border-b border-zinc-100 dark:border-zinc-800/50 bg-zinc-50/50 dark:bg-zinc-900/50 pt-4">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      {editingProjectName === project.id ? (
+                        <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                          <Input
+                            value={editNameValue}
+                            onChange={e => setEditNameValue(e.target.value)}
+                            className="h-7 w-48 text-sm font-bold px-2"
+                            onKeyDown={e => { if (e.key === "Enter") handleSaveName(project.id, project.name); if (e.key === "Escape") setEditingProjectName(null); }}
+                            autoFocus
+                          />
+                          <Button size="icon" variant="ghost" className="h-6 w-6 text-green-500" onClick={() => handleSaveName(project.id, project.name)}>
+                            <Check className="w-3 h-3" />
+                          </Button>
+                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setEditingProjectName(null)}>
+                            <X className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <CardTitle className="text-lg group-hover:text-blue-600 transition-colors group/name">
+                          <span className="mr-1">{project.name}</span>
+                          <button
+                            onClick={e => { e.stopPropagation(); handleEditName(project.id, project.name); }}
+                            className="opacity-0 group-hover/name:opacity-100 inline-flex p-0.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-all"
+                          >
+                            <Edit2 className="w-3 h-3 text-zinc-400" />
+                          </button>
+                        </CardTitle>
+                      )}
+                      {editingProjectCode === project.id ? (
+                        <div className="flex items-center gap-1 mt-1" onClick={e => e.stopPropagation()}>
+                          <Input
+                            value={editCodeValue}
+                            onChange={e => setEditCodeValue(e.target.value)}
+                            className="h-7 w-24 text-[11px] font-mono font-bold px-2"
+                            onKeyDown={e => { if (e.key === "Enter") handleSaveCode(project.id); if (e.key === "Escape") setEditingProjectCode(null); }}
+                            autoFocus
+                          />
+                          <Button size="icon" variant="ghost" className="h-6 w-6 text-green-500" onClick={() => handleSaveCode(project.id)}>
+                            <Check className="w-3 h-3" />
+                          </Button>
+                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setEditingProjectCode(null)}>
+                            <X className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <CardDescription className="font-mono text-xs mt-1 group/code">
+                          <span className="mr-1">{project.code || "PB-000"}</span>
+                          <button
+                            onClick={e => { e.stopPropagation(); handleEditCode(project.id, project.code || ""); }}
+                            className="opacity-0 group-hover/code:opacity-100 inline-flex p-0.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-all"
+                          >
+                            <Edit2 className="w-2.5 h-2.5 text-zinc-400" />
+                          </button>
+                        </CardDescription>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {concluded && (
+                        <Badge className="bg-zinc-500 text-white text-[10px] font-black uppercase tracking-widest px-2 h-5 border-none">
+                          <Check className="w-3 h-3 mr-1" />
+                          Concluído
+                        </Badge>
+                      )}
+                      <Button 
+                        size="icon" 
+                        variant="ghost" 
+                        className="h-8 w-8 rounded-full hover:bg-emerald-100 hover:text-emerald-600 dark:hover:bg-emerald-900/30"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          router.push(`/editor/new?project=${encodeURIComponent(project.name)}&projectId=${project.id}`);
+                        }}
+                        title="Adicionar Novo Roteiro"
+                      >
+                        <PlusCircle className="w-5 h-5" />
+                      </Button>
+                      <Button 
+                        size="icon" 
+                        variant="ghost" 
+                        className="h-8 w-8 rounded-full hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30"
+                        onClick={(e) => handleDeleteProject(e, project.id)}
+                        title="Excluir Projeto"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                      <Badge variant={concluded ? "secondary" : "default"}>
+                        {concluded ? "Concluído" : "Ativo"}
+                      </Badge>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button 
-                      size="icon" 
-                      variant="ghost" 
-                      className="h-8 w-8 rounded-full hover:bg-emerald-100 hover:text-emerald-600 dark:hover:bg-emerald-900/30"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        router.push(`/editor/new?project=${encodeURIComponent(project.name)}&projectId=${project.id}`);
-                      }}
-                      title="Adicionar Novo Roteiro"
-                    >
-                      <PlusCircle className="w-5 h-5" />
-                    </Button>
-                    <Button 
-                      size="icon" 
-                      variant="ghost" 
-                      className="h-8 w-8 rounded-full hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30"
-                      onClick={(e) => handleDeleteProject(e, project.id)}
-                      title="Excluir Projeto"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                    <Badge variant={project.status === "active" ? "default" : "secondary"}>
-                      {project.status === "active" ? "Ativo" : project.status}
-                    </Badge>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="pb-5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4 text-sm text-zinc-500">
-                    <div className="flex items-center gap-1">
-                      <Calendar className="w-4 h-4" />
-                      {project.createdAt ? format(new Date(project.createdAt), "dd/MM/yyyy", { locale: ptBR }) : "N/A"}
+                </CardHeader>
+                <CardContent className="pb-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4 text-sm text-zinc-500">
+                      <div className="flex items-center gap-1">
+                        <Calendar className="w-4 h-4" />
+                        {project.createdAt ? format(new Date(project.createdAt), "dd/MM/yyyy", { locale: ptBR }) : "N/A"}
+                      </div>
+                    </div>
+                    
+                    <div className="text-[10px] font-bold text-blue-500 uppercase tracking-widest flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                      Ver Roteiros <Eye className="w-3 h-3" />
                     </div>
                   </div>
                   
-                  <div className="text-[10px] font-bold text-blue-500 uppercase tracking-widest flex items-center gap-1 group-hover:translate-x-1 transition-transform">
-                    Ver Roteiros <Eye className="w-3 h-3" />
-                  </div>
-                </div>
-                
-                {project.zeckiProjectId ? (
-                  <div className="mt-4 pt-4 border-t border-zinc-100 dark:border-zinc-800 flex items-center gap-2 text-[11px] text-emerald-600 font-medium">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>Sincronizado com Dashboard Zecki</span>
-                  </div>
-                ) : (
                   <div className="mt-4 pt-4 border-t border-zinc-100 dark:border-zinc-800 flex items-center gap-2 text-[11px] text-zinc-400">
                     <Link2 className="w-3.5 h-3.5" />
                     <span>Local</span>
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
+                  {concluded && (
+                    <div className="mt-2 pt-2 border-t border-zinc-100 dark:border-zinc-800 flex items-center gap-2 text-[11px] text-zinc-500">
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Todos os roteiros concluídos</span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
 
-      {/* Delete Project Confirmation */}
       <AlertDialog open={deleteConfirmProject !== null} onOpenChange={(open) => !open && setDeleteConfirmProject(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
