@@ -18,6 +18,16 @@ import {
   DialogTitle, 
   DialogTrigger 
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { 
   Plus, 
   PlusCircle,
@@ -42,6 +52,7 @@ export default function ProjectsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newProject, setNewProject] = useState({ name: "", code: "" });
+  const [deleteConfirmProject, setDeleteConfirmProject] = useState<string | null>(null);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -93,8 +104,13 @@ export default function ProjectsPage() {
 
   const handleDeleteProject = async (e: React.MouseEvent, projectId: string) => {
     e.stopPropagation();
-    if (!confirm("Tem certeza que deseja excluir este projeto? Os roteiros vinculados a ele continuarão existindo, mas sem projeto definido.")) return;
-    
+    setDeleteConfirmProject(projectId);
+  };
+
+  const confirmDeleteProject = async () => {
+    if (!deleteConfirmProject) return;
+    const projectId = deleteConfirmProject;
+    setDeleteConfirmProject(null);
     try {
       await deleteProject(projectId);
       setProjects(projects.filter(p => p.id !== projectId));
@@ -276,6 +292,22 @@ export default function ProjectsPage() {
           ))}
         </div>
       )}
+
+      {/* Delete Project Confirmation */}
+      <AlertDialog open={deleteConfirmProject !== null} onOpenChange={(open) => !open && setDeleteConfirmProject(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir Projeto</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir este projeto? Os roteiros vinculados a ele continuarão existindo, mas sem projeto definido.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteProject} className="bg-red-600 hover:bg-red-700">Excluir</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
