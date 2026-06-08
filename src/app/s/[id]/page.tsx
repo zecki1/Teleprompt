@@ -7,8 +7,9 @@ import { doc, getDoc, collection, query, orderBy, limit, getDocs, updateDoc, ser
 import { db } from "@/lib/firebase";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { 
-  Loader2, 
+  Hourglass,
   Lock, 
   Play, 
   ImageIcon, 
@@ -165,13 +166,7 @@ export default function PublicScriptPage({
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-zinc-950">
-        <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
-      </div>
-    );
-  }
+  if (loading) return <LoadingScreen />;
 
   if (error) {
     return (
@@ -235,7 +230,7 @@ export default function PublicScriptPage({
             </span>
             <div className="flex items-center gap-2">
               <Button onClick={() => handleUpdateStatus("aguardando_gravacao")} disabled={isUpdating} className="bg-green-600 text-white h-8 text-[10px]">
-                {isUpdating ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} className="mr-2" />} APROVAR
+                {isUpdating ? <Hourglass size={14} className="animate-spin" style={{ animationDuration: "2s" }} /> : <CheckCircle2 size={14} className="mr-2" />} APROVAR
               </Button>
               <Button variant="outline" onClick={() => handleUpdateStatus("rejeitado")} disabled={isUpdating} className="text-red-500 h-8 text-[10px]">
                 <XCircle size={14} className="mr-2" /> REJEITAR

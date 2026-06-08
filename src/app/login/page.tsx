@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import SigninWithPassword from "@/components/auth/SigninWithPassword";
 import SignupWithPassword from "@/components/auth/SignupWithPassword";
 import { useRouter, useSearchParams } from "next/navigation";
-import PageTransitionLoader from "@/components/PageTransitionLoader";
+import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTheme } from "next-themes";
@@ -59,11 +59,11 @@ export default function LoginPage() {
   }, [user, loading, router, redirectPath, inviteWorkspaceId, joinWorkspace]);
 
   if (loading) {
-    return <PageTransitionLoader />;
+    return <LoadingScreen />;
   }
 
   if (user) {
-    return <PageTransitionLoader />;
+    return <LoadingScreen />;
   }
 
   const formVariants = {

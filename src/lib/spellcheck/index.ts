@@ -11,7 +11,7 @@ const MIN_WORD_LENGTH = 2;
 
 let typoInstance: Typo | null = null;
 let supplementalSet: Set<string> | null = null;
-let loadingPromise: Promise<void> | null = null;
+const loadingPromise: Promise<void> | null = null;
 let listeners: Array<() => void> = [];
 
 async function loadDictionaries(): Promise<void> {

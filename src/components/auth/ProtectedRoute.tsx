@@ -4,7 +4,7 @@ import { useEffect, ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { Role } from "@/services/schemas";
-import { Loader2 } from "lucide-react";
+import { LoadingScreen } from "@/components/PageTransitionLoader";
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -41,13 +41,7 @@ export function ProtectedRoute({
     }
   }, [user, loading, pathname, router, fallbackPath, requiredRoles]);
 
-  if (loading) {
-    return (
-      <div className="min-h-[calc(100vh-64px)] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-      </div>
-    );
-  }
+  if (loading) return <LoadingScreen />;
 
   if (!user) {
     return null;

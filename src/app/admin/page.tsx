@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { ExtendedUser, Role, ROLES } from "@/services/schemas";
 import { getUsers, updateUserRole } from "@/services/users";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,7 +25,6 @@ import {
 } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { 
-  Loader2, 
   Users as UsersIcon, 
   ShieldAlert, 
   ShieldCheck, 
@@ -286,13 +286,7 @@ export default function AdminPage() {
     ? activities
     : activities.filter(a => a.action === actionFilter);
 
-  if (loading) {
-    return (
-      <div className="min-h-[calc(100vh-64px)] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  if (loading) return <LoadingScreen />;
 
   return (
     <div className="container mx-auto py-10 px-4 max-w-7xl">
@@ -570,7 +564,7 @@ export default function AdminPage() {
                   {loadingActivities ? (
                     <TableRow>
                       <TableCell colSpan={6} className="h-32 text-center">
-                        <Loader2 className="w-6 h-6 animate-spin mx-auto text-primary" />
+                        <LoadingScreen fullScreen={false} className="py-8" />
                       </TableCell>
                     </TableRow>
                   ) : filteredActivities.length === 0 ? (
@@ -638,7 +632,7 @@ export default function AdminPage() {
                                 disabled={revertingId === act.id}
                               >
                                 {revertingId === act.id ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                  <span className="w-3 h-3 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
                                 ) : (
                                   <RotateCcw className="w-3 h-3 mr-1" />
                                 )}

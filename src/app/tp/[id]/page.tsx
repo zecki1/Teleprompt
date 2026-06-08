@@ -28,8 +28,10 @@ import {
   MessageSquare,
   ChevronRight,
   ClipboardCheck,
-  Check
+  Check,
+  Hourglass,
 } from "lucide-react";
+import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { updateTaskVideomaker } from "@/lib/zecki";
@@ -66,9 +68,6 @@ function TeleprompterContent({ id }: { id: string }) {
   const [checklistDone, setChecklistDone] = useState(false);
   const [checklistLoading, setChecklistLoading] = useState(true);
   const [checklistItems, setChecklistItems] = useState({
-    estudio: false,
-    tp: false,
-    de: false,
     cartao: false,
     audio: false,
     imagem: false,
@@ -114,6 +113,8 @@ function TeleprompterContent({ id }: { id: string }) {
   const [bgColor, setBgColor] = useState("#000000");
   const [textColor, setTextColor] = useState("#ffffff");
   const [showReadingStrip, setShowReadingStrip] = useState(true);
+  const [referenceInches, setReferenceInches] = useState(11);
+  const [operatorInches, setOperatorInches] = useState(27);
 
   // CSS para ocultar marcadores no TP e garantir estabilidade na edição
   useEffect(() => {
@@ -349,6 +350,8 @@ function TeleprompterContent({ id }: { id: string }) {
         if (d.workspaceId) setWorkspaceId(d.workspaceId);
         if (d.editorId) setEditorId(d.editorId);
         if (typeof d.showReadingStrip === "boolean") setShowReadingStrip(d.showReadingStrip);
+        if (typeof d.referenceInches === "number") setReferenceInches(d.referenceInches);
+        if (typeof d.operatorInches === "number") setOperatorInches(d.operatorInches);
 
         if (d.resetRequest && d.resetRequest !== lastProcessedReset.current) {
           if (containerRef.current) containerRef.current.scrollTop = 0;
@@ -476,7 +479,7 @@ function TeleprompterContent({ id }: { id: string }) {
     }
   }, [fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, isMirrorWindow]);
   
-  if (loading) return <div className="fixed inset-0 bg-black flex items-center justify-center text-white font-bold animate-pulse">SINCRONIZANDO...</div>;
+  if (loading) return <LoadingScreen />;
 
   const handleSetRecorded = async () => {
     try {
@@ -649,7 +652,11 @@ function TeleprompterContent({ id }: { id: string }) {
         )}
         <div 
           className={`mx-auto px-12 py-[60vh] transition-all duration-300 relative ${fontFamily} ${maxWidth}`}
-          style={{ transform: isMirrored ? "scaleX(-1)" : "none", color: textColor }}
+          style={{ 
+            transform: isMirrored ? "scaleX(-1)" : "none", 
+            color: textColor,
+            zoom: !isMirrorWindow && referenceInches > 0 ? operatorInches / referenceInches : 1,
+          }}
         >
           {scenes.map((s, idx) => (
             <div 
@@ -797,6 +804,37 @@ function TeleprompterContent({ id }: { id: string }) {
                         }`} />
                       </button>
                     </div>
+                  </div>
+
+                  <div className="space-y-3 pt-4 border-t border-zinc-900">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><Monitor size={14}/> Compensação de Polegadas</p>
+                    <p className="text-[9px] text-zinc-600 leading-relaxed">Ajusta o texto no monitor principal para ficar proporcional ao da tela de retorno.</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <p className="text-[9px] text-zinc-600 uppercase font-bold">Tela Retorno</p>
+                        <div className="flex items-center gap-2">
+                          <input type="number" min={1} max={100} value={referenceInches}
+                            onChange={(e) => { const v = Number(e.target.value); if (v > 0) { setReferenceInches(v); updateGlobalStyle({ referenceInches: v }); } }}
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs font-bold text-white text-center" />
+                          <span className="text-[10px] text-zinc-600 font-bold">"</span>
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <p className="text-[9px] text-zinc-600 uppercase font-bold">Monitor Principal</p>
+                        <div className="flex items-center gap-2">
+                          <input type="number" min={1} max={100} value={operatorInches}
+                            onChange={(e) => { const v = Number(e.target.value); if (v > 0) { setOperatorInches(v); updateGlobalStyle({ operatorInches: v }); } }}
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs font-bold text-white text-center" />
+                          <span className="text-[10px] text-zinc-600 font-bold">"</span>
+                        </div>
+                      </div>
+                    </div>
+                    {referenceInches > 0 && (
+                      <p className="text-[10px] text-zinc-500 font-medium text-center">
+                        Escala: <span className="text-blue-400 font-bold">{(operatorInches / referenceInches).toFixed(2)}x</span>
+                        {operatorInches > referenceInches ? " (ampliado)" : operatorInches < referenceInches ? " (reduzido)" : ""}
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-3 pt-4 border-t border-zinc-900">
@@ -1012,9 +1050,6 @@ function TeleprompterContent({ id }: { id: string }) {
 
           <div className="p-8 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
             {[
-              // { id: 'estudio', label: 'Montar estúdio' },
-              // { id: 'tp', label: 'Verificar se tem que montar tp (conferir tamanho da letra, velocidade do texto na tela)' },
-              // { id: 'de', label: 'Ver se o DE vai acompanhar/atrapalhar' },
               { id: 'cartao', label: 'Conferir cartão de memória, formatar' },
               { id: 'audio', label: 'Conferir audio (volume, bateria do boya, conectar receptor na câmera, colocar mic no prof)' },
               { id: 'imagem', label: 'Conferir se a imagem na câmera está boa (velocidade, exposição, foco, zoom, câmera na altura dos olhos e as vezes bater o branco)' },
@@ -1094,7 +1129,7 @@ function TeleprompterContent({ id }: { id: string }) {
 export default function TeleprompterPageWrapper({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   return (
-    <Suspense fallback={<div className="fixed inset-0 bg-black flex items-center justify-center text-blue-500 font-black tracking-widest uppercase">Puxando Roteiro...</div>}>
+      <Suspense fallback={<LoadingScreen />}>
       <TeleprompterContent id={id} />
     </Suspense>
   );

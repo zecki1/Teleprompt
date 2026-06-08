@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Copy, Download } from "lucide-react";
+import { Hourglass, Copy, Download } from "lucide-react";
 import { toast } from "sonner";
 
 import { Text } from "@/components/providers/preferences-provider";
@@ -279,7 +279,7 @@ export default function VertexAIDemo() {
                 >
                   {loading ? (
                     <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      <Hourglass className="mr-2 h-4 w-4 animate-spin" style={{ animationDuration: "2s" }} />
                       <Text pt="Gerando..." en="Generating..." es="Generando..." />
                     </>
                   ) : (
@@ -375,7 +375,7 @@ export default function VertexAIDemo() {
                 >
                   {loading ? (
                     <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      <Hourglass className="mr-2 h-4 w-4 animate-spin" style={{ animationDuration: "2s" }} />
                       <Text pt="Gerando..." en="Generating..." es="Generando..." />
                     </>
                   ) : (
@@ -463,7 +463,7 @@ export default function VertexAIDemo() {
                 >
                   {loading ? (
                     <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      <Hourglass className="mr-2 h-4 w-4 animate-spin" style={{ animationDuration: "2s" }} />
                       <Text pt="Processando..." en="Processing..." es="Procesando..." />
                     </>
                   ) : (
@@ -537,7 +537,7 @@ export default function VertexAIDemo() {
                 >
                   {loading ? (
                     <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      <Hourglass className="mr-2 h-4 w-4 animate-spin" style={{ animationDuration: "2s" }} />
                       <Text pt="Analisando..." en="Analyzing..." es="Analizando..." />
                     </>
                   ) : (

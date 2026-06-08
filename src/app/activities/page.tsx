@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useMemo, useCallback } from "react";
+import { LoadingScreen } from "@/components/PageTransitionLoader";
 import {
   collection,
   query,
@@ -36,7 +37,7 @@ import {
   RotateCcw,
   FolderOpen,
   Briefcase,
-  Loader2,
+  Hourglass,
   User,
 } from "lucide-react";
 import Link from "next/link";
@@ -169,9 +170,7 @@ export default function ActivitiesPage() {
 
       <div className="container mx-auto px-4 py-6">
         {loading ? (
-          <div className="flex items-center justify-center h-32">
-            <Loader2 className="w-5 h-5 animate-spin text-zinc-400" />
-          </div>
+          <LoadingScreen fullScreen={false} />
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-zinc-400">
             <Clock className="w-12 h-12 mb-4" />

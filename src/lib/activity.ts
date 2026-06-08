@@ -27,11 +27,21 @@ export interface ActivityData {
   timestamp?: unknown;
 }
 
+function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      cleaned[key] = value;
+    }
+  }
+  return cleaned;
+}
+
 export async function logActivity(data: ActivityData) {
   try {
     const activityRef = collection(db, "activities");
     await addDoc(activityRef, {
-      ...data,
+      ...stripUndefined(data as unknown as Record<string, unknown>),
       timestamp: serverTimestamp(),
     });
   } catch (error) {

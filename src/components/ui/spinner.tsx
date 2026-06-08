@@ -1,13 +1,14 @@
-import { Loader2Icon } from "lucide-react"
+import { Hourglass } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
 function Spinner({ className, ...props }: React.ComponentProps<"svg">) {
   return (
-    <Loader2Icon
+    <Hourglass
       role="status"
       aria-label="Loading"
       className={cn("size-4 animate-spin", className)}
+      style={{ animationDuration: "2s" }}
       {...props}
     />
   )

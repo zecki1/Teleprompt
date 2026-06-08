@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Terminal, Menu, Maximize, LogOut, User, LayoutDashboard, FolderOpen, Users } from "lucide-react";
+import { Terminal, Menu, Maximize, LogOut, User, LayoutDashboard, FolderOpen, Users, BarChart3 } from "lucide-react";
 import { SettingsMenu } from "@/components/settings-menu";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -88,6 +88,15 @@ export function SiteHeader() {
               Administração
             </Link>
           )}
+          {isAdmin && (
+            <Link
+              href="/relatorio"
+              className="hover:text-primary transition-colors whitespace-nowrap flex items-center gap-1.5"
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              Relatórios
+            </Link>
+          )}
           {user && (
             <Button variant="default" size="sm" asChild className="ml-2">
               <Link href="/editor/new">
@@ -171,6 +180,12 @@ export function SiteHeader() {
                     Painel Admin
                   </DropdownMenuItem>
                 )}
+                {isAdmin && (
+                  <DropdownMenuItem onClick={() => router.push("/relatorio")}>
+                    <BarChart3 className="mr-2 h-4 w-4" />
+                    Relatórios
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => router.push("/profile")}>
                   <User className="mr-2 h-4 w-4" />
@@ -217,6 +232,12 @@ export function SiteHeader() {
                   {isAdmin && (
                     <Link href="/admin" className="text-lg font-bold text-blue-500 hover:text-primary transition-colors">
                       Administração
+                    </Link>
+                  )}
+                  {isAdmin && (
+                    <Link href="/relatorio" className="text-lg font-medium hover:text-primary transition-colors flex items-center gap-2">
+                      <BarChart3 className="w-4 h-4" />
+                      Relatórios
                     </Link>
                   )}
                   {user && (

@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 
 interface SpellCheckPopoverProps {
   word: string;
@@ -10,30 +11,53 @@ interface SpellCheckPopoverProps {
 
 export function SpellCheckWord({ word, suggestions, onApply }: SpellCheckPopoverProps) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLSpanElement>(null);
+  const wordRef = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  const updatePosition = useCallback(() => {
+    if (!wordRef.current) return;
+    const rect = wordRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const popupHeight = 200;
+    const top = spaceBelow > popupHeight
+      ? rect.bottom + 4
+      : rect.top - popupHeight;
+    setPos({ top, left: rect.left });
+  }, []);
 
   useEffect(() => {
     if (!open) return;
+    updatePosition();
     const handleOutsideClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      if (wordRef.current && !wordRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     };
+    const handleScroll = () => updatePosition();
     document.addEventListener("mousedown", handleOutsideClick);
-    return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, [open]);
+    document.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", handleScroll);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", handleScroll);
+    };
+  }, [open, updatePosition]);
 
   return (
-    <span ref={ref} className="relative cursor-pointer pointer-events-auto">
+    <span ref={wordRef} className="relative inline cursor-pointer pointer-events-auto">
       <span
         onClick={() => setOpen(!open)}
-        className="relative text-red-500 dark:text-red-400 font-medium cursor-pointer"
+        className="text-red-500 dark:text-red-400 font-medium cursor-pointer"
         style={{ textDecoration: "underline wavy red", textUnderlineOffset: "3px" }}
       >
         {word}
       </span>
-      {open && (
-        <div className="absolute z-[200] top-full left-0 mt-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-2xl py-1 min-w-[160px] animate-in fade-in zoom-in-95 duration-150">
+      {open && createPortal(
+        <div
+          className="fixed z-[9999] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-2xl py-1 min-w-[160px] animate-in fade-in zoom-in-95 duration-150"
+          style={{ top: pos.top, left: pos.left }}
+        >
           {suggestions.length > 0 ? (
             <>
               {suggestions.map((s, i) => (
@@ -63,7 +87,8 @@ export function SpellCheckWord({ word, suggestions, onApply }: SpellCheckPopover
               Ignorar
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </span>
   );
