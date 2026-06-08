@@ -113,6 +113,7 @@ function TeleprompterContent({ id }: { id: string }) {
   const [maxWidth, setMaxWidth] = useState("max-w-4xl");
   const [bgColor, setBgColor] = useState("#000000");
   const [textColor, setTextColor] = useState("#ffffff");
+  const [showReadingStrip, setShowReadingStrip] = useState(true);
 
   // CSS para ocultar marcadores no TP e garantir estabilidade na edição
   useEffect(() => {
@@ -347,6 +348,7 @@ function TeleprompterContent({ id }: { id: string }) {
         setPath(scriptPath);
         if (d.workspaceId) setWorkspaceId(d.workspaceId);
         if (d.editorId) setEditorId(d.editorId);
+        if (typeof d.showReadingStrip === "boolean") setShowReadingStrip(d.showReadingStrip);
 
         if (d.resetRequest && d.resetRequest !== lastProcessedReset.current) {
           if (containerRef.current) containerRef.current.scrollTop = 0;
@@ -642,7 +644,9 @@ function TeleprompterContent({ id }: { id: string }) {
 
       {/* ÁREA DO TEXTO */}
       <div className="flex-1 h-full overflow-y-auto relative no-scrollbar" ref={containerRef}>
-        <div className="fixed top-1/2 left-0 w-full h-32 bg-white/5 pointer-events-none -translate-y-1/2 z-10 border-y border-white/10 shadow-2xl" />
+        {showReadingStrip && (
+          <div className="fixed top-1/2 left-0 w-full h-32 bg-white/5 pointer-events-none -translate-y-1/2 z-10 border-y border-white/10 shadow-2xl" />
+        )}
         <div 
           className={`mx-auto px-12 py-[60vh] transition-all duration-300 relative ${fontFamily} ${maxWidth}`}
           style={{ transform: isMirrored ? "scaleX(-1)" : "none", color: textColor }}
@@ -775,6 +779,23 @@ function TeleprompterContent({ id }: { id: string }) {
                        {['max-w-2xl', 'max-w-4xl', 'max-w-6xl', 'max-w-none'].map(w => (
                          <button key={w} onClick={() => updateGlobalStyle({maxWidth: w})} className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${maxWidth === w ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-500 border-zinc-800 hover:bg-zinc-800'}`}>{w === 'max-w-none' ? 'FULL' : w.split('-')[2]}</button>
                        ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 pt-4 border-t border-zinc-900">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><span className="text-blue-400">▬</span> Faixa de Leitura</p>
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[11px] text-zinc-400">Mostrar faixa central</span>
+                      <button
+                        onClick={() => { setShowReadingStrip(!showReadingStrip); updateGlobalStyle({ showReadingStrip: !showReadingStrip }); }}
+                        className={`relative w-11 h-6 rounded-full transition-all ${
+                          showReadingStrip ? 'bg-blue-600' : 'bg-zinc-700'
+                        }`}
+                      >
+                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                          showReadingStrip ? 'translate-x-5' : 'translate-x-0'
+                        }`} />
+                      </button>
                     </div>
                   </div>
 
@@ -991,14 +1012,14 @@ function TeleprompterContent({ id }: { id: string }) {
 
           <div className="p-8 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
             {[
-              { id: 'estudio', label: 'Montar estúdio' },
-              { id: 'tp', label: 'Verificar se tem que montar tp (conferir tamanho da letra, velocidade do texto na tela)' },
-              { id: 'de', label: 'Ver se o DE vai acompanhar/atrapalhar' },
+              // { id: 'estudio', label: 'Montar estúdio' },
+              // { id: 'tp', label: 'Verificar se tem que montar tp (conferir tamanho da letra, velocidade do texto na tela)' },
+              // { id: 'de', label: 'Ver se o DE vai acompanhar/atrapalhar' },
               { id: 'cartao', label: 'Conferir cartão de memória, formatar' },
               { id: 'audio', label: 'Conferir audio (volume, bateria do boya, conectar receptor na câmera, colocar mic no prof)' },
               { id: 'imagem', label: 'Conferir se a imagem na câmera está boa (velocidade, exposição, foco, zoom, câmera na altura dos olhos e as vezes bater o branco)' },
               { id: 'dinamica', label: 'Explicar a dinâmica se o professor nunca gravou antes' },
-              { id: 'roteiro', label: 'Tentar evitar alterações extras no roteiro na hora da gravação' }
+              { id: 'roteiro', label: 'Tentar evitar alterações extras no roteiro na hora da gravação, mas caso haja ser registrado a alteração ou fazer direto no TP e SALVAR' }
             ].map((item) => (
               <div 
                 key={item.id} 

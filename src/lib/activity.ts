@@ -4,7 +4,8 @@ import { db } from "./firebase";
 export type ActivityAction =
   | "Editou" | "Gravou" | "Criou" | "Revisou" | "Comentou"
   | "ExcluiuRoteiro" | "ExcluiuPasta" | "ExcluiuProjeto"
-  | "ExportouBackup" | "Reverteu" | "EditouProjeto";
+  | "ExportouBackup" | "Reverteu" | "EditouProjeto"
+  | "Cadastrou";
 
 export interface ActivityData {
   userId: string;

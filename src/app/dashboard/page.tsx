@@ -714,8 +714,18 @@ function DashboardContent() {
   return (
     <div className="container mx-auto py-10 px-4 max-w-6xl">
       <div className="flex justify-between items-center mb-8">
-       
+        
         <div className="flex gap-3">
+          <Button 
+            variant="outline" 
+            asChild
+            className="rounded border-zinc-200 dark:border-zinc-800 flex gap-2 hover:bg-zinc-50 dark:hover:bg-zinc-900"
+          >
+            <Link href="/activities">
+              <Clock className="w-4 h-4 text-blue-500" />
+              Atividades
+            </Link>
+          </Button>
           <Button 
             variant="outline" 
             onClick={handleCopyInvite}
@@ -756,7 +766,7 @@ function DashboardContent() {
           </Button>
         </div>
       </div>
- <div>
+  <div>
           <h1 className="text-3xl font-black tracking-tight flex items-center gap-3">
              {selectedProject ? `Projeto: ${selectedProject.name}` : "Meus Roteiros"}
           </h1>
