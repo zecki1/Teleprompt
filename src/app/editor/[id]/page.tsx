@@ -79,6 +79,9 @@ import { toast as sonnerToast } from "sonner";
 import { exportToWord } from "@/lib/export-word";
 import { exportToPPT } from "@/lib/export-ppt";
 import { CommentsPanel } from "@/components/tp/CommentsPanel";
+import { VersionHistory } from "@/components/tp/VersionHistory";
+import { SpellCheckWord } from "@/components/tp/SpellCheckPopover";
+import { checkText, onSpellCheckReady, SpellCheckResult } from "@/lib/spellcheck";
 import { getScriptPath } from "@/lib/pathUtils";
 import { 
   Breadcrumb, 
@@ -96,7 +99,39 @@ import {
 type ScriptStatus = "rascunho" | "em_revisao" | "revisao_realizada" | "aguardando_gravacao" | "gravado" | "rejeitado";
 
 
-// Componente para renderizar o texto com destaque para as tags (Apenas no modo Visualização)
+function processPlainTextForSpellCheck(
+  plainText: string,
+  errors: SpellCheckResult[],
+  onApply: (word: string, replacement: string) => void,
+  keyPrefix: string
+): React.ReactNode[] {
+  if (errors.length === 0) return [plainText];
+
+  const sorted = [...errors].sort((a, b) => a.start - b.start);
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+
+  for (const err of sorted) {
+    if (err.start > lastIndex) {
+      parts.push(plainText.slice(lastIndex, err.start));
+    }
+    parts.push(
+      <SpellCheckWord
+        key={`${keyPrefix}-spell-${err.start}`}
+        word={err.word}
+        suggestions={err.suggestions}
+        onApply={onApply}
+      />
+    );
+    lastIndex = err.end;
+  }
+  if (lastIndex < plainText.length) {
+    parts.push(plainText.slice(lastIndex));
+  }
+  return parts;
+}
+
+
 function HighlightedSpokenText({ 
   text, 
   onChange, 
@@ -104,7 +139,8 @@ function HighlightedSpokenText({
   disabled,
   isEditing,
   placeholder = "Escreva o que será dito...",
-  commentCounts = {}
+  commentCounts = {},
+  onSpellCheckApply
 }: { 
   text: string; 
   onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
@@ -113,27 +149,55 @@ function HighlightedSpokenText({
   isEditing: boolean;
   placeholder?: string;
   commentCounts?: Record<number, number>;
+  onSpellCheckApply?: (word: string, replacement: string) => void;
 }) {
+  const [typoReady, setTypoReady] = useState(false);
+
+  useEffect(() => {
+    return onSpellCheckReady(() => setTypoReady(true));
+  }, []);
+
+  const spellErrors = useMemo(() => {
+    if (!text || isEditing || !typoReady) return null;
+    return checkText(text);
+  }, [text, isEditing, typoReady]);
+
   const highlights = useMemo(() => {
     if (!text || isEditing) return null;
     const regex = /(\[(?:let|img)\d+\]|\[(\d+)\])/g;
     const parts: React.ReactNode[] = [];
     let lastIndex = 0;
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      if (match.index > lastIndex) {
-        parts.push(text.slice(lastIndex, match.index));
+    let execResult: RegExpExecArray | null;
+    while ((execResult = regex.exec(text)) !== null) {
+      const m = execResult;
+      if (m.index > lastIndex) {
+        const plainPortion = text.slice(lastIndex, m.index);
+        if (spellErrors && onSpellCheckApply) {
+          const portionErrors = spellErrors.filter(
+            e => e.start >= lastIndex && e.end <= m.index
+          );
+          const shifted = portionErrors.map(e => ({
+            ...e,
+            start: e.start - lastIndex,
+            end: e.end - lastIndex,
+          }));
+          parts.push(
+            ...processPlainTextForSpellCheck(plainPortion, shifted, onSpellCheckApply, `${lastIndex}`)
+          );
+        } else {
+          parts.push(plainPortion);
+        }
       }
       
-      const fullMatch = match[0];
-      const markerNum = match[2] ? parseInt(match[2]) : null;
+      const fullMatch = m[0];
+      const markerNum = m[2] ? parseInt(m[2]) : null;
       const isImg = fullMatch.startsWith('[img');
       const bgClass = isImg ? 'bg-purple-500 text-white shadow-[0_0_10px_purple] px-1.5' : 'bg-red-600 text-white shadow-[0_0_10px_red] px-1.5';
       
       const count = markerNum ? commentCounts[markerNum] : 0;
 
       parts.push(
-        <div key={`highlight-${match.index}`} className="relative inline-block mx-0.5">
+        <div key={`highlight-${m.index}`} className="relative inline-block mx-0.5">
           <span className={`${bgClass} font-black rounded text-[10px] leading-none py-0.5`}>
             {fullMatch}
           </span>
@@ -144,17 +208,32 @@ function HighlightedSpokenText({
           )}
         </div>
       );
-      lastIndex = match.index + fullMatch.length;
+      lastIndex = m.index + fullMatch.length;
     }
     if (lastIndex < text.length) {
-      parts.push(text.slice(lastIndex));
+      const plainPortion = text.slice(lastIndex);
+      if (spellErrors && onSpellCheckApply) {
+        const portionErrors = spellErrors.filter(
+          e => e.start >= lastIndex
+        );
+        const shifted = portionErrors.map(e => ({
+          ...e,
+          start: e.start - lastIndex,
+          end: e.end - lastIndex,
+        }));
+        parts.push(
+          ...processPlainTextForSpellCheck(plainPortion, shifted, onSpellCheckApply, `${lastIndex}-end`)
+        );
+      } else {
+        parts.push(plainPortion);
+      }
     }
     return parts;
-  }, [text, isEditing, commentCounts]);
+  }, [text, isEditing, commentCounts, spellErrors, onSpellCheckApply]);
 
   return (
     <div className="relative w-full group/textarea">
-      {!isEditing && (
+      {!isEditing && highlights && (
         <div className="absolute inset-0 pointer-events-none p-4 font-medium text-[14px] leading-relaxed whitespace-pre-wrap break-words z-20 bg-zinc-50 dark:bg-zinc-950 rounded border border-zinc-200 dark:border-zinc-800 overflow-y-auto">
           {highlights}
         </div>
@@ -165,6 +244,8 @@ function HighlightedSpokenText({
         onChange={onChange}
         disabled={disabled || !isEditing}
         placeholder={placeholder}
+        lang="pt-BR"
+        spellCheck="true"
         className={`text-[14px] font-medium leading-relaxed min-h-[120px] p-4 resize-none w-full rounded focus-visible:ring-blue-500 bg-zinc-50/50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 ${!isEditing ? 'opacity-0' : 'opacity-100 placeholder:opacity-40'}`}
       />
     </div>
@@ -219,6 +300,8 @@ function EditorContent({ id }: { id: string }) {
   const [newProjectData, setNewProjectData] = useState({ name: "", code: "" });
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [showComments, setShowComments] = useState(false);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+
 
   const [commentCounts, setCommentCounts] = useState<Record<number, number>>({});
   const [comments, setComments] = useState<Comment[]>([]);
@@ -693,6 +776,17 @@ function EditorContent({ id }: { id: string }) {
     setScenesWithRenumbering(ns);
   };
 
+  const handleSpellCheckApply = (sceneIndex: number, field: keyof Scene, word: string, replacement: string) => {
+    const ns = [...scenes];
+    const scene = ns[sceneIndex];
+    const text = scene[field] as string | null;
+    if (text) {
+      const regex = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
+      (scene as unknown as Record<string, unknown>)[field] = text.replace(regex, replacement);
+    }
+    setScenesWithRenumbering(ns);
+  };
+
   const handleDownloadWord = async () => {
     try {
       await exportToWord({ 
@@ -960,6 +1054,17 @@ function EditorContent({ id }: { id: string }) {
                 </Button>
               )}
 
+              {!isNew && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => setShowVersionHistory(true)}
+                  className="h-9 px-4 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  <Clock size={16} /> Versões
+                </Button>
+              )}
+
               <Button 
                 variant="outline" 
                 size="sm" 
@@ -1044,6 +1149,7 @@ function EditorContent({ id }: { id: string }) {
                         disabled={!canEdit} 
                         isEditing={isEditingMode} 
                         commentCounts={commentCounts}
+                        onSpellCheckApply={(word, replacement) => handleSpellCheckApply(index, 'spokenText', word, replacement)}
                       />
                     </div>
                   )}
@@ -1066,6 +1172,7 @@ function EditorContent({ id }: { id: string }) {
                         isEditing={isEditingMode} 
                         commentCounts={commentCounts}
                         placeholder="Texto da abertura..."
+                        onSpellCheckApply={(word, replacement) => handleSpellCheckApply(index, 'opening', word, replacement)}
                       />
                     </div>
                   )}
@@ -1088,6 +1195,7 @@ function EditorContent({ id }: { id: string }) {
                         isEditing={isEditingMode} 
                         commentCounts={commentCounts}
                         placeholder="Texto do encerramento..."
+                        onSpellCheckApply={(word, replacement) => handleSpellCheckApply(index, 'closing', word, replacement)}
                       />
                     </div>
                   )}
@@ -1172,7 +1280,7 @@ function EditorContent({ id }: { id: string }) {
                   <div className="pt-6 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
                     <Label className="text-[10px] uppercase font-black text-zinc-500 tracking-widest flex items-center gap-2">Notas do Editor</Label>
                     {isEditingMode ? (
-                      <Textarea value={scene.observation || ""} onChange={(e) => updateScene(index, { observation: e.target.value })} placeholder="Adicione observações..." className="text-[12px] bg-zinc-50/50 dark:bg-zinc-950/30 border-none italic min-h-[60px] resize-none focus-visible:ring-0" />
+                      <Textarea value={scene.observation || ""} onChange={(e) => updateScene(index, { observation: e.target.value })} placeholder="Adicione observações..." lang="pt-BR" spellCheck="true" className="text-[12px] bg-zinc-50/50 dark:bg-zinc-950/30 border-none italic min-h-[60px] resize-none focus-visible:ring-0" />
                     ) : (
                       <p className="text-[12px] italic text-zinc-600 dark:text-zinc-400 p-3 bg-zinc-100/50 dark:bg-zinc-800/30 rounded">{scene.observation || "Nenhuma observação."}</p>
                     )}
@@ -1273,7 +1381,7 @@ function EditorContent({ id }: { id: string }) {
             <DialogDescription className="text-zinc-500 font-medium pt-2">Visualize ou edite o texto bruto. Ao importar, o texto será processado em cenas.</DialogDescription>
           </DialogHeader>
           <div className="py-6  overflow-y-auto px-2">
-            <Textarea value={importText} onChange={(e) => setImportText(e.target.value)} className="min-h-[400px] font-mono text-xs bg-zinc-50 dark:bg-zinc-900 rounded p-6 border-zinc-200 dark:border-zinc-800 max-h-[40vh]  overflow-y-auto" placeholder="Cena 1&#10;..." />
+            <Textarea value={importText} onChange={(e) => setImportText(e.target.value)} lang="pt-BR" spellCheck="true" className="min-h-[400px] font-mono text-xs bg-zinc-50 dark:bg-zinc-900 rounded p-6 border-zinc-200 dark:border-zinc-800 max-h-[40vh]  overflow-y-auto" placeholder="Cena 1&#10;..." />
           </div>
           <DialogFooter className="sm:justify-center">
             <Button onClick={handleImport} className="bg-blue-600 hover:bg-blue-700 text-white font-black rounded px-12 h-14 text-xs uppercase tracking-widest shadow-xl">PROCESSAR E IMPORTAR</Button>
@@ -1385,6 +1493,13 @@ function EditorContent({ id }: { id: string }) {
           </div>
         </div>
       )}
+
+      <VersionHistory
+        scriptId={id}
+        isOpen={showVersionHistory && !isNew}
+        onClose={() => setShowVersionHistory(false)}
+      />
+
     </div>
   );
 }

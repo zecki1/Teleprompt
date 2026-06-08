@@ -16,6 +16,7 @@ import { getWorkspace } from "@/services/workspaceService";
 import { toast } from "sonner";
 
 import { SENAI_WORKSPACE_ID } from "@/lib/constants";
+import { logActivity } from "@/lib/activity";
 
 interface AuthContextType {
   user: ExtendedUser | null;
@@ -239,6 +240,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         members: arrayUnion(fbUser.uid)
       }).catch(err => console.error("[AuthContext] Erro ao vincular membro ao workspace:", err));
 
+      // 3. Registrar atividade
+      await logActivity({
+        userId: fbUser.uid,
+        userName: name,
+        action: "Cadastrou",
+        workspaceId: targetWorkspaceId,
+        metadata: `Email: ${email}`,
+      });
+
     } catch (error) {
       setLoading(false);
       throw error;
@@ -274,6 +284,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const wsRef = doc(dbZecki, "workspaces", inviteWorkspaceId);
           await updateDoc(wsRef, { members: arrayUnion(fbUser.uid) }).catch(() => {});
         }
+        await logActivity({
+          userId: fbUser.uid,
+          userName: name,
+          action: "Cadastrou",
+          workspaceId: defaultWorkspace,
+          metadata: `Email: ${fbUser.email} (Google)`,
+        });
       } else if (inviteWorkspaceId) {
         // Se já existe mas veio por link de convite, adicionamos o workspace
         const userData = userSnap.data();
