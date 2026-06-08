@@ -158,9 +158,9 @@ function HighlightedSpokenText({
   }, []);
 
   const spellErrors = useMemo(() => {
-    if (!text || isEditing || !typoReady) return null;
+    if (!text || !typoReady) return null;
     return checkText(text);
-  }, [text, isEditing, typoReady]);
+  }, [text, typoReady]);
 
   const highlights = useMemo(() => {
     if (!text || isEditing) return null;
@@ -233,9 +233,11 @@ function HighlightedSpokenText({
 
   return (
     <div className="relative w-full group/textarea">
-      {!isEditing && highlights && (
+      {!isEditing && (
         <div className="absolute inset-0 pointer-events-none p-4 font-medium text-[14px] leading-relaxed whitespace-pre-wrap break-words z-20 bg-zinc-50 dark:bg-zinc-950 rounded border border-zinc-200 dark:border-zinc-800 overflow-y-auto">
-          {highlights}
+          {typoReady ? highlights : (
+            <span className="text-zinc-400 text-[11px] italic">Carregando dicionário...</span>
+          )}
         </div>
       )}
       <Textarea

@@ -27,7 +27,7 @@ export function SpellCheckWord({ word, suggestions, onApply }: SpellCheckPopover
     <span ref={ref} className="relative cursor-pointer pointer-events-auto">
       <span
         onClick={() => setOpen(!open)}
-        className="relative text-red-500 dark:text-red-400 font-medium"
+        className="relative text-red-500 dark:text-red-400 font-medium cursor-pointer"
         style={{ textDecoration: "underline wavy red", textUnderlineOffset: "3px" }}
       >
         {word}
