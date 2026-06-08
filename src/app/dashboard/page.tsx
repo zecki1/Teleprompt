@@ -5,12 +5,13 @@ import { collection, query, deleteDoc, doc, updateDoc, writeBatch, where, addDoc
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { SENAI_WORKSPACE_ID } from "@/lib/constants";
+import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Loader2, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check } from "lucide-react";
+import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Hourglass, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
@@ -76,7 +77,7 @@ export type { ScriptStatus };
 
 export default function DashboardPage() {
   return (
-    <Suspense fallback={<div className="h-screen flex items-center justify-center font-black animate-pulse text-blue-500">CARREGANDO...</div>}>
+    <Suspense fallback={<LoadingScreen />}>
       <DashboardContent />
     </Suspense>
   );
@@ -920,9 +921,7 @@ function DashboardContent() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <LoadingScreen fullScreen={false} />
       ) : scripts.length === 0 ? (
         <div className="text-center py-16 px-4 bg-zinc-50 dark:bg-zinc-900/40 rounded-3xl border border-dashed border-zinc-200 dark:border-zinc-800">
           <div className="bg-zinc-100 dark:bg-zinc-800 w-16 h-16 rounded flex items-center justify-center mx-auto mb-4">
@@ -1015,7 +1014,7 @@ function DashboardContent() {
                             disabled={exportingProject === projectName}
                           >
                             {exportingProject === projectName ? (
-                              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                              <Hourglass className="w-3.5 h-3.5 mr-1.5 animate-spin" style={{ animationDuration: "2s" }} />
                             ) : (
                               <Download className="w-3.5 h-3.5 mr-1.5" />
                             )}
@@ -1375,6 +1374,8 @@ function DashboardContent() {
                   await addDoc(collection(db, "scripts", docRef.id, "versions"), {
                     content: "",
                     scenes: [],
+                    createdBy: user?.uid,
+                    createdByName: user?.displayName || user?.email || "Usuário",
                     createdAt: serverTimestamp(),
                   });
                   
@@ -1510,7 +1511,7 @@ function DashboardContent() {
                 className="flex-[2] h-12 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-widest text-[10px]"
                 disabled={completingReview}
               >
-                {completingReview ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ClipboardCheck className="w-4 h-4 mr-2" />}
+                {completingReview ? <Hourglass className="w-4 h-4 animate-spin mr-2" style={{ animationDuration: "2s" }} /> : <ClipboardCheck className="w-4 h-4 mr-2" />}
                 FINALIZAR REVISÃO
               </Button>
             </div>
@@ -1573,7 +1574,7 @@ function DashboardContent() {
               disabled={isCreatingProject || !newProjectData.name.trim()}
               className="flex-[2] h-12 rounded bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] shadow-lg"
             >
-              {isCreatingProject ? <Loader2 className="w-4 h-4 animate-spin" /> : "CRIAR PROJETO"}
+              {isCreatingProject ? <Hourglass className="w-4 h-4 animate-spin" style={{ animationDuration: "2s" }} /> : "CRIAR PROJETO"}
             </Button>
           </DialogFooter>
         </DialogContent>

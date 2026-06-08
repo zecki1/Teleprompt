@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { fetchZeckiProjects as getProjects, ZeckiProject as Project, createZeckiProject as createProject, deleteZeckiProject as deleteProject, updateZeckiProject } from "@/lib/zecki";
 import { SENAI_WORKSPACE_ID } from "@/lib/constants";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,7 +33,7 @@ import {
   Plus, 
   PlusCircle,
   FolderOpen, 
-  Loader2, 
+  Hourglass, 
   Link2, 
   Calendar,
   Eye,
@@ -251,13 +252,7 @@ export default function ProjectsPage() {
     setEditingProjectName(null);
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-[calc(100vh-64px)] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-      </div>
-    );
-  }
+  if (loading) return <LoadingScreen />;
 
   return (
     <div className="container mx-auto py-8 px-4">
@@ -317,7 +312,7 @@ export default function ProjectsPage() {
                 Cancelar
               </Button>
               <Button onClick={handleCreateProject} disabled={creating || !newProject.name.trim()}>
-                {creating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                {creating && <Hourglass className="w-4 h-4 mr-2 animate-spin" style={{ animationDuration: "2s" }} />}
                 Criar Projeto
               </Button>
             </DialogFooter>

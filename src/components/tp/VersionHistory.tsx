@@ -26,7 +26,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Clock, RotateCcw, Eye, X, ArrowLeftRight, Loader2 } from "lucide-react";
+import { Clock, RotateCcw, Eye, X, ArrowLeftRight, Hourglass } from "lucide-react";
+import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { toast } from "sonner";
@@ -40,13 +41,23 @@ interface VersionHistoryProps {
   onClose: () => void;
 }
 
+const userMap = new Map<string, string>();
+
 export function VersionHistory({ scriptId, isOpen, onClose }: VersionHistoryProps) {
-  const { user } = useAuth();
+  const { user, allUsers } = useAuth();
   const [versions, setVersions] = useState<VersionData[]>([]);
   const [loading, setLoading] = useState(true);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<VersionData | null>(null);
   const [compareVersion, setCompareVersion] = useState<VersionData | null>(null);
+
+  React.useEffect(() => {
+    if (allUsers) {
+      for (const u of allUsers) {
+        userMap.set(u.uid, u.displayName || u.name || u.email || u.uid.slice(0, 8));
+      }
+    }
+  }, [allUsers]);
 
   const loadVersions = useCallback(async () => {
     if (!scriptId) return;
@@ -112,10 +123,20 @@ export function VersionHistory({ scriptId, isOpen, onClose }: VersionHistoryProp
     return "Data desconhecida";
   };
 
+  const getUserName = (v: VersionData): string | null => {
+    if (v.createdByName) return v.createdByName;
+    if (v.createdBy) {
+      const name = userMap.get(v.createdBy);
+      if (name) return name;
+    }
+    return null;
+  };
+
   const getDescription = (v: VersionData) => {
     if (v.description) return v.description;
     if (v.restoredFrom) return "Restauração";
-    if (v.createdByName) return `Salvo por ${v.createdByName}`;
+    const name = getUserName(v);
+    if (name) return `Salvo por ${name}`;
     return "Versão salva";
   };
 
@@ -128,9 +149,6 @@ export function VersionHistory({ scriptId, isOpen, onClose }: VersionHistoryProp
               <Clock className="w-5 h-5 text-blue-500" />
               Histórico de Versões
             </DialogTitle>
-            <Button variant="ghost" size="icon" onClick={onClose}>
-              <X className="w-4 h-4" />
-            </Button>
           </div>
           <p className="text-[11px] text-zinc-500 font-medium mt-1">
             {versions.length} versão(ões) disponível(is)
@@ -141,7 +159,7 @@ export function VersionHistory({ scriptId, isOpen, onClose }: VersionHistoryProp
           <ScrollArea className="flex-1 p-6 pt-2">
             {loading ? (
               <div className="flex items-center justify-center h-32">
-                <Loader2 className="w-5 h-5 animate-spin text-zinc-400" />
+                <LoadingScreen fullScreen={false} className="py-8" />
               </div>
             ) : versions.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-32 text-zinc-400">
@@ -189,8 +207,8 @@ export function VersionHistory({ scriptId, isOpen, onClose }: VersionHistoryProp
                         onClick={() => handleRestore(v.id)}
                         disabled={restoring === v.id || idx === 0}
                       >
-                        {restoring === v.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          {restoring === v.id ? (
+                          <Hourglass className="w-3.5 h-3.5 animate-spin" style={{ animationDuration: "2s" }} />
                         ) : (
                           <RotateCcw className="w-3.5 h-3.5 mr-1" />
                         )}
@@ -230,6 +248,17 @@ export function VersionHistory({ scriptId, isOpen, onClose }: VersionHistoryProp
                           ? `${content.split(/\s+/).length} palavras`
                           : "sem texto bruto"}
                       </p>
+                      {(() => {
+                        const previewName = getUserName(selectedVersion);
+                        return previewName ? (
+                          <p className="text-[10px] text-zinc-500 font-medium">
+                            Salvo por <span className="font-bold text-zinc-700 dark:text-zinc-300">{previewName}</span>
+                            {selectedVersion.createdAt && (
+                              <> · {formatDate(selectedVersion.createdAt)}</>
+                            )}
+                          </p>
+                        ) : null;
+                      })()}
                       {scenes.length > 0 ? (
                         scenes.map((s: Scene, i: number) => (
                           <div key={i} className="p-3 bg-white dark:bg-zinc-900 rounded border border-zinc-200 dark:border-zinc-800">
@@ -279,7 +308,7 @@ export function VersionHistory({ scriptId, isOpen, onClose }: VersionHistoryProp
               disabled={restoring === selectedVersion.id}
             >
               {restoring === selectedVersion.id ? (
-                <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                <Hourglass className="w-3 h-3 animate-spin mr-1" style={{ animationDuration: "2s" }} />
               ) : (
                 <RotateCcw className="w-3 h-3 mr-1" />
               )}

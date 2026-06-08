@@ -16,11 +16,25 @@ export interface Scene {
   pronunciation?: string | null;
 }
 
+export interface ParseScriptOptions {
+  paragraphsPerScene?: number;
+}
+
+/**
+ * Divide texto em parágrafos (blocos separados por linhas em branco).
+ */
+function splitParagraphs(text: string): string[] {
+  return text
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
 /**
  * Converte um texto bruto (geralmente vindo de uma colagem do Word) 
  * em um array de objetos Scene estruturados.
  */
-export function parseScript(text: string): Scene[] {
+export function parseScript(text: string, options?: ParseScriptOptions): Scene[] {
   const scenes: Scene[] = [];
   
   // Função para extrair referências no novo formato:
@@ -154,21 +168,55 @@ export function parseScript(text: string): Scene[] {
   
   // Caso de segurança: se houver texto mas nenhuma tag "Cena", assume cena 1
   if (scenes.length === 0 && text.trim().length > 0) {
-    const { images, sources, lettering, opening, closing, spokenText, time } = extractSceneData(text);
-    const sceneObj: Scene = { 
-      id: crypto.randomUUID(), 
-      sceneNumber: "1", 
-      time,
-      imageUrl: images[0] || null,
-      images: images.length > 1 ? images.slice(1) : undefined,
-      sourceUrl: sources[0] || null,
-      sources: sources.length > 1 ? sources.slice(1) : undefined,
-      lettering: lettering.length > 0 ? lettering.join('\n') : null,
-      opening,
-      closing,
-      spokenText: spokenText || null,
-    };
-    scenes.push(sceneObj);
+    const ppScene = options?.paragraphsPerScene ?? 0;
+
+    const paragraphs = splitParagraphs(text);
+    const autoSplit = ppScene === 0 && paragraphs.length >= 4;
+    if (ppScene > 0 || autoSplit) {
+      const n = autoSplit ? 2 : ppScene;
+      const groups: string[] = [];
+      for (let i = 0; i < paragraphs.length; i += n) {
+        groups.push(paragraphs.slice(i, i + n).join('\n\n'));
+      }
+      for (let g = 0; g < groups.length; g++) {
+        const { images, sources, lettering, opening, closing, spokenText, time } = extractSceneData(groups[g]);
+        scenes.push({
+          id: crypto.randomUUID(),
+          sceneNumber: String(g + 1),
+          time,
+          imageUrl: images[0] || null,
+          images: images.length > 1 ? images.slice(1) : undefined,
+          sourceUrl: sources[0] || null,
+          sources: sources.length > 1 ? sources.slice(1) : undefined,
+          lettering: lettering.length > 0 ? lettering.join('\n') : null,
+          opening,
+          closing,
+          spokenText: spokenText || null,
+          description: null,
+          onScreenText: null,
+          pronunciation: null,
+        });
+      }
+    } else {
+      const { images, sources, lettering, opening, closing, spokenText, time } = extractSceneData(text);
+      const sceneObj: Scene = { 
+        id: crypto.randomUUID(), 
+        sceneNumber: "1", 
+        time,
+        imageUrl: images[0] || null,
+        images: images.length > 1 ? images.slice(1) : undefined,
+        sourceUrl: sources[0] || null,
+        sources: sources.length > 1 ? sources.slice(1) : undefined,
+        lettering: lettering.length > 0 ? lettering.join('\n') : null,
+        opening,
+        closing,
+        spokenText: spokenText || null,
+        description: null,
+        onScreenText: null,
+        pronunciation: null,
+      };
+      scenes.push(sceneObj);
+    }
   }
 
   return scenes;

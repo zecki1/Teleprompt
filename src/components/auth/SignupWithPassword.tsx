@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Hourglass } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface SignupWithPasswordProps {
@@ -93,7 +93,7 @@ const SignupWithPassword: React.FC<SignupWithPasswordProps> = ({ inviteWorkspace
       <Button type="submit" disabled={loading} className="w-full font-semibold shadow-lg">
         {loading ? (
           <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <Hourglass className="mr-2 h-4 w-4 animate-spin" style={{ animationDuration: "2s" }} />
             Criando conta...
           </>
         ) : (

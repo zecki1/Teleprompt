@@ -8,6 +8,7 @@ import { ScriptDoc } from "@/types/script";
 import { Comment } from "@/components/tp/CommentsPanel";
 
 import { useAuth } from "@/contexts/AuthContext";
+import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -41,7 +42,7 @@ import {
   EyeOff,
   ClipboardCheck,
   FileDown,
-  Loader2,
+  Hourglass,
   Monitor,
   ChevronRight,
   ChevronDown,
@@ -610,6 +611,8 @@ function EditorContent({ id }: { id: string }) {
       const versionPayload = sanitizeData({
         content: rawContent as string,
         scenes: scenes as Scene[],
+        createdBy: user?.uid,
+        createdByName: user?.displayName || user?.email || "Usuário",
         createdAt: new Date().toISOString(),
       });
 
@@ -854,7 +857,7 @@ function EditorContent({ id }: { id: string }) {
     }
   };
 
-  if (loading) return <div className="h-screen flex items-center justify-center bg-zinc-950 font-black text-blue-500 animate-pulse">CARREGANDO...</div>;
+  if (loading) return <LoadingScreen />;
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans pb-32">
@@ -1382,8 +1385,8 @@ function EditorContent({ id }: { id: string }) {
             <DialogTitle className="text-2xl font-black">Roteiro Bruto</DialogTitle>
             <DialogDescription className="text-zinc-500 font-medium pt-2">Visualize ou edite o texto bruto. Ao importar, o texto será processado em cenas.</DialogDescription>
           </DialogHeader>
-          <div className="py-6  overflow-y-auto px-2">
-            <Textarea value={importText} onChange={(e) => setImportText(e.target.value)} lang="pt-BR" spellCheck="true" className="min-h-[400px] font-mono text-xs bg-zinc-50 dark:bg-zinc-900 rounded p-6 border-zinc-200 dark:border-zinc-800 max-h-[40vh]  overflow-y-auto" placeholder="Cena 1&#10;..." />
+          <div className="py-6 overflow-y-auto px-2">
+            <Textarea value={importText} onChange={(e) => setImportText(e.target.value)} lang="pt-BR" spellCheck="true" className="min-h-[400px] font-mono text-xs bg-zinc-50 dark:bg-zinc-900 rounded p-6 border-zinc-200 dark:border-zinc-800 max-h-[40vh] overflow-y-auto" placeholder="Cena 1&#10;..." />
           </div>
           <DialogFooter className="sm:justify-center">
             <Button onClick={handleImport} className="bg-blue-600 hover:bg-blue-700 text-white font-black rounded px-12 h-14 text-xs uppercase tracking-widest shadow-xl">PROCESSAR E IMPORTAR</Button>
@@ -1433,7 +1436,7 @@ function EditorContent({ id }: { id: string }) {
               disabled={isCreatingProject || !newProjectData.name.trim()}
               className="flex-[2] h-12 rounded bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] shadow-lg"
             >
-              {isCreatingProject ? <Loader2 className="w-4 h-4 animate-spin" /> : "CRIAR PROJETO"}
+              {isCreatingProject ? <Hourglass className="w-4 h-4 animate-spin" style={{ animationDuration: "2s" }} /> : "CRIAR PROJETO"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1508,5 +1511,5 @@ function EditorContent({ id }: { id: string }) {
 
 export default function EditorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  return <Suspense fallback={<div className="h-screen flex items-center justify-center text-blue-500 font-bold animate-pulse">CARREGANDO...</div>}><EditorContent id={id} /></Suspense>;
+  return <Suspense fallback={<LoadingScreen />}><EditorContent id={id} /></Suspense>;
 }
