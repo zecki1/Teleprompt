@@ -60,7 +60,7 @@ export function SiteHeader() {
         {/* Área do Logo */}
         <div className="flex items-center gap-2">
           <Link href="/" className="flex items-center gap-2">
-            <div className="p-2 bg-primary rounded-lg shadow-sm">
+            <div className="p-2 bg-primary rounded shadow-sm">
               <Terminal className="h-5 w-5 text-primary-foreground" />
             </div>
             <span className="font-bold text-lg hidden sm:inline-block">

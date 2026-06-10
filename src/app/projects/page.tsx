@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { fetchZeckiProjects as getProjects, ZeckiProject as Project, createZeckiProject as createProject, deleteZeckiProject as deleteProject, updateZeckiProject } from "@/lib/zecki";
@@ -41,6 +41,9 @@ import {
   Check,
   Edit2,
   X,
+  ArrowLeftRight,
+  LayoutGrid,
+  List,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
@@ -64,6 +67,148 @@ export default function ProjectsPage() {
   const [editCodeValue, setEditCodeValue] = useState("");
   const [editingProjectName, setEditingProjectName] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState("");
+  const [viewMode, setViewMode] = useState<'list' | 'scroll'>('scroll');
+
+  useEffect(() => {
+    const saved = localStorage.getItem("teleprompt_view_mode");
+    if (saved === 'list' || saved === 'scroll') setViewMode(saved);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("teleprompt_view_mode", viewMode);
+  }, [viewMode]);
+
+  const isProjectConcluded = (projectName: string): boolean => {
+    const projectScripts = scriptsByProject[projectName] || [];
+    if (projectScripts.length === 0) return true;
+    return projectScripts.every(s => s.status === "gravado" || s.status === "rejeitado");
+  };
+
+  const projectsContent = useMemo(() => {
+    if (projects.length === 0) {
+      return (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <FolderOpen className="w-16 h-16 text-zinc-300 mb-4" />
+            <h3 className="text-lg font-semibold mb-2">Nenhum projeto encontrado</h3>
+            <p className="text-zinc-500 mb-4">
+              Crie seu primeiro projeto para começar a trabalhar com roteiros.
+            </p>
+            <Button onClick={() => setIsCreateOpen(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              Criar Projeto
+            </Button>
+          </CardContent>
+        </Card>
+      );
+    }
+    if (viewMode === 'scroll') {
+      return (
+        <div className="flex gap-6 overflow-x-auto p-2 custom-scrollbar snap-x snap-mandatory pb-6">
+          {projects.map((project) => {
+            const concluded = isProjectConcluded(project.name);
+            return (
+              <Card 
+                key={project.id} 
+                className={`min-w-[280px] max-w-[280px] flex-shrink-0 snap-start hover:shadow-lg transition-all cursor-pointer group border-zinc-200 dark:border-zinc-800 ${
+                  concluded ? 'opacity-75 hover:opacity-100' : ''
+                }`}
+                onClick={() => router.push(`/dashboard?projectId=${project.id}`)}
+              >
+                <CardHeader className="pb-3 border-b border-zinc-100 dark:border-zinc-800/50 bg-zinc-50/50 dark:bg-zinc-900/50 pt-4">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <CardTitle className="text-lg group-hover:text-blue-600 transition-colors">{project.name}</CardTitle>
+                      <CardDescription className="text-xs mt-1">
+                        {project.code || "Sem código"}
+                      </CardDescription>
+                    </div>
+                    <Badge variant={concluded ? "secondary" : "default"}>
+                      {concluded ? "Concluído" : "Ativo"}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="pb-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1 text-sm text-zinc-500">
+                      <Calendar className="w-4 h-4" />
+                      {project.createdAt ? format(new Date(project.createdAt), "dd/MM/yyyy", { locale: ptBR }) : "N/A"}
+                    </div>
+                    <div className="text-[10px] font-bold text-blue-500 uppercase tracking-widest flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                      Ver Roteiros <Eye className="w-3 h-3" />
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-4 border-t border-zinc-100 dark:border-zinc-800 flex items-center gap-2 text-[11px] text-zinc-400">
+                    <Link2 className="w-3.5 h-3.5" />
+                    <span>Local</span>
+                  </div>
+                  {concluded && (
+                    <div className="mt-2 pt-2 border-t border-zinc-100 dark:border-zinc-800 flex items-center gap-2 text-[11px] text-zinc-500">
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Todos os roteiros concluídos</span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-2">
+        {projects.map((project) => {
+          const concluded = isProjectConcluded(project.name);
+          return (
+            <div
+              key={project.id}
+              onClick={() => router.push(`/dashboard?projectId=${project.id}`)}
+              className={`flex items-center gap-4 px-4 py-3 rounded-lg cursor-pointer transition-all border ${
+                concluded ? 'opacity-75 hover:opacity-100' : ''
+              } hover:bg-zinc-50 dark:hover:bg-zinc-900/50 hover:border-zinc-200 dark:hover:border-zinc-700 border-transparent`}
+            >
+              <Badge variant={concluded ? "secondary" : "outline"} className="text-[10px] uppercase font-mono px-2 py-0 h-6 w-16 shrink-0">
+                {project.code || "PRJ"}
+              </Badge>
+              <span className="text-sm font-bold flex-1 truncate text-zinc-800 dark:text-zinc-200">
+                {project.name}
+              </span>
+              <div className="flex items-center gap-2 text-xs text-zinc-400">
+                <Calendar className="w-3.5 h-3.5" />
+                {project.createdAt ? format(new Date(project.createdAt), "dd/MM/yyyy", { locale: ptBR }) : "N/A"}
+              </div>
+              {concluded && (
+                <Badge className="bg-zinc-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 border-none">
+                  <Check className="w-3 h-3 mr-0.5" /> Concluído
+                </Badge>
+              )}
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 rounded-full hover:bg-emerald-100 hover:text-emerald-600 dark:hover:bg-emerald-900/30"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  router.push(`/editor/new?project=${encodeURIComponent(project.name)}&projectId=${project.id}`);
+                }}
+                title="Adicionar Novo Roteiro"
+              >
+                <PlusCircle className="w-4 h-4" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 rounded-full hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30"
+                onClick={(e) => handleDeleteProject(e, project.id)}
+                title="Excluir Projeto"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }, [projects, viewMode, editingProjectName, editNameValue, editingProjectCode, editCodeValue, scriptsByProject, router]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -102,12 +247,6 @@ export default function ProjectsPage() {
     }
     loadProjects();
   }, [user, router, loadProjects]);
-
-  const isProjectConcluded = (projectName: string): boolean => {
-    const projectScripts = scriptsByProject[projectName] || [];
-    if (projectScripts.length === 0) return true;
-    return projectScripts.every(s => s.status === "gravado" || s.status === "rejeitado");
-  };
 
   const handleCreateProject = async () => {
     if (!newProject.name.trim() || !newProject.code.trim()) return;
@@ -267,7 +406,26 @@ export default function ProjectsPage() {
           </p>
         </div>
         
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center border border-zinc-200 dark:border-zinc-800 rounded-lg overflow-hidden">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setViewMode('scroll')}
+              className={`h-7 w-7 rounded-none ${viewMode === 'scroll' ? 'bg-zinc-100 dark:bg-zinc-800 text-blue-500' : 'text-zinc-400'}`}
+            >
+              <ArrowLeftRight className="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setViewMode('list')}
+              className={`h-7 w-7 rounded-none ${viewMode === 'list' ? 'bg-zinc-100 dark:bg-zinc-800 text-blue-500' : 'text-zinc-400'}`}
+            >
+              <List className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
           <DialogTrigger asChild>
             <Button>
               <Plus className="w-4 h-4 mr-2" />
@@ -319,155 +477,9 @@ export default function ProjectsPage() {
           </DialogContent>
         </Dialog>
       </div>
+      </div>
 
-      {projects.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <FolderOpen className="w-16 h-16 text-zinc-300 mb-4" />
-            <h3 className="text-lg font-semibold mb-2">Nenhum projeto encontrado</h3>
-            <p className="text-zinc-500 mb-4">
-              Crie seu primeiro projeto para começar a trabalhar com roteiros.
-            </p>
-            <Button onClick={() => setIsCreateOpen(true)}>
-              <Plus className="w-4 h-4 mr-2" />
-              Criar Projeto
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {projects.map((project) => {
-            const concluded = isProjectConcluded(project.name);
-            return (
-              <Card 
-                key={project.id} 
-                className={`hover:shadow-lg transition-all cursor-pointer group border-zinc-200 dark:border-zinc-800 ${
-                  concluded ? 'opacity-75 hover:opacity-100' : ''
-                }`}
-                onClick={() => router.push(`/dashboard?projectId=${project.id}`)}
-              >
-                <CardHeader className="pb-3 border-b border-zinc-100 dark:border-zinc-800/50 bg-zinc-50/50 dark:bg-zinc-900/50 pt-4">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      {editingProjectName === project.id ? (
-                        <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                          <Input
-                            value={editNameValue}
-                            onChange={e => setEditNameValue(e.target.value)}
-                            className="h-7 w-48 text-sm font-bold px-2"
-                            onKeyDown={e => { if (e.key === "Enter") handleSaveName(project.id, project.name); if (e.key === "Escape") setEditingProjectName(null); }}
-                            autoFocus
-                          />
-                          <Button size="icon" variant="ghost" className="h-6 w-6 text-green-500" onClick={() => handleSaveName(project.id, project.name)}>
-                            <Check className="w-3 h-3" />
-                          </Button>
-                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setEditingProjectName(null)}>
-                            <X className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <CardTitle className="text-lg group-hover:text-blue-600 transition-colors group/name">
-                          <span className="mr-1">{project.name}</span>
-                          <button
-                            onClick={e => { e.stopPropagation(); handleEditName(project.id, project.name); }}
-                            className="opacity-0 group-hover/name:opacity-100 inline-flex p-0.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-all"
-                          >
-                            <Edit2 className="w-3 h-3 text-zinc-400" />
-                          </button>
-                        </CardTitle>
-                      )}
-                      {editingProjectCode === project.id ? (
-                        <div className="flex items-center gap-1 mt-1" onClick={e => e.stopPropagation()}>
-                          <Input
-                            value={editCodeValue}
-                            onChange={e => setEditCodeValue(e.target.value)}
-                            className="h-7 w-24 text-[11px] font-mono font-bold px-2"
-                            onKeyDown={e => { if (e.key === "Enter") handleSaveCode(project.id); if (e.key === "Escape") setEditingProjectCode(null); }}
-                            autoFocus
-                          />
-                          <Button size="icon" variant="ghost" className="h-6 w-6 text-green-500" onClick={() => handleSaveCode(project.id)}>
-                            <Check className="w-3 h-3" />
-                          </Button>
-                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setEditingProjectCode(null)}>
-                            <X className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <CardDescription className="font-mono text-xs mt-1 group/code">
-                          <span className="mr-1">{project.code || "PB-000"}</span>
-                          <button
-                            onClick={e => { e.stopPropagation(); handleEditCode(project.id, project.code || ""); }}
-                            className="opacity-0 group-hover/code:opacity-100 inline-flex p-0.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-all"
-                          >
-                            <Edit2 className="w-2.5 h-2.5 text-zinc-400" />
-                          </button>
-                        </CardDescription>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {concluded && (
-                        <Badge className="bg-zinc-500 text-white text-[10px] font-black uppercase tracking-widest px-2 h-5 border-none">
-                          <Check className="w-3 h-3 mr-1" />
-                          Concluído
-                        </Badge>
-                      )}
-                      <Button 
-                        size="icon" 
-                        variant="ghost" 
-                        className="h-8 w-8 rounded-full hover:bg-emerald-100 hover:text-emerald-600 dark:hover:bg-emerald-900/30"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          router.push(`/editor/new?project=${encodeURIComponent(project.name)}&projectId=${project.id}`);
-                        }}
-                        title="Adicionar Novo Roteiro"
-                      >
-                        <PlusCircle className="w-5 h-5" />
-                      </Button>
-                      <Button 
-                        size="icon" 
-                        variant="ghost" 
-                        className="h-8 w-8 rounded-full hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30"
-                        onClick={(e) => handleDeleteProject(e, project.id)}
-                        title="Excluir Projeto"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                      <Badge variant={concluded ? "secondary" : "default"}>
-                        {concluded ? "Concluído" : "Ativo"}
-                      </Badge>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="pb-5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4 text-sm text-zinc-500">
-                      <div className="flex items-center gap-1">
-                        <Calendar className="w-4 h-4" />
-                        {project.createdAt ? format(new Date(project.createdAt), "dd/MM/yyyy", { locale: ptBR }) : "N/A"}
-                      </div>
-                    </div>
-                    
-                    <div className="text-[10px] font-bold text-blue-500 uppercase tracking-widest flex items-center gap-1 group-hover:translate-x-1 transition-transform">
-                      Ver Roteiros <Eye className="w-3 h-3" />
-                    </div>
-                  </div>
-                  
-                  <div className="mt-4 pt-4 border-t border-zinc-100 dark:border-zinc-800 flex items-center gap-2 text-[11px] text-zinc-400">
-                    <Link2 className="w-3.5 h-3.5" />
-                    <span>Local</span>
-                  </div>
-                  {concluded && (
-                    <div className="mt-2 pt-2 border-t border-zinc-100 dark:border-zinc-800 flex items-center gap-2 text-[11px] text-zinc-500">
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Todos os roteiros concluídos</span>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      )}
+      {projectsContent}
 
       <AlertDialog open={deleteConfirmProject !== null} onOpenChange={(open) => !open && setDeleteConfirmProject(null)}>
         <AlertDialogContent>

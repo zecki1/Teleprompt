@@ -48,6 +48,9 @@ import {
 } from "@/components/ui/dialog";
 import { useRouter } from "next/navigation";
 
+
+
+
 function TeleprompterContent({ id }: { id: string }) {
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [versionId, setVersionId] = useState<string | null>(null);

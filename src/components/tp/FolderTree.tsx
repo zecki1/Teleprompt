@@ -49,6 +49,8 @@ const DEPTH_TEXT_COLORS = [
   "text-pink-500",
 ];
 
+export type ScriptViewMode = 'list' | 'scroll';
+
 interface FolderTreeProps {
   /** Top-level folder map (project scope) */
   nodes: Record<string, FolderNode>;
@@ -71,6 +73,8 @@ interface FolderTreeProps {
   onBackupFolder?: (folderPath: string[], scripts: ScriptDoc[], format: 'json' | 'word' | 'ppt') => void;
   /** Initial depth (used internally for recursion) */
   depth?: number;
+  /** View mode for script cards */
+  viewMode?: ScriptViewMode;
 }
 
 export function FolderTree({
@@ -86,6 +90,7 @@ export function FolderTree({
   onDeleteFolder,
   onBackupFolder,
   depth = 0,
+  viewMode = 'scroll',
 }: FolderTreeProps) {
   const sortedEntries = Object.entries(nodes).sort((a, b) =>
     a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: "base" })
@@ -108,6 +113,7 @@ export function FolderTree({
           onDeleteFolder={onDeleteFolder}
           onBackupFolder={onBackupFolder}
           depth={depth}
+          viewMode={viewMode}
         />
       ))}
     </div>
@@ -127,6 +133,7 @@ interface FolderNodeItemProps {
   onDeleteFolder: (scripts: ScriptDoc[]) => void;
   onBackupFolder?: (folderPath: string[], scripts: ScriptDoc[], format: 'json' | 'word' | 'ppt') => void;
   depth: number;
+  viewMode?: ScriptViewMode;
 }
 
 function FolderNodeItem({
@@ -142,8 +149,21 @@ function FolderNodeItem({
   onDeleteFolder,
   onBackupFolder,
   depth,
+  viewMode = 'scroll',
 }: FolderNodeItemProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  const STORAGE_KEY = `tp_collapsed_folders_${projectId}`;
+  const getSavedCollapsed = (): Set<string> => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) return new Set(JSON.parse(saved));
+    } catch {}
+    return new Set();
+  };
+  const saveCollapsed = (paths: Set<string>) => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(paths)));
+  };
+
+  const [collapsed, setCollapsed] = useState(() => getSavedCollapsed().has(node.fullPath.join("/")));
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(node.name);
   const [saving, setSaving] = useState(false);
@@ -190,6 +210,17 @@ function FolderNodeItem({
 
   const canAddSubfolder = node.fullPath.length < 5;
 
+  const toggleCollapse = () => {
+    setCollapsed(c => {
+      const pathKey = node.fullPath.join("/");
+      const saved = getSavedCollapsed();
+      if (!c) saved.add(pathKey);
+      else saved.delete(pathKey);
+      saveCollapsed(saved);
+      return !c;
+    });
+  };
+
   return (
     <div className="space-y-3">
       {/* Folder header */}
@@ -200,7 +231,7 @@ function FolderNodeItem({
 
           {/* Collapse toggle */}
           <button
-            onClick={() => setCollapsed(c => !c)}
+            onClick={toggleCollapse}
             className="p-0.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-colors shrink-0"
           >
             {collapsed ? (
@@ -271,6 +302,20 @@ function FolderNodeItem({
 
         {/* Actions (shown on hover) */}
         <div className="flex items-center gap-1 opacity-0 group-hover/folder:opacity-100 transition-opacity shrink-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 text-[9px] font-black uppercase tracking-widest text-zinc-400 hover:text-amber-500 px-2"
+            onClick={toggleCollapse}
+            title={collapsed ? "Expandir pasta" : "Minimizar pasta"}
+          >
+            {collapsed ? (
+              <ChevronDown className="w-3 h-3 mr-0.5" />
+            ) : (
+              <ChevronRight className="w-3 h-3 mr-0.5" />
+            )}
+            {collapsed ? "Expandir" : "Minimizar"}
+          </Button>
           {canAddSubfolder && (
             <Button
               variant="ghost"
@@ -354,7 +399,11 @@ function FolderNodeItem({
           {/* Scripts at this level */}
           {node.scripts.length > 0 && (
             <div className="relative">
-              <div className="flex gap-6 overflow-x-auto p-4 custom-scrollbar snap-x snap-mandatory pb-6">
+              <div className={
+                viewMode === 'scroll'
+                  ? 'flex gap-6 overflow-x-auto p-4 custom-scrollbar snap-x snap-mandatory pb-6'
+                  : 'flex flex-col gap-2 p-4'
+              }>
                 {renderScripts(node.scripts, node.fullPath)}
               </div>
             </div>
@@ -375,6 +424,7 @@ function FolderNodeItem({
               onDeleteFolder={onDeleteFolder}
               onBackupFolder={onBackupFolder}
               depth={depth + 1}
+              viewMode={viewMode}
             />
           )}
         </div>
