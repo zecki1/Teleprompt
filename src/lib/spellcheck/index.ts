@@ -71,19 +71,9 @@ export function checkText(text: string): SpellCheckResult[] {
   if (!typo || !supplemental) return [];
 
   const results: SpellCheckResult[] = [];
-  const letters = /[a-zA-Zà-üÀ-ÜçÇã-õÃ-Õ]/;
-  let i = 0;
 
-  while (i < text.length) {
-    if (!letters.test(text[i])) {
-      i++;
-      continue;
-    }
-    const start = i;
-    while (i < text.length && letters.test(text[i])) {
-      i++;
-    }
-    const word = text.slice(start, i);
+  for (const match of text.matchAll(/\p{L}+/gu)) {
+    const word = match[0];
     if (word.length < MIN_WORD_LENGTH) continue;
     if (checkWord(word, typo, supplemental)) continue;
 
@@ -93,8 +83,8 @@ export function checkText(text: string): SpellCheckResult[] {
       .filter((s: string) => s.toLowerCase() !== word.toLowerCase());
     results.push({
       word,
-      start,
-      end: i,
+      start: match.index,
+      end: match.index + word.length,
       suggestions,
     });
   }

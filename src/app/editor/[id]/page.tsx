@@ -153,15 +153,22 @@ function HighlightedSpokenText({
   onSpellCheckApply?: (word: string, replacement: string) => void;
 }) {
   const [typoReady, setTypoReady] = useState(false);
+  const [debouncedText, setDebouncedText] = useState(text);
 
   useEffect(() => {
     return onSpellCheckReady(() => setTypoReady(true));
   }, []);
 
+  // Debounce spellcheck para não travar a UI a cada tecla
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedText(text), 300);
+    return () => clearTimeout(timer);
+  }, [text]);
+
   const spellErrors = useMemo(() => {
-    if (!text || !typoReady) return null;
-    return checkText(text);
-  }, [text, typoReady]);
+    if (!debouncedText || !typoReady) return null;
+    return checkText(debouncedText);
+  }, [debouncedText, typoReady]);
 
   const highlights = useMemo(() => {
     if (!text || isEditing) return null;
@@ -295,6 +302,7 @@ function EditorContent({ id }: { id: string }) {
   const [importedScenesPending, setImportedScenesPending] = useState<Scene[]>([]);
   const [importText, setImportText] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({
     message: "",
     visible: false,
@@ -351,8 +359,12 @@ function EditorContent({ id }: { id: string }) {
     });
   }, []);
 
-  const setScenesWithRenumbering = useCallback((newScenes: Scene[]) => {
-    setScenes(renumberScenes(newScenes));
+  const setScenesWithRenumbering = useCallback((newScenes: Scene[] | ((prev: Scene[]) => Scene[])) => {
+    if (typeof newScenes === 'function') {
+      setScenes(prev => renumberScenes(newScenes(prev)));
+    } else {
+      setScenes(renumberScenes(newScenes));
+    }
   }, [renumberScenes]);
 
   const showToast = (message: string) => {
@@ -366,14 +378,18 @@ function EditorContent({ id }: { id: string }) {
     }
   }, [user]);
 
+  const searchParamsRef = useRef(searchParams);
+  searchParamsRef.current = searchParams;
+
   useEffect(() => {
     if (isNew) {
-      const p = searchParams.get("project");
-      const pid = searchParams.get("projectId");
-      const f = searchParams.get("folder");
-      const sf = searchParams.get("subfolder");
-      const l = searchParams.get("lesson");
-      const pth = searchParams.get("path");
+      const sp = searchParamsRef.current;
+      const p = sp.get("project");
+      const pid = sp.get("projectId");
+      const f = sp.get("folder");
+      const sf = sp.get("subfolder");
+      const l = sp.get("lesson");
+      const pth = sp.get("path");
       
       console.log(`[Editor] Modo Novo Roteiro - Projeto: ${p}, ProjectID: ${pid}, Pasta: ${f}`);
       if (p) {
@@ -384,7 +400,6 @@ function EditorContent({ id }: { id: string }) {
           try {
             const parsedPath = JSON.parse(pth);
             setPath(parsedPath);
-            // Sync legacy
             setFolder(parsedPath[0] || "Raiz");
             setSubfolder(parsedPath[1] || "");
             setLesson(parsedPath[2] || "");
@@ -407,12 +422,14 @@ function EditorContent({ id }: { id: string }) {
       return;
     }
 
+    let cancelled = false;
+
     async function loadScript() {
       try {
         const scriptRef = doc(db, "scripts", id);
         const scriptSnap = await getDoc(scriptRef);
 
-        if (scriptSnap.exists()) {
+        if (!cancelled && scriptSnap.exists()) {
           const data = scriptSnap.data();
           console.log("[Editor] Roteiro carregado:", data.title, "(ID:", id, ")");
           setTitle(data.title || "");
@@ -433,7 +450,6 @@ function EditorContent({ id }: { id: string }) {
           setWorkspaceId(data.workspaceId || user?.workspaceId || "senai");
           setReviewerId(data.reviewerId || null);
           setReviewerName(data.reviewerName || null);
-          setReviewerName(data.reviewerName || null);
           setEditorId(data.editorId || null);
           setEditorName(data.editorName || null);
           setVideomakerName(data.videomakerName || null);
@@ -446,7 +462,7 @@ function EditorContent({ id }: { id: string }) {
           );
           const vSnap = await getDocs(vQ);
 
-          if (!vSnap.empty) {
+          if (!cancelled && !vSnap.empty) {
             const vData = vSnap.docs[0].data();
             const rawContent = vData.content || "";
             let loadedScenes = vData.scenes || [];
@@ -460,11 +476,13 @@ function EditorContent({ id }: { id: string }) {
       } catch (e) {
         console.error("[Editor] Erro ao carregar roteiro:", e);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
     loadScript();
-  }, [id, isNew, searchParams, user, setScenesWithRenumbering]);
+
+    return () => { cancelled = true; };
+  }, [id, isNew, user, setScenesWithRenumbering]);
 
   useEffect(() => {
     if (user?.workspaceId) {
@@ -743,18 +761,24 @@ function EditorContent({ id }: { id: string }) {
   };
 
   const handleImport = () => {
-    if (!importText.trim()) return;
-    const importedScenes = parseScript(importText).map(s => ({ ...s, observation: s.observation || "" }));
-    if (scenes.length > 0) {
-      // Show modal instead of browser confirm()
-      setImportedScenesPending(importedScenes);
-      setShowImportConfirmModal(true);
-    } else {
-      setScenesWithRenumbering(importedScenes);
-      setShowImportModal(false);
-      setImportText("");
-      showToast("Roteiro processado!");
-    }
+    if (!importText.trim() || isImporting) return;
+    setIsImporting(true);
+
+    setTimeout(() => {
+      const importedScenes = parseScript(importText).map(s => ({ ...s, observation: s.observation || "" }));
+
+      if (scenes.length > 0) {
+        setImportedScenesPending(importedScenes);
+        setShowImportConfirmModal(true);
+        setIsImporting(false);
+      } else {
+        setScenesWithRenumbering(importedScenes);
+        setShowImportModal(false);
+        setImportText("");
+        setIsImporting(false);
+        showToast("Roteiro processado!");
+      }
+    }, 50);
   };
 
   const addEmptyScene = (index?: number) => {
@@ -781,16 +805,19 @@ function EditorContent({ id }: { id: string }) {
     setScenesWithRenumbering(ns);
   };
 
-  const handleSpellCheckApply = (sceneIndex: number, field: keyof Scene, word: string, replacement: string) => {
-    const ns = [...scenes];
-    const scene = ns[sceneIndex];
-    const text = scene[field] as string | null;
-    if (text) {
-      const regex = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
-      (scene as unknown as Record<string, unknown>)[field] = text.replace(regex, replacement);
-    }
-    setScenesWithRenumbering(ns);
-  };
+  const handleSpellCheckApply = useCallback((sceneIndex: number, field: keyof Scene, word: string, replacement: string) => {
+    setScenesWithRenumbering(prev => {
+      const ns = [...prev];
+      const scene = { ...ns[sceneIndex] };
+      const text = scene[field] as string | null;
+      if (text) {
+        const regex = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
+        (scene as unknown as Record<string, unknown>)[field] = text.replace(regex, replacement);
+      }
+      ns[sceneIndex] = scene;
+      return ns;
+    });
+  }, []);
 
   const handleDownloadWord = async () => {
     try {
@@ -1386,10 +1413,10 @@ function EditorContent({ id }: { id: string }) {
             <DialogDescription className="text-zinc-500 font-medium pt-2">Visualize ou edite o texto bruto. Ao importar, o texto será processado em cenas.</DialogDescription>
           </DialogHeader>
           <div className="py-6 overflow-y-auto px-2">
-            <Textarea value={importText} onChange={(e) => setImportText(e.target.value)} lang="pt-BR" spellCheck="true" className="min-h-[400px] font-mono text-xs bg-zinc-50 dark:bg-zinc-900 rounded p-6 border-zinc-200 dark:border-zinc-800 max-h-[40vh] overflow-y-auto" placeholder="Cena 1&#10;..." />
+            <Textarea value={importText} onChange={(e) => setImportText(e.target.value)} className="min-h-[400px] font-mono text-xs bg-zinc-50 dark:bg-zinc-900 rounded p-6 border-zinc-200 dark:border-zinc-800 max-h-[40vh] overflow-y-auto" placeholder="Cena 1&#10;..." />
           </div>
           <DialogFooter className="sm:justify-center">
-            <Button onClick={handleImport} className="bg-blue-600 hover:bg-blue-700 text-white font-black rounded px-12 h-14 text-xs uppercase tracking-widest shadow-xl">PROCESSAR E IMPORTAR</Button>
+            <Button onClick={handleImport} disabled={isImporting} className="bg-blue-600 hover:bg-blue-700 text-white font-black rounded px-12 h-14 text-xs uppercase tracking-widest shadow-xl disabled:opacity-50">{isImporting ? "PROCESSANDO..." : "PROCESSAR E IMPORTAR"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

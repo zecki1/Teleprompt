@@ -37,104 +37,47 @@ function splitParagraphs(text: string): string[] {
 export function parseScript(text: string, options?: ParseScriptOptions): Scene[] {
   const scenes: Scene[] = [];
   
-  // Função para extrair referências no novo formato:
-  // [img1]: https://...
-  // [url1]: https://...
-  // [let1]: Texto
-  // [let2]: Texto 2
-  // [abe]: Abertura
-  // [enc]: Encerramento
-  // Locução: Olá! [let1] texto [img1]
+  // Extrai o primeiro match de um padrão (ou null)
+  function extractFirst(content: string, pattern: RegExp): string | null {
+    const match = content.match(pattern);
+    return match ? match[1].trim() : null;
+  }
+
   function extractSceneData(content: string): { images: string[]; sources: string[]; lettering: string[]; opening: string | null; closing: string | null; spokenText: string; time: string | null } {
     const images: string[] = [];
     const sources: string[] = [];
     const lettering: string[] = [];
     let opening: string | null = null;
     let closing: string | null = null;
-    let spokenText = '';
     let time: string | null = null;
-    
-    // Divide em linhas
-    const lines = content.split('\n');
-    let inSpokenText = false;
-    
-    for (const line of lines) {
-      const trimmedLine = line.trim();
-      
-      // Detectar [img1]: https://...
-      const imgMatch = trimmedLine.match(/^\[img(\d+)\]\s*[:\-]\s*(https?:\/\/\S+)/i);
-      if (imgMatch) {
-        const index = parseInt(imgMatch[1]) - 1;
-        if (images[index] === undefined) {
-          images[index] = imgMatch[2].trim();
-        }
-        continue;
-      }
-      
-      // Detectar [url1]: https://...
-      const urlMatch = trimmedLine.match(/^\[url(\d+)\]\s*[:\-]\s*(https?:\/\/\S+)/i);
-      if (urlMatch) {
-        const index = parseInt(urlMatch[1]) - 1;
-        if (sources[index] === undefined) {
-          sources[index] = urlMatch[2].trim();
-        }
-        continue;
-      }
-      
-      // Detectar [let1]: Texto
-      const letMatch = trimmedLine.match(/^\[let(\d+)\]\s*[:\-]\s*(.+)/i);
-      if (letMatch) {
-        const index = parseInt(letMatch[1]) - 1;
-        if (lettering[index] === undefined) {
-          lettering[index] = letMatch[2].trim();
-        }
-        continue;
-      }
 
-      // Detectar [abe]: Abertura
-      const abeMatch = trimmedLine.match(/^\[abe\]\s*[:\-]\s*(.+)/i);
-      if (abeMatch) {
-        opening = abeMatch[1].trim();
-        continue;
-      }
-
-      // Detectar [enc]: Encerramento
-      const encMatch = trimmedLine.match(/^\[enc\]\s*[:\-]\s*(.+)/i);
-      if (encMatch) {
-        closing = encMatch[1].trim();
-        continue;
-      }
-      
-      // Detectar Tempo: ou Duração:
-      const timeMatch = trimmedLine.match(/^(?:Tempo|Duração)\s*[:\-]\s*(.+)/i);
-      if (timeMatch && !time) {
-        time = timeMatch[1].trim();
-        continue;
-      }
-      
-      // Detectar início do spoken text ([Locução]: ou [Legenda]: ou Locução: ou Legenda:)
-      if (trimmedLine.match(/^\[?(?:Locução|Legenda)\]?\s*[:\-]\s*/i)) {
-        inSpokenText = true;
-        spokenText = trimmedLine.replace(/^\[?(?:Locução|Legenda)\]?\s*[:\-]\s*/i, '').trim();
-        continue;
-      }
-      
-      // Se já está em modo spoken text, continua acumulando
-      if (inSpokenText && trimmedLine) {
-        spokenText += '\n' + trimmedLine;
-        continue;
-      }
-      
-      // Se não tem nenhum label e não é uma referência, é parte do spoken text
-      if (!trimmedLine.match(/^\[(?:img|url|let|abe|enc)\d*\]/i) && 
-          !trimmedLine.match(/^(?:Tempo|Duração)\s*[:\-]/i) &&
-          trimmedLine) {
-        // Primeira linha sem label = começa o spoken text
-        inSpokenText = true;
-        spokenText = trimmedLine;
-      }
+    // Usa matchAll com flag m (multiline) para buscar no texto completo
+    // sem precisar dividir em linhas manualmente
+    for (const m of content.matchAll(/^\[img(\d+)\]\s*[:\-]\s*(https?:\/\/\S+)/img)) {
+      const idx = parseInt(m[1]) - 1;
+      if (images[idx] === undefined) images[idx] = m[2].trim();
     }
-    
+    for (const m of content.matchAll(/^\[url(\d+)\]\s*[:\-]\s*(https?:\/\/\S+)/img)) {
+      const idx = parseInt(m[1]) - 1;
+      if (sources[idx] === undefined) sources[idx] = m[2].trim();
+    }
+    for (const m of content.matchAll(/^\[let(\d+)\]\s*[:\-]\s*(.+)/img)) {
+      const idx = parseInt(m[1]) - 1;
+      if (lettering[idx] === undefined) lettering[idx] = m[2].trim();
+    }
+    opening = extractFirst(content, /^\[abe\]\s*[:\-]\s*(.+)/im);
+    closing = extractFirst(content, /^\[enc\]\s*[:\-]\s*(.+)/im);
+    time = extractFirst(content, /^(?:Tempo|Duração)\s*[:\-]\s*(.+)/im);
+
+    // Remove todas as linhas de metadados estruturados para obter o spoken text
+    const spokenText = content
+      .replace(/^\[(?:img|url|let)\d+\]\s*[:\-]\s*.+/img, '')
+      .replace(/^\[(?:abe|enc)\]\s*[:\-]\s*.+/img, '')
+      .replace(/^(?:Tempo|Duração)\s*[:\-]\s*.+/img, '')
+      .replace(/^\[?(?:Locução|Legenda)\]?\s*[:\-]\s*/img, '')
+      .replace(/^\s*[\r\n]/gm, '')
+      .trim();
+
     return { images, sources, lettering, opening, closing, spokenText, time };
   }
   
