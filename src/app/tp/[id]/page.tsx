@@ -545,7 +545,6 @@ function TeleprompterContent({ id }: { id: string }) {
       }
 
       setSaveStatus('saved');
-      console.log("[TP] Status salvo como gravado. Buscando próximo roteiro...");
       
       // Busca o próximo roteiro para sugerir
       await findNextScript();
@@ -570,10 +569,8 @@ function TeleprompterContent({ id }: { id: string }) {
       const snapshot = await getDocs(q);
       const allScripts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as ScriptDoc[];
       
-      console.log(`[NextScript] Total de roteiros encontrados no workspace ${activeWorkspaceId}:`, allScripts.length);
       
       if (allScripts.length === 0) {
-        console.log("[NextScript] Nenhum roteiro encontrado no workspace.");
         return;
       }
 
@@ -602,14 +599,11 @@ function TeleprompterContent({ id }: { id: string }) {
         );
 
         if (next) {
-          console.log("[NextScript] Sucesso! Sugerindo:", next.title, "ID:", next.id);
           setNextScript(next);
           setShowNextModal(true);
         } else {
-          console.log("[NextScript] Nenhum roteiro 'revisado' encontrado após o atual na lista ordenada.");
         }
       } else {
-        console.log("[NextScript] Roteiro atual não encontrado na lista de scripts do workspace.");
       }
     } catch (err) {
       console.error("Erro ao buscar próximo roteiro:", err);
