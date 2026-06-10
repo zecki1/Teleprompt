@@ -290,6 +290,7 @@ function EditorContent({ id }: { id: string }) {
   const [editorName, setEditorName] = useState<string | null>(null);
   const [videomakerId, setVideomakerId] = useState<string | null>(null);
   const [videomakerName, setVideomakerName] = useState<string | null>(null);
+  const [loadingError, setLoadingError] = useState<string | null>(null);
 
   const { user, hasPermission } = useAuth();
   const isWhitelisted = user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br";
@@ -381,6 +382,8 @@ function EditorContent({ id }: { id: string }) {
 
   const searchParamsRef = useRef(searchParams);
   searchParamsRef.current = searchParams;
+  const userRef = useRef(user);
+  userRef.current = user;
 
   useEffect(() => {
     if (isNew) {
@@ -427,7 +430,24 @@ function EditorContent({ id }: { id: string }) {
     async function loadScript() {
       try {
         const scriptRef = doc(db, "scripts", id);
-        const scriptSnap = await getDoc(scriptRef);
+        const vQ = query(
+          collection(db, "scripts", id, "versions"),
+          orderBy("createdAt", "desc"),
+          limit(1)
+        );
+
+        const LOAD_TIMEOUT = 20000;
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Tempo limite excedido ao carregar roteiro. Verifique sua conexão.")), LOAD_TIMEOUT)
+        );
+
+        const [scriptSnap, vSnap] = await Promise.race([
+          Promise.all([
+            getDoc(scriptRef),
+            getDocs(vQ),
+          ]),
+          timeoutPromise,
+        ]);
 
         if (!cancelled && scriptSnap.exists()) {
           const data = scriptSnap.data();
@@ -447,7 +467,7 @@ function EditorContent({ id }: { id: string }) {
           setCategory(data.category || "video");
           setIsPublic(data.isPublic || false);
           setLockedForEditing(data.lockedForEditing || false);
-          setWorkspaceId(data.workspaceId || user?.workspaceId || "senai");
+          setWorkspaceId(data.workspaceId || userRef.current?.workspaceId || "senai");
           setReviewerId(data.reviewerId || null);
           setReviewerName(data.reviewerName || null);
           setEditorId(data.editorId || null);
@@ -455,13 +475,6 @@ function EditorContent({ id }: { id: string }) {
           setVideomakerId(data.videomakerId || null);
           setVideomakerName(data.videomakerName || null);
           setIsMirrored(data.isMirrored || false);
-
-          const vQ = query(
-            collection(db, "scripts", id, "versions"),
-            orderBy("createdAt", "desc"),
-            limit(1)
-          );
-          const vSnap = await getDocs(vQ);
 
           if (!cancelled && !vSnap.empty) {
             const vData = vSnap.docs[0].data();
@@ -475,7 +488,9 @@ function EditorContent({ id }: { id: string }) {
           }
         }
       } catch (e) {
-        console.error("[Editor] Erro ao carregar roteiro:", e);
+        if (!cancelled) {
+          setLoadingError(e instanceof Error ? e.message : "Erro ao carregar roteiro.");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -483,7 +498,7 @@ function EditorContent({ id }: { id: string }) {
     loadScript();
 
     return () => { cancelled = true; };
-  }, [id, isNew, user, setScenesWithRenumbering]);
+  }, [id, isNew, setScenesWithRenumbering]);
 
   useEffect(() => {
     if (user?.workspaceId) {
@@ -893,6 +908,22 @@ function EditorContent({ id }: { id: string }) {
       setIsCreatingProject(false);
     }
   };
+
+  if (loadingError) {
+    return (
+      <div className="fixed inset-0 z-50 bg-zinc-950 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-6 max-w-md text-center px-6">
+          <div className="p-4 rounded-full bg-red-500/10 border border-red-500/20">
+            <span className="text-3xl">⚠</span>
+          </div>
+          <p className="text-zinc-300 font-medium leading-relaxed">{loadingError}</p>
+          <Button onClick={() => { setLoadingError(null); setLoading(true); window.location.reload(); }} className="bg-zinc-800 hover:bg-zinc-700 text-white rounded px-8 h-12 font-black text-xs uppercase tracking-widest">
+            Tentar novamente
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) return <LoadingScreen />;
 
