@@ -28,8 +28,6 @@ const teleApp = getApps().find(a => a.name === "[DEFAULT]") || initializeApp(tel
 // Auth uses Zecki (where the user base is)
 const auth = getAuth(zeckiApp);
 
-console.log("[Firebase] Auth initialized on project:", zeckiConfig.projectId);
-console.log("[Firebase] Default DB (Teleprompt) on project:", teleConfig.projectId);
 
 // Set persistence to LOCAL (remains logged in even after closing browser)
 setPersistence(auth, browserLocalPersistence).catch((error) => {

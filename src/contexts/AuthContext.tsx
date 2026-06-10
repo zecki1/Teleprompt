@@ -47,7 +47,6 @@ const sanitizeData = (data: Record<string, unknown>) => {
 };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  console.log("[AuthContext] AuthProvider mounting...");
   const [user, setUser] = useState<ExtendedUser | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
@@ -70,11 +69,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (docSnap.exists()) {
             try {
               const rawData = docSnap.data();
-              console.log("[AuthContext] Firestore user data:", rawData);
               const safeData = sanitizeData(rawData as Record<string, unknown>);
               const userData = ExtendedUserSchema.parse({ uid: docSnap.id, ...safeData });
               
-              console.log("[AuthContext] Parsed user data:", userData);
               setUser(userData);
               
               if (userData.workspaces && userData.workspaces.length > 0) {
@@ -118,9 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         });
       } else {
-        console.log("[AuthContext] No firebase user, cleaning up...");
         if (unsubscribeUser) {
-          console.log("[AuthContext] Unsubscribing from user document");
           unsubscribeUser();
         }
         setFirebaseUser(null);
@@ -172,11 +167,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user?.workspaceId]);
 
   const signIn = async (email: string, password: string, inviteWorkspaceId?: string) => {
-    console.log("[AuthContext] Attempting signIn with:", email);
     setLoading(true);
     try {
       const result = await signInWithEmailAndPassword(auth, email, password);
-      console.log("[AuthContext] signIn success:", result.user.uid);
       
       if (inviteWorkspaceId) {
         const userRef = doc(dbZecki, "users", result.user.uid);
@@ -312,7 +305,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logOut = async () => {
-    console.log("[AuthContext] logOut sequence initiated");
     await signOut(auth);
   };
 

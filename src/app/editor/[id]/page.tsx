@@ -288,6 +288,7 @@ function EditorContent({ id }: { id: string }) {
   const [reviewerName, setReviewerName] = useState<string | null>(null);
   const [editorId, setEditorId] = useState<string | null>(null);
   const [editorName, setEditorName] = useState<string | null>(null);
+  const [videomakerId, setVideomakerId] = useState<string | null>(null);
   const [videomakerName, setVideomakerName] = useState<string | null>(null);
 
   const { user, hasPermission } = useAuth();
@@ -391,7 +392,6 @@ function EditorContent({ id }: { id: string }) {
       const l = sp.get("lesson");
       const pth = sp.get("path");
       
-      console.log(`[Editor] Modo Novo Roteiro - Projeto: ${p}, ProjectID: ${pid}, Pasta: ${f}`);
       if (p) {
         setProject(p);
         if (pid) setProjectId(pid);
@@ -431,7 +431,7 @@ function EditorContent({ id }: { id: string }) {
 
         if (!cancelled && scriptSnap.exists()) {
           const data = scriptSnap.data();
-          console.log("[Editor] Roteiro carregado:", data.title, "(ID:", id, ")");
+
           setTitle(data.title || "");
           const pName = data.projectName || data.project || "Geral";
           setProject(pName);
@@ -452,6 +452,7 @@ function EditorContent({ id }: { id: string }) {
           setReviewerName(data.reviewerName || null);
           setEditorId(data.editorId || null);
           setEditorName(data.editorName || null);
+          setVideomakerId(data.videomakerId || null);
           setVideomakerName(data.videomakerName || null);
           setIsMirrored(data.isMirrored || false);
 
@@ -583,6 +584,13 @@ function EditorContent({ id }: { id: string }) {
         finalReviewerName = user?.displayName || user?.email || null;
       }
 
+      let finalVideomakerId = videomakerId;
+      let finalVideomakerName = videomakerName;
+      if (saveStatus === "gravado") {
+        finalVideomakerId = user?.uid || null;
+        finalVideomakerName = user?.displayName || user?.name || user?.email || null;
+      }
+
       const saveData = sanitizeData({
         title,
         project,
@@ -600,6 +608,8 @@ function EditorContent({ id }: { id: string }) {
         reviewerName: finalReviewerName,
         editorId: finalEditorId,
         editorName: finalEditorName,
+        videomakerId: finalVideomakerId,
+        videomakerName: finalVideomakerName,
         isMirrored,
         collaborators: arrayUnion({
           uid: user?.uid,

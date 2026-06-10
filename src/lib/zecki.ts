@@ -23,7 +23,6 @@ export async function fetchZeckiProjects(workspaceId: string): Promise<ZeckiProj
   
   try {
     const projectsRef = collection(dbZecki, "projects");
-    console.log(`[ZeckiService] Buscando projetos no Firebase Project: ${dbZecki.app.options.projectId}`);
     // Para maior resiliência, buscamos tanto pelo ID do workspace quanto pelo slug (caso seja SENAI)
     const SENAI_ID = "38028901-c72f-4ca1-b887-1d6683923403";
     const workspaceIds = [workspaceId];
@@ -37,7 +36,6 @@ export async function fetchZeckiProjects(workspaceId: string): Promise<ZeckiProj
     );
     
     const querySnapshot = await getDocs(q);
-    console.log(`[ZeckiService] Projetos encontrados para workspace ${workspaceId}: ${querySnapshot.size} no projeto ${dbZecki.app.options.projectId}`);
     
     const projects: ZeckiProject[] = [];
     
@@ -60,7 +58,6 @@ export async function fetchZeckiProjects(workspaceId: string): Promise<ZeckiProj
     });
 
     if (projects.length === 0) {
-      console.warn(`[ZeckiService] Nenhum projeto encontrado para o workspace ${workspaceId}. Verifique se os projetos no Firestore possuem este workspaceId.`);
     }
     
     // Sort by name locally (same as dashboard)
