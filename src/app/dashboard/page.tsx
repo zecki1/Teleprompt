@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Hourglass, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check } from "lucide-react";
+import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Hourglass, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check, List, LayoutGrid, ArrowLeftRight, Minimize2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
@@ -46,7 +46,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ScriptDoc, ScriptStatus } from "@/types/script";
+import { ScriptDoc, ScriptStatus, FolderNode } from "@/types/script";
 import { buildTree } from "@/lib/pathUtils";
 import { FolderTree } from "@/components/tp/FolderTree";
 import { MoveScriptModal } from "@/components/tp/MoveScriptModal";
@@ -108,7 +108,21 @@ function DashboardContent() {
   const [deleteConfirmProject, setDeleteConfirmProject] = useState<string | null>(null);
   const [exportingProject, setExportingProject] = useState<string | null>(null);
   const [showConcluded, setShowConcluded] = useState(false);
-  
+  const [viewMode, setViewMode] = useState<'list' | 'scroll'>('scroll');
+  const [treeCollapseVersions, setTreeCollapseVersions] = useState<Record<string, number>>({});
+
+  function getAllFolderPaths(nodes: Record<string, FolderNode>): string[] {
+    const paths: string[] = [];
+    function recurse(ns: Record<string, FolderNode>) {
+      for (const n of Object.values(ns)) {
+        paths.push(n.fullPath.join("/"));
+        recurse(n.children);
+      }
+    }
+    recurse(nodes);
+    return paths;
+  }
+
   const handleCopyInvite = () => {
     if (!user?.workspaceId) {
       toast.error("Você não está vinculado a um workspace.");
@@ -129,6 +143,20 @@ function DashboardContent() {
     if (next.has(projectName)) next.delete(projectName);
     else next.add(projectName);
     setCollapsedProjects(next);
+  };
+
+  const toggleAllFolders = (projectName: string, tree: Record<string, FolderNode>) => {
+    const pid = projects.find(p => p.name === projectName)?.id || "";
+    const STORAGE_KEY = `tp_collapsed_folders_${pid}`;
+    const allPaths = getAllFolderPaths(tree);
+    const saved = new Set(JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"));
+    const allCollapsed = allPaths.every(p => saved.has(p));
+    if (allCollapsed) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+    } else {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(allPaths));
+    }
+    setTreeCollapseVersions(prev => ({ ...prev, [projectName]: (prev[projectName] ?? 0) + 1 }));
   };
 
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
@@ -292,6 +320,17 @@ function DashboardContent() {
       } catch {}
     }
 
+    const savedCollapsed = localStorage.getItem("teleprompt_collapsed_projects");
+    if (savedCollapsed) {
+      try {
+        const arr = JSON.parse(savedCollapsed);
+        if (Array.isArray(arr)) setCollapsedProjects(new Set(arr));
+      } catch {}
+    }
+
+    const savedViewMode = localStorage.getItem("teleprompt_view_mode");
+    if (savedViewMode === 'list' || savedViewMode === 'scroll') setViewMode(savedViewMode);
+
     const statusParam = searchParams.get("status");
     const commenterParam = searchParams.get("commenter");
     const concludedParam = searchParams.get("concluded");
@@ -310,6 +349,14 @@ function DashboardContent() {
   }, [statusFilter, filterCommenter, showConcluded]);
 
   useEffect(() => {
+    localStorage.setItem("teleprompt_collapsed_projects", JSON.stringify(Array.from(collapsedProjects)));
+  }, [collapsedProjects]);
+
+  useEffect(() => {
+    localStorage.setItem("teleprompt_view_mode", viewMode);
+  }, [viewMode]);
+
+  useEffect(() => {
     const params = new URLSearchParams();
     if (projectIdFilter) params.set("projectId", projectIdFilter);
     if (statusFilter !== "all") params.set("status", statusFilter);
@@ -318,6 +365,19 @@ function DashboardContent() {
     const newUrl = `${window.location.pathname}?${params.toString()}`;
     window.history.replaceState(null, "", newUrl);
   }, [statusFilter, filterCommenter, showConcluded, projectIdFilter]);
+
+  useEffect(() => {
+    if (loadingProjects) return;
+    const savedProjectId = localStorage.getItem("teleprompt_last_project_id");
+    if (!projectIdFilter && savedProjectId) {
+      const projectExists = projects.some(p => p.id === savedProjectId);
+      if (projectExists) {
+        router.replace(`/dashboard?projectId=${savedProjectId}`);
+      } else {
+        localStorage.removeItem("teleprompt_last_project_id");
+      }
+    }
+  }, [loadingProjects, projectIdFilter, projects, router]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -417,7 +477,10 @@ function DashboardContent() {
     try {
       await deleteZeckiProject(projectId);
       setProjects(projects.filter(p => p.id !== projectId));
-      if (projectIdFilter === projectId) router.push("/dashboard");
+      if (projectIdFilter === projectId) {
+        localStorage.removeItem("teleprompt_last_project_id");
+        router.push("/dashboard");
+      }
       if (user) {
         const { logActivity } = await import("@/lib/activity");
         await logActivity({
@@ -738,7 +801,10 @@ function DashboardContent() {
           {selectedProject && (
             <Button 
               variant="outline" 
-              onClick={() => router.push("/dashboard")} 
+              onClick={() => {
+                localStorage.removeItem("teleprompt_last_project_id");
+                router.push("/dashboard");
+              }} 
               className="rounded border-blue-500 text-blue-500 hover:bg-blue-50"
             >
               Ver Todos
@@ -783,18 +849,39 @@ function DashboardContent() {
             <Briefcase className="w-4 h-4" />
             Projetos Ativos
           </h2>
-          <Button variant="ghost" size="sm" onClick={() => router.push("/projects")} className="text-xs text-blue-500 hover:text-blue-600">
-            Ver Todos <ChevronRight className="w-3 h-3 ml-1" />
-          </Button>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center border border-zinc-200 dark:border-zinc-800 rounded overflow-hidden">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setViewMode('scroll')}
+                className={`h-7 w-7 rounded-none ${viewMode === 'scroll' ? 'bg-zinc-100 dark:bg-zinc-800 text-blue-500' : 'text-zinc-400'}`}
+              >
+                <ArrowLeftRight className="w-3.5 h-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setViewMode('list')}
+                className={`h-7 w-7 rounded-none ${viewMode === 'list' ? 'bg-zinc-100 dark:bg-zinc-800 text-blue-500' : 'text-zinc-400'}`}
+              >
+                <List className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => router.push("/projects")} className="text-xs text-blue-500 hover:text-blue-600">
+              Ver Todos <ChevronRight className="w-3 h-3 ml-1" />
+            </Button>
+          </div>
         </div>
         
+        {viewMode === 'scroll' ? (
         <div className="flex gap-4 overflow-x-auto p-5 custom-scrollbar pb-8">
           {loadingProjects ? (
             Array(3).fill(0).map((_, i) => (
-              <div key={i} className="min-w-[200px] h-24 bg-zinc-100 dark:bg-zinc-900 animate-pulse rounded-xl border border-zinc-200 dark:border-zinc-800" />
+              <div key={i} className="min-w-[200px] h-24 bg-zinc-100 dark:bg-zinc-900 animate-pulse rounded border border-zinc-200 dark:border-zinc-800" />
             ))
           ) : projects.length === 0 ? (
-            <div className="w-full py-6 px-8 bg-zinc-50 dark:bg-zinc-900/50 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 text-center">
+            <div className="w-full py-6 px-8 bg-zinc-50 dark:bg-zinc-900/50 rounded border border-dashed border-zinc-300 dark:border-zinc-700 text-center">
                <p className="text-sm text-zinc-500">Nenhum projeto vinculado a este workspace.</p>
             </div>
           ) : (
@@ -810,8 +897,10 @@ function DashboardContent() {
                   }`}
                   onClick={() => {
                     if (isActive) {
+                      localStorage.removeItem("teleprompt_last_project_id");
                       router.push("/dashboard");
                     } else {
+                      localStorage.setItem("teleprompt_last_project_id", project.id);
                       router.push(`/dashboard?projectId=${project.id}`);
                     }
                   }}
@@ -824,7 +913,7 @@ function DashboardContent() {
                       <Button 
                         size="icon" 
                         variant="ghost" 
-                        className="h-6 w-6 rounded-full hover:bg-red-100 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="h-6 w-6 rounded hover:bg-red-100 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
                         onClick={(e) => handleDeleteProject(e, project.id)}
                       >
                         <Trash2 className="w-3 h-3" />
@@ -839,6 +928,59 @@ function DashboardContent() {
             })
           )}
         </div>
+      ) : (
+        <div className="p-2">
+          {loadingProjects ? (
+            Array(3).fill(0).map((_, i) => (
+              <div key={i} className="h-12 bg-zinc-100 dark:bg-zinc-900 animate-pulse rounded border border-zinc-200 dark:border-zinc-800 mb-2" />
+            ))
+          ) : projects.length === 0 ? (
+            <div className="w-full py-6 px-8 bg-zinc-50 dark:bg-zinc-900/50 rounded border border-dashed border-zinc-300 dark:border-zinc-700 text-center">
+              <p className="text-sm text-zinc-500">Nenhum projeto vinculado a este workspace.</p>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {projects.map(project => {
+                const isActive = projectIdFilter === project.id;
+                return (
+                  <div
+                    key={project.id}
+                    onClick={() => {
+                      if (isActive) {
+                        localStorage.removeItem("teleprompt_last_project_id");
+                        router.push("/dashboard");
+                      } else {
+                        localStorage.setItem("teleprompt_last_project_id", project.id);
+                        router.push(`/dashboard?projectId=${project.id}`);
+                      }
+                    }}
+                    className={`flex items-center gap-3 px-4 py-2.5 rounded cursor-pointer transition-all border ${
+                      isActive
+                        ? 'bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800'
+                        : 'hover:bg-zinc-50 dark:hover:bg-zinc-900/50 border-transparent'
+                    }`}
+                  >
+                    <Badge variant={isActive ? "default" : "outline"} className="text-[10px] uppercase font-mono px-1.5 py-0 h-5 w-14 shrink-0">
+                      {project.code || "PRJ"}
+                    </Badge>
+                    <span className={`text-sm font-bold flex-1 truncate ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-zinc-700 dark:text-zinc-300'}`}>
+                      {project.name}
+                    </span>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 rounded hover:bg-red-100 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={(e) => handleDeleteProject(e, project.id)}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
       </div>
 
       <div className="flex gap-2 mb-8 overflow-x-auto pb-2 no-scrollbar">
@@ -889,15 +1031,35 @@ function DashboardContent() {
             <><ChevronRight className="w-3.5 h-3.5" /> Minimizar Todos</>
           )}
         </Button>
+        <div className="flex items-center border border-zinc-200 dark:border-zinc-800 rounded overflow-hidden">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setViewMode('scroll')}
+            className={`h-7 w-7 rounded-none ${viewMode === 'scroll' ? 'bg-zinc-100 dark:bg-zinc-800 text-blue-500' : 'text-zinc-400'}`}
+            title="Scroll horizontal"
+          >
+            <ArrowLeftRight className="w-3.5 h-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setViewMode('list')}
+            className={`h-7 w-7 rounded-none ${viewMode === 'list' ? 'bg-zinc-100 dark:bg-zinc-800 text-blue-500' : 'text-zinc-400'}`}
+            title="Lista"
+          >
+            <List className="w-3.5 h-3.5" />
+          </Button>
+        </div>
         {allCommenters.length > 0 && (
-          <div className="flex items-center gap-2 px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800">
+          <div className="flex items-center gap-2 px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded border border-zinc-200 dark:border-zinc-800">
             <MessageSquare className="w-4 h-4 text-blue-500" />
             <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Comentários de:</span>
             <Select value={filterCommenter} onValueChange={setFilterCommenter}>
               <SelectTrigger className="w-[200px] h-7 border-none bg-transparent shadow-none text-[10px] font-bold focus:ring-0">
                 <SelectValue placeholder="Todos" />
               </SelectTrigger>
-              <SelectContent className="rounded-xl border-zinc-200 dark:border-zinc-800">
+              <SelectContent className="rounded border-zinc-200 dark:border-zinc-800">
                 <SelectItem value="all" className="text-[10px] font-black uppercase">Todos</SelectItem>
                 {allCommenters.map(author => (
                   <SelectItem key={author} value={author} className="text-[10px] font-black uppercase">{author}</SelectItem>
@@ -906,13 +1068,13 @@ function DashboardContent() {
             </Select>
           </div>
         )}
-        <div className="flex items-center gap-2 px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <div className="flex items-center gap-2 px-4 py-2 bg-zinc-100 dark:bg-zinc-900 rounded border border-zinc-200 dark:border-zinc-800">
           <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Concluídos:</span>
           <Select value={showConcluded ? "show" : "hide"} onValueChange={(v) => setShowConcluded(v === "show")}>
             <SelectTrigger className="w-[140px] h-7 border-none bg-transparent shadow-none text-[10px] font-bold focus:ring-0">
               <SelectValue placeholder={showConcluded ? "Mostrar" : `Ocultar (${concludedProjects.size})`} />
             </SelectTrigger>
-            <SelectContent className="rounded-xl border-zinc-200 dark:border-zinc-800">
+            <SelectContent className="rounded border-zinc-200 dark:border-zinc-800">
               <SelectItem value="hide" className="text-[10px] font-black uppercase">Ocultar ({concludedProjects.size})</SelectItem>
               <SelectItem value="show" className="text-[10px] font-black uppercase">Mostrar</SelectItem>
             </SelectContent>
@@ -956,7 +1118,7 @@ function DashboardContent() {
                           <ChevronDown className="w-4 h-4 text-zinc-400" />
                         )}
                       </div>
-                      <div className="p-2 bg-blue-500/10 rounded-lg">
+                      <div className="p-2 bg-blue-500/10 rounded">
                         <Briefcase className="w-5 h-5 text-blue-500" />
                       </div>
                       {editingProjectName === projectName ? (
@@ -973,9 +1135,9 @@ function DashboardContent() {
                           <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditingProjectName(null)}>
                             <X className="w-4 h-4" />
                           </Button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
                           <h2 className="text-lg font-black tracking-tight text-zinc-900 dark:text-zinc-100 uppercase tracking-widest">
                             {projectName}
                           </h2>
@@ -1000,6 +1162,22 @@ function DashboardContent() {
                       <Button
                         variant="ghost"
                         size="sm"
+                        className="h-8 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-amber-500"
+                        onClick={() => toggleAllFolders(projectName, tree)}
+                      >
+                        <Minimize2 className="w-3.5 h-3.5 mr-1.5" />
+                        {(() => {
+                          const allPaths = getAllFolderPaths(tree);
+                          const storageKey = `tp_collapsed_folders_${pid}`;
+                          try {
+                            const saved: string[] = JSON.parse(localStorage.getItem(storageKey) || "[]");
+                            return allPaths.length > 0 && allPaths.every(p => saved.includes(p)) ? "EXPANDIR" : "MINIMIZAR";
+                          } catch { return "MINIMIZAR"; }
+                        })()}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         className="h-8 text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-blue-500"
                         onClick={() => handleCreateFolderClick(projectName)}
                       >
@@ -1021,7 +1199,7 @@ function DashboardContent() {
                             {exportingProject === projectName ? "EXPORTANDO..." : "BACKUP"}
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="rounded-xl border-zinc-200 dark:border-zinc-800 min-w-[200px]">
+                        <DropdownMenuContent align="end" className="rounded border-zinc-200 dark:border-zinc-800 min-w-[200px]">
                           <DropdownMenuItem
                             className="text-[11px] font-bold gap-3 py-2.5 cursor-pointer"
                             onClick={() => handleDownloadProjectBackup(projectName, projectScripts)}
@@ -1063,6 +1241,7 @@ function DashboardContent() {
                   {!collapsedProjects.has(projectName) && (
                     <div className="animate-in fade-in slide-in-from-top-2 duration-300">
                       <FolderTree
+                        key={treeCollapseVersions[projectName] ?? 0}
                         nodes={tree}
                         projectName={projectName}
                         projectId={pid}
@@ -1110,10 +1289,48 @@ function DashboardContent() {
                             handleExportProjectPPT(folderLabel, scripts);
                           }
                         }}
-                        renderScripts={(scripts) => (
-                          <>
-                            {scripts.filter(s => !s.isPlaceholder).map(script => (
-                              <div key={script.id} className="min-w-[400px] md:min-w-[450px] snap-start relative pl-2">
+                        viewMode={viewMode}
+                        renderScripts={(scripts) => {
+                          if (viewMode === 'list') {
+                            return (
+                              <div className="w-full space-y-1">
+                                {scripts.filter(s => !s.isPlaceholder).map(script => (
+                                  <div key={script.id} className="flex items-center gap-3 px-4 py-2.5 rounded border border-transparent hover:border-zinc-200 dark:hover:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 transition-all cursor-pointer group"
+                                    onClick={() => router.push(`/editor/${script.id}`)}
+                                  >
+                                    <Badge className={
+                                      script.status === "rascunho" ? "bg-orange-500 text-white text-[9px] font-black uppercase px-2 h-5 shrink-0" :
+                                      script.status === "em_revisao" ? "bg-yellow-500 text-white text-[9px] font-black uppercase px-2 h-5 shrink-0" :
+                                      (script.status === "aguardando_gravacao" || script.status === "revisao_realizada") ? "bg-emerald-500 text-white text-[9px] font-black uppercase px-2 h-5 shrink-0" :
+                                      script.status === "gravado" ? "bg-blue-600 text-white text-[9px] font-black uppercase px-2 h-5 shrink-0" :
+                                      "bg-zinc-500 text-white text-[9px] font-black uppercase px-2 h-5 shrink-0"
+                                    }>
+                                      {statusConfig[script.status]?.label || script.status}
+                                    </Badge>
+                                    <span className="text-sm font-bold flex-1 truncate text-zinc-800 dark:text-zinc-200">
+                                      {script.title}
+                                    </span>
+                                    <span className="text-[10px] text-zinc-400 hidden sm:inline">{script.editorName || "—"}</span>
+                                    <span className="text-[10px] text-zinc-400 hidden md:inline">
+                                      {script.createdAt ? format(new Date(script.createdAt), "dd/MM", { locale: ptBR }) : ""}
+                                    </span>
+                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); router.push(`/editor/${script.id}`); }} title="Editar">
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </Button>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={(e) => { e.stopPropagation(); deleteScript(script.id); }} title="Excluir">
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          }
+                          return (
+                            <>
+                              {scripts.filter(s => !s.isPlaceholder).map(script => (
+                                <div key={script.id} className={`relative ${viewMode === 'scroll' ? 'min-w-[400px] md:min-w-[450px] snap-start pl-2' : ''}`}>
                                 {script.status === "rascunho" && (
                                   <div className="absolute -top-1 -right-1 z-20 bg-orange-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
                                     <FileText className="w-3 h-3" /> Rascunho
@@ -1173,21 +1390,21 @@ function DashboardContent() {
                                         <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Responsável</span>
                                         <div className="flex items-center gap-1.5">
                                           <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">{script.editorName || "Não atribuído"}</span>
-                                          {script.editorId && <div className="w-4 h-4 rounded-full bg-blue-500/20 flex items-center justify-center text-[8px] font-bold text-blue-600">ED</div>}
+                                          {script.editorId && <div className="w-4 h-4 rounded bg-blue-500/20 flex items-center justify-center text-[8px] font-bold text-blue-600">ED</div>}
                                         </div>
                                       </div>
                                       <div className="flex items-center justify-between">
                                         <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Revisor</span>
                                         <div className="flex items-center gap-1.5">
                                           <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">{script.reviewerName || "Não atribuído"}</span>
-                                          {script.reviewerId && <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center text-[8px] font-bold text-emerald-600">RV</div>}
+                                          {script.reviewerId && <div className="w-4 h-4 rounded bg-emerald-500/20 flex items-center justify-center text-[8px] font-bold text-emerald-600">RV</div>}
                                         </div>
                                       </div>
                                       <div className="flex items-center justify-between">
                                         <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Gravado por</span>
                                         <div className="flex items-center gap-1.5">
                                           <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">{script.videomakerName || "Não atribuído"}</span>
-                                          {script.videomakerId && <div className="w-4 h-4 rounded-full bg-purple-500/20 flex items-center justify-center text-[8px] font-bold text-purple-600">VM</div>}
+                                          {script.videomakerId && <div className="w-4 h-4 rounded bg-purple-500/20 flex items-center justify-center text-[8px] font-bold text-purple-600">VM</div>}
                                         </div>
                                       </div>
                                     </div>
@@ -1266,7 +1483,8 @@ function DashboardContent() {
                               </div>
                             ))}
                           </>
-                        )}
+                        );
+                      }}
                       />
                     </div>
                   )}

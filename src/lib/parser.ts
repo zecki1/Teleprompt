@@ -139,7 +139,7 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
   }
   
   // Divide o texto pelo delimitador "Cena" (ignora maiúsculas/minúsculas)
-  const parts = text.split(/Cena\s*(?:\[)?([0-9]+(?:-[a-zA-Z0-9]+)*)?(?:\])?\s*/i);
+  const parts = text.split(/\bCena\b\s*(?:\[)?([0-9]+(?:-[a-zA-Z0-9]+)*)?(?:\])?\s*/i);
   
   for (let i = 1; i < parts.length; i += 2) {
     const sceneNumber = parts[i] ? parts[i].trim() : String(Math.floor(i / 2) + 1);
