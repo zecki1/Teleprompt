@@ -4,8 +4,8 @@ import React from "react";
 import { 
   Play, 
   Pause, 
-  ArrowDown, 
-  ArrowUp, 
+  ChevronLeft,
+  ChevronRight,
   RotateCcw, 
   ChevronUp, 
   ChevronDown,
@@ -20,6 +20,8 @@ interface RemoteControlUIProps {
   progress: number;
   update: (data: Record<string, unknown>) => void;
   manualScroll: (amount: number) => void;
+  goToPrevScene: () => void;
+  goToNextScene: () => void;
   isCommentsVisible: boolean;
   setIsCommentsVisible: (visible: boolean) => void;
 }
@@ -31,6 +33,8 @@ export function RemoteControlUI({
   progress,
   update,
   manualScroll,
+  goToPrevScene,
+  goToNextScene,
   isCommentsVisible,
   setIsCommentsVisible
 }: RemoteControlUIProps) {
@@ -96,25 +100,27 @@ export function RemoteControlUI({
       {/* CONTROLES PRINCIPAIS */}
       <div className="flex-1 flex flex-col items-center justify-between py-2 w-full gap-6">
         
-        {/* NAVEGAÇÃO MANUAL (CHEVRONS) */}
+        {/* NAVEGAÇÃO ENTRE CENAS */}
         <div className="flex justify-between w-full px-4 items-center">
             <button 
-              onClick={() => manualScroll(-500)} 
+              onClick={goToPrevScene} 
               className="w-16 h-16 rounded-2xl bg-zinc-900 flex items-center justify-center hover:bg-zinc-800 active:scale-90 transition-all border border-zinc-800 shadow-lg group"
+              title="Cena anterior"
             >
               <ChevronUp className="w-8 h-8 text-zinc-500 group-hover:text-white transition-colors" />
             </button>
             
             <div className="flex flex-col items-center">
               <div className="p-2 bg-zinc-900 rounded-full mb-1">
-                <Clock size={14} className="text-zinc-600" />
+                <ChevronUp size={14} className="text-zinc-600" />
               </div>
-              <span className="text-[9px] uppercase text-zinc-500 font-black tracking-widest">Manual</span>
+              <span className="text-[9px] uppercase text-zinc-500 font-black tracking-widest">Cenas</span>
             </div>
 
             <button 
-              onClick={() => manualScroll(500)} 
+              onClick={goToNextScene} 
               className="w-16 h-16 rounded-2xl bg-zinc-900 flex items-center justify-center hover:bg-zinc-800 active:scale-90 transition-all border border-zinc-800 shadow-lg group"
+              title="Próxima cena"
             >
               <ChevronDown className="w-8 h-8 text-zinc-500 group-hover:text-white transition-colors" />
             </button>
@@ -157,7 +163,7 @@ export function RemoteControlUI({
             onClick={() => update({ speed: Math.max(speed - 0.5, 0) })} 
             className="w-14 h-14 rounded-full bg-zinc-800 flex items-center justify-center active:scale-90 hover:bg-zinc-700 text-zinc-400 border border-zinc-700/50 transition-colors"
           >
-            <ArrowDown size={24} />
+            <ChevronLeft size={24} />
           </button>
           
           <div className="flex flex-col items-center flex-1">
@@ -172,7 +178,7 @@ export function RemoteControlUI({
             onClick={() => update({ speed: Math.min(speed + 0.5, 30) })} 
             className="w-14 h-14 rounded-full bg-zinc-800 flex items-center justify-center active:scale-90 hover:bg-zinc-700 text-zinc-400 border border-zinc-700/50 transition-colors"
           >
-            <ArrowUp size={24} />
+            <ChevronRight size={24} />
           </button>
         </div>
       </div>
