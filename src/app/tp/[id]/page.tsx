@@ -368,7 +368,28 @@ function TeleprompterContent({ id }: { id: string }) {
   // --- 3. ATALHOS DE TECLADO (POWERPOINT / CONTROLE) ---
 
   useEffect(() => {
+    const goToPrev = () => {
+      if (!containerRef.current) return;
+      const currentScroll = containerRef.current.scrollTop;
+      const prev = [...sceneRefs.current].reverse().find(ref => ref && ref.offsetTop < currentScroll - 150);
+      containerRef.current.scrollTo({ top: prev?.offsetTop || 0, behavior: 'smooth' });
+    };
+
+    const goToNext = () => {
+      if (!containerRef.current) return;
+      const currentScroll = containerRef.current.scrollTop;
+      const next = sceneRefs.current.find(ref => ref && ref.offsetTop > currentScroll + 150);
+      if (next) containerRef.current.scrollTo({ top: next.offsetTop, behavior: 'smooth' });
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Impedir print e mapear para próxima cena (Cmd+P / Ctrl+P / Alt+P)
+      if ((e.metaKey || e.ctrlKey || e.altKey) && e.code === 'KeyP') {
+        e.preventDefault();
+        goToNext();
+        return;
+      }
+
       if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
         return;
       }
@@ -378,19 +399,30 @@ function TeleprompterContent({ id }: { id: string }) {
         e.target.tagName === 'TEXTAREA' ||
         (isCommentsVisible && !containerRef.current?.contains(e.target))
       )) return;
-      const currentScroll = containerRef.current?.scrollTop || 0;
 
       switch(e.code) {
         case 'Space':
+        case 'F5':
+        case 'KeyB':
           e.preventDefault();
-          const needsChecklist = user?.requiresChecklist !== false;
-          if (isPlayingRef.current) {
-            updateDoc(doc(db, "scripts", id), { isPlaying: false });
-          } else if (!checklistDone && needsChecklist) {
-            setShowChecklist(true);
-          } else {
-            updateDoc(doc(db, "scripts", id), { isPlaying: true });
+          {
+            const needsChecklist = user?.requiresChecklist !== false;
+            if (isPlayingRef.current) {
+              updateDoc(doc(db, "scripts", id), { isPlaying: false });
+            } else if (!checklistDone && needsChecklist) {
+              setShowChecklist(true);
+            } else {
+              updateDoc(doc(db, "scripts", id), { isPlaying: true });
+            }
           }
+          break;
+        case 'PageUp':
+          e.preventDefault();
+          updateDoc(doc(db, "scripts", id), { speed: Math.max(speedRef.current - 0.5, 0) });
+          break;
+        case 'PageDown':
+          e.preventDefault();
+          updateDoc(doc(db, "scripts", id), { speed: Math.min(speedRef.current + 0.5, 30) });
           break;
         case 'ArrowRight':
           e.preventDefault();
@@ -401,16 +433,12 @@ function TeleprompterContent({ id }: { id: string }) {
           updateDoc(doc(db, "scripts", id), { speed: Math.max(speedRef.current - 0.5, 0) });
           break;
         case 'ArrowUp':
-        case 'PageUp':
           e.preventDefault();
-          const prev = [...sceneRefs.current].reverse().find(ref => ref && ref.offsetTop < currentScroll - 150);
-          containerRef.current?.scrollTo({ top: prev?.offsetTop || 0, behavior: 'smooth' });
+          goToPrev();
           break;
         case 'ArrowDown':
-        case 'PageDown':
           e.preventDefault();
-          const next = sceneRefs.current.find(ref => ref && ref.offsetTop > currentScroll + 150);
-          if (next) containerRef.current?.scrollTo({ top: next.offsetTop, behavior: 'smooth' });
+          goToNext();
           break;
       }
     };
@@ -483,6 +511,20 @@ function TeleprompterContent({ id }: { id: string }) {
   }, [fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, isMirrorWindow]);
   
   if (loading) return <LoadingScreen />;
+
+  const goToPrevScene = () => {
+    if (!containerRef.current) return;
+    const currentScroll = containerRef.current.scrollTop;
+    const prev = [...sceneRefs.current].reverse().find(ref => ref && ref.offsetTop < currentScroll - 150);
+    containerRef.current.scrollTo({ top: prev?.offsetTop || 0, behavior: 'smooth' });
+  };
+
+  const goToNextScene = () => {
+    if (!containerRef.current) return;
+    const currentScroll = containerRef.current.scrollTop;
+    const next = sceneRefs.current.find(ref => ref && ref.offsetTop > currentScroll + 150);
+    if (next) containerRef.current.scrollTo({ top: next.offsetTop, behavior: 'smooth' });
+  };
 
   const handleSetRecorded = async () => {
     try {
@@ -873,23 +915,25 @@ function TeleprompterContent({ id }: { id: string }) {
               </div>
             ) : (
               <div className="py-4 animate-in slide-in-from-left-4 duration-300">
-                  <RemoteControlUI
-                     isPlaying={isPlaying}
-                     speed={speed}
-                     duration={duration}
-                     progress={localProgress}
-                     update={(data) => {
-                       const needsChecklist = user?.requiresChecklist !== false;
-                       if (data.isPlaying === true && !checklistDone && needsChecklist) {
-                         setShowChecklist(true);
-                       } else {
-                         updateDoc(doc(db, "scripts", id), data);
-                       }
-                     }}
-                     manualScroll={(amt) => { if (containerRef.current) containerRef.current.scrollBy({ top: amt, behavior: 'smooth' }); }}
-                     isCommentsVisible={isCommentsVisible}
-                     setIsCommentsVisible={setIsCommentsVisible}
-                  />
+                   <RemoteControlUI
+                      isPlaying={isPlaying}
+                      speed={speed}
+                      duration={duration}
+                      progress={localProgress}
+                      update={(data) => {
+                        const needsChecklist = user?.requiresChecklist !== false;
+                        if (data.isPlaying === true && !checklistDone && needsChecklist) {
+                          setShowChecklist(true);
+                        } else {
+                          updateDoc(doc(db, "scripts", id), data);
+                        }
+                      }}
+                      manualScroll={(amt) => { if (containerRef.current) containerRef.current.scrollBy({ top: amt, behavior: 'smooth' }); }}
+                      goToPrevScene={goToPrevScene}
+                      goToNextScene={goToNextScene}
+                      isCommentsVisible={isCommentsVisible}
+                      setIsCommentsVisible={setIsCommentsVisible}
+                   />
               </div>
             )}
           </div>
@@ -976,15 +1020,15 @@ function TeleprompterContent({ id }: { id: string }) {
 
       {/* MODAL DE PRÓXIMO ROTEIRO */}
       <Dialog open={showNextModal} onOpenChange={setShowNextModal}>
-        <DialogContent className="sm:max-w-[500px] bg-zinc-950 border-zinc-800 rounded-[32px] p-0 shadow-[0_0_100px_rgba(37,99,235,0.2)] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[500px] bg-zinc-950 border-zinc-800 rounded-[32px] p-0 shadow-[0_0_100px_rgba(37,99,235,0.2)] max-h-[90vh] overflow-y-auto overflow-x-hidden">
           <div className="bg-gradient-to-br from-blue-600/20 to-purple-600/20 p-8 border-b border-zinc-800">
             <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mb-6 shadow-xl shadow-blue-600/20">
               <Zap size={32} className="text-white" />
             </div>
             <DialogHeader>
               <DialogTitle className="text-2xl font-black text-white tracking-tight uppercase">Gravação Concluída!</DialogTitle>
-              <DialogDescription className="text-zinc-400 font-medium">
-                O roteiro <span className="text-white font-bold">&quot;{scriptTitle}&quot;</span> foi marcado como gravado com sucesso.
+              <DialogDescription className="text-zinc-400 font-medium break-words">
+                O roteiro <span className="text-white font-bold break-words">&quot;{scriptTitle}&quot;</span> foi marcado como gravado com sucesso.
               </DialogDescription>
             </DialogHeader>
           </div>
