@@ -116,6 +116,7 @@ function TeleprompterContent({ id }: { id: string }) {
   const [bgColor, setBgColor] = useState("#000000");
   const [textColor, setTextColor] = useState("#ffffff");
   const [showReadingStrip, setShowReadingStrip] = useState(true);
+  const [sceneGap, setSceneGap] = useState("mb-32");
   const [referenceInches, setReferenceInches] = useState(11);
   const [operatorInches, setOperatorInches] = useState(27);
 
@@ -353,6 +354,7 @@ function TeleprompterContent({ id }: { id: string }) {
         if (d.workspaceId) setWorkspaceId(d.workspaceId);
         if (d.editorId) setEditorId(d.editorId);
         if (typeof d.showReadingStrip === "boolean") setShowReadingStrip(d.showReadingStrip);
+        if (d.sceneGap) setSceneGap(d.sceneGap);
         if (typeof d.referenceInches === "number") setReferenceInches(d.referenceInches);
         if (typeof d.operatorInches === "number") setOperatorInches(d.operatorInches);
 
@@ -495,7 +497,8 @@ function TeleprompterContent({ id }: { id: string }) {
            setFontFamily(ev.data.styles.fontFamily);
            setFontWeight(ev.data.styles.fontWeight);
            setLineHeight(ev.data.styles.lineHeight);
-        }
+           if (ev.data.styles.sceneGap) setSceneGap(ev.data.styles.sceneGap);
+         }
       };
     }
     return () => bc.close();
@@ -505,10 +508,10 @@ function TeleprompterContent({ id }: { id: string }) {
     if (!isMirrorWindow && bcRef.current) {
       bcRef.current.postMessage({ 
         type: 'syncStyles', 
-        styles: { fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor } 
+        styles: { fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap } 
       });
     }
-  }, [fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, isMirrorWindow]);
+  }, [fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap, isMirrorWindow]);
   
   if (loading) return <LoadingScreen />;
 
@@ -711,7 +714,7 @@ function TeleprompterContent({ id }: { id: string }) {
                   if (el.innerHTML !== html) el.innerHTML = html;
                 }
               }}
-              className={`mb-32 break-words outline-none whitespace-pre-wrap transition-opacity duration-700 ${textAlign} ${fontWeight} ${fontSize} ${lineHeight} ${isPlaying ? 'opacity-100' : 'opacity-30'}`} 
+              className={`${sceneGap} break-words outline-none whitespace-pre-wrap transition-opacity duration-700 ${textAlign} ${fontWeight} ${fontSize} ${lineHeight} ${isPlaying ? 'opacity-100' : 'opacity-30'}`} 
               contentEditable={!isMirrorWindow} 
               suppressContentEditableWarning={true}
               onFocus={() => {
@@ -825,6 +828,20 @@ function TeleprompterContent({ id }: { id: string }) {
                        {['max-w-2xl', 'max-w-4xl', 'max-w-6xl', 'max-w-none'].map(w => (
                          <button key={w} onClick={() => updateGlobalStyle({maxWidth: w})} className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${maxWidth === w ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-500 border-zinc-800 hover:bg-zinc-800'}`}>{w === 'max-w-none' ? 'FULL' : w.split('-')[2]}</button>
                        ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><span className="text-green-400">⬍</span> Espaço entre Cenas</p>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {[
+                        { label: "Mín", value: "mb-8" },
+                        { label: "Pqno", value: "mb-16" },
+                        { label: "Méd", value: "mb-32" },
+                        { label: "Máx", value: "mb-48" },
+                      ].map(g => (
+                        <button key={g.value} onClick={() => { setSceneGap(g.value); updateGlobalStyle({ sceneGap: g.value }); }} className={`py-2 rounded-lg text-[9px] font-bold border transition-all ${sceneGap === g.value ? 'bg-white text-black border-white' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}>{g.label}</button>
+                      ))}
                     </div>
                   </div>
 

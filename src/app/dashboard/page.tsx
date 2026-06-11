@@ -499,12 +499,14 @@ function DashboardContent() {
     }
   };
 
-  const handleAssign = async (scriptId: string, userId: string, userName: string, field: 'editor' | 'reviewer') => {
+  const handleAssign = async (scriptId: string, userId: string, userName: string, field: 'editor' | 'reviewer' | 'videomaker') => {
     try {
       const scriptRef = doc(db, "scripts", scriptId);
       const updateData = field === 'editor' 
         ? { editorId: userId, editorName: userName }
-        : { reviewerId: userId, reviewerName: userName };
+        : field === 'reviewer'
+        ? { reviewerId: userId, reviewerName: userName }
+        : { videomakerId: userId, videomakerName: userName };
       
       await updateDoc(scriptRef, {
         ...updateData,
@@ -512,7 +514,8 @@ function DashboardContent() {
       });
       
       setScripts(scripts.map(s => s.id === scriptId ? { ...s, ...updateData } : s));
-      toast.success(`${field === 'editor' ? 'Editor' : 'Revisor'} atribuído com sucesso!`);
+      const label = field === 'editor' ? 'Editor' : field === 'reviewer' ? 'Revisor' : 'Videomaker';
+      toast.success(`${label} atribuído com sucesso!`);
     } catch (error) {
       console.error("Erro ao atribuir:", error);
       toast.error("Erro ao realizar atribuição.");
@@ -1618,7 +1621,7 @@ function DashboardContent() {
         <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded-[40px] p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-2xl font-black text-center mb-2">Atribuir Colaboradores</DialogTitle>
-            <p className="text-center text-zinc-500 text-sm font-medium mb-6">Selecione quem será responsável pela edição e revisão deste roteiro.</p>
+            <p className="text-center text-zinc-500 text-sm font-medium mb-6">Selecione quem será responsável pela edição, revisão e gravação deste roteiro.</p>
           </DialogHeader>
           
           <div className="space-y-8">
@@ -1680,6 +1683,37 @@ function DashboardContent() {
                   ))
                 ) : (
                   <p className="text-xs text-zinc-400 italic">Nenhum revisor definido no painel admin.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-4 pt-4 border-t border-zinc-100 dark:border-zinc-800">
+              <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-500 flex items-center gap-2">
+                <Video className="w-4 h-4" /> Videomaker Responsável
+              </h4>
+              <div className="grid gap-2">
+                {allUsers.length > 0 ? (
+                  allUsers.map(u => (
+                    <Button 
+                      key={u.uid} 
+                      variant={assigningScript?.videomakerId === u.uid ? "secondary" : "outline"}
+                      className={`justify-between h-12 rounded font-bold transition-all ${assigningScript?.videomakerId === u.uid ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-500/5' : ''}`}
+                      onClick={() => handleAssign(assigningScript!.id, u.uid, u.displayName || u.name || "Usuário", 'videomaker')}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Avatar className="h-6 w-6">
+                          <AvatarImage src={u.photoURL || undefined} />
+                          <AvatarFallback className="text-[10px]">
+                            {(u.displayName || u.name || "U").slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span>{u.displayName || u.name}</span>
+                      </div>
+                      {assigningScript?.videomakerId === u.uid && <Check className="w-4 h-4 text-blue-500" />}
+                    </Button>
+                  ))
+                ) : (
+                  <p className="text-xs text-zinc-400 italic">Nenhum usuário disponível.</p>
                 )}
               </div>
             </div>
