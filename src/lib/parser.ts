@@ -21,11 +21,20 @@ export interface ParseScriptOptions {
 }
 
 /**
- * Divide texto em parágrafos (blocos separados por linhas em branco).
+ * Divide texto em parágrafos.
+ * Tenta primeiro separar por linhas em branco (\n\n).
+ * Se não encontrar, separa por quebra de linha simples (\n).
  */
 function splitParagraphs(text: string): string[] {
-  return text
+  const byBlank = text
     .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  if (byBlank.length > 1) return byBlank;
+
+  return text
+    .split('\n')
     .map((p) => p.trim())
     .filter(Boolean);
 }
@@ -53,36 +62,38 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
 
     // Usa matchAll com flag m (multiline) para buscar no texto completo
     // sem precisar dividir em linhas manualmente
-    for (const m of content.matchAll(/^\[img(\d+)\]\s*[:\-]\s*(https?:\/\/\S+)/img)) {
+    // Nota: ^ com flag m + \s* permite espaços iniciais (indentação)
+    for (const m of content.matchAll(/^\s*\[img(\d+)\]\s*[:\-]\s*(https?:\/\/\S+)/img)) {
       const idx = parseInt(m[1]) - 1;
       if (images[idx] === undefined) images[idx] = m[2].trim();
     }
-    for (const m of content.matchAll(/^\[url(\d+)\]\s*[:\-]\s*(https?:\/\/\S+)/img)) {
+    for (const m of content.matchAll(/^\s*\[url(\d+)\]\s*[:\-]\s*(https?:\/\/\S+)/img)) {
       const idx = parseInt(m[1]) - 1;
       if (sources[idx] === undefined) sources[idx] = m[2].trim();
     }
-    for (const m of content.matchAll(/^\[let(\d+)\]\s*[:\-]\s*(.+)/img)) {
+    for (const m of content.matchAll(/^\s*\[let(\d+)\]\s*[:\-]\s*(.+)/img)) {
       const idx = parseInt(m[1]) - 1;
       if (lettering[idx] === undefined) lettering[idx] = m[2].trim();
     }
-    opening = extractFirst(content, /^\[abe\]\s*[:\-]\s*(.+)/im);
-    closing = extractFirst(content, /^\[enc\]\s*[:\-]\s*(.+)/im);
-    time = extractFirst(content, /^(?:Tempo|Duração)\s*[:\-]\s*(.+)/im);
+    opening = extractFirst(content, /^\s*\[abe\]\s*[:\-]\s*(.+)/im);
+    closing = extractFirst(content, /^\s*\[enc\]\s*[:\-]\s*(.+)/im);
+    time = extractFirst(content, /^\s*(?:Tempo|Duração)\s*[:\-]\s*(.+)/im);
 
     // Remove todas as linhas de metadados estruturados para obter o spoken text
     const spokenText = content
-      .replace(/^\[(?:img|url|let)\d+\]\s*[:\-]\s*.+/img, '')
-      .replace(/^\[(?:abe|enc)\]\s*[:\-]\s*.+/img, '')
-      .replace(/^(?:Tempo|Duração)\s*[:\-]\s*.+/img, '')
-      .replace(/^\[?(?:Locução|Legenda)\]?\s*[:\-]\s*/img, '')
+      .replace(/^\s*\[(?:img|url|let)\d+\]\s*[:\-]\s*.+/img, '')
+      .replace(/^\s*\[(?:abe|enc)\]\s*[:\-]\s*.+/img, '')
+      .replace(/^\s*(?:Tempo|Duração)\s*[:\-]\s*.+/img, '')
+      .replace(/^\s*\[?(?:Locução|Legenda)\]?\s*[:\-]\s*/img, '')
       .replace(/^\s*[\r\n]/gm, '')
       .trim();
 
     return { images, sources, lettering, opening, closing, spokenText, time };
   }
   
-  // Divide o texto pelo delimitador "Cena" (ignora maiúsculas/minúsculas)
-  const parts = text.split(/\bCena\b\s*(?:\[)?([0-9]+(?:-[a-zA-Z0-9]+)*)?(?:\])?\s*/i);
+  // Divide o texto pelo delimitador "Cena" (apenas no início da linha)
+  // Nota: (?:^|\n) evita falsos positivos como "cena" no meio do texto
+  const parts = text.split(/(?:^|\n)\s*Cena\b\s*(?:\[)?([0-9]+(?:-[a-zA-Z0-9]+)*)(?:\])?\s*/i);
   
   for (let i = 1; i < parts.length; i += 2) {
     const sceneNumber = parts[i] ? parts[i].trim() : String(Math.floor(i / 2) + 1);
