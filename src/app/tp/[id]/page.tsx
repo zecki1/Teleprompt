@@ -30,6 +30,7 @@ import {
   ClipboardCheck,
   Check,
   Hourglass,
+  RotateCcw,
 } from "lucide-react";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { Badge } from "@/components/ui/badge";
@@ -105,6 +106,15 @@ function TeleprompterContent({ id }: { id: string }) {
   const bcRef = useRef<BroadcastChannel | null>(null);
   const lastFirebaseUpdate = useRef<number>(0);
   const lastProcessedReset = useRef<number>(0);
+  const [showCountdown, setShowCountdown] = useState(false);
+  const [countdownValue, setCountdownValue] = useState(3);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownActiveRef = useRef(false);
+  const startCountdownRef = useRef<() => void>(() => {});
+  const mirrorCountRef = useRef(0);
+  const mirrorIdRef = useRef<string>(isMirrorWindow ? Math.random().toString(36).substring(2, 9) : "");
+  const activeMirrorsRef = useRef<Set<string>>(new Set());
+  const countdownJustFinishedRef = useRef(false);
 
   // Appearance States
   const [fontSize, setFontSize] = useState("text-7xl");
@@ -180,6 +190,72 @@ function TeleprompterContent({ id }: { id: string }) {
     document.addEventListener("fullscreenchange", handleFsChange);
     return () => document.removeEventListener("fullscreenchange", handleFsChange);
   }, []);
+
+  // Cleanup countdown on unmount
+  useEffect(() => {
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, []);
+
+  // Inicia contagem local (3 segundos) e, se for a janela principal, finaliza com isPlaying: true
+  const runLocalCountdown = (isInitiator: boolean) => {
+    if (countdownActiveRef.current) return;
+    countdownActiveRef.current = true;
+    setShowCountdown(true);
+    setCountdownValue(3);
+    console.log('[DEBUG] runLocalCountdown started, isInitiator:', isInitiator);
+
+    if (isInitiator && bcRef.current) {
+      bcRef.current.postMessage({ type: 'countdown', value: 3 });
+    }
+
+    let count = 3;
+    countdownRef.current = setInterval(() => {
+      count--;
+      if (count > 0) {
+        setCountdownValue(count);
+        if (isInitiator && bcRef.current) {
+          bcRef.current.postMessage({ type: 'countdown', value: count });
+        }
+      } else {
+        if (countdownRef.current) clearInterval(countdownRef.current);
+        countdownActiveRef.current = false;
+        setShowCountdown(false);
+        console.log('[DEBUG] runLocalCountdown FINISHED, isInitiator:', isInitiator);
+        if (isInitiator) {
+          if (bcRef.current) {
+            bcRef.current.postMessage({ type: 'countdown', value: 0 });
+          }
+          console.log('[DEBUG] Setting isPlaying=true, isPlayingRef.current=true');
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+          countdownJustFinishedRef.current = true;
+          setTimeout(() => { countdownJustFinishedRef.current = false; }, 2000);
+          updateDoc(doc(db, "scripts", id), { isPlaying: true }).then(() => {
+            console.log('[DEBUG] Firestore update done: isPlaying=true');
+          });
+        }
+      }
+    }, 1000);
+  };
+
+  const startCountdown = () => {
+    if (countdownActiveRef.current || isPlayingRef.current) return;
+    if (mirrorCountRef.current > 0) {
+      console.log('[DEBUG] startCountdown: mirror connected, running countdown');
+      runLocalCountdown(true);
+      // Sem countdownStartedAt no Firestore: apenas BroadcastChannel sincroniza
+    } else {
+      console.log('[DEBUG] startCountdown: no mirror, starting immediately');
+      setIsPlaying(true);
+      isPlayingRef.current = true;
+      updateDoc(doc(db, "scripts", id), { isPlaying: true });
+    }
+  };
+
+  // Keep ref updated for use in effects
+  startCountdownRef.current = startCountdown;
 
   const toggleFullscreen = async () => {
     try {
@@ -319,6 +395,24 @@ function TeleprompterContent({ id }: { id: string }) {
     loadScenes();
   }, [id]);
 
+  // Limpar countdownStartedAt obsoleto ao carregar (se não estiver tocando)
+  useEffect(() => {
+    if (isMirrorWindow) return;
+    const clean = async () => {
+      try {
+        const snap = await getDoc(doc(db, "scripts", id));
+        if (snap.exists()) {
+          const d = snap.data();
+          if (d.countdownStartedAt && !d.isPlaying) {
+            console.log('[DEBUG] Cleaning stale countdownStartedAt on load');
+            await updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
+          }
+        }
+      } catch {}
+    };
+    clean();
+  }, [id, isMirrorWindow]);
+
   // --- CHECK SE CHECKLIST JÁ FOI FEITO PARA ESTE ROTEIRO ---
   useEffect(() => {
     if (!user?.uid || isMirrorWindow) {
@@ -358,10 +452,16 @@ function TeleprompterContent({ id }: { id: string }) {
           setIsPlaying(false);
           isPlayingRef.current = false;
           setShowChecklist(true);
+          console.log('[DEBUG] Checklist interception writing isPlaying=false');
           updateDoc(doc(db, "scripts", id), { isPlaying: false });
         } else if (typeof d.isPlaying === "boolean") {
-          setIsPlaying(d.isPlaying);
-          isPlayingRef.current = d.isPlaying;
+          if (!d.isPlaying && countdownJustFinishedRef.current) {
+            console.log('[DEBUG] onSnapshot ignoring isPlaying=false (countdown just finished)');
+          } else {
+            console.log('[DEBUG] onSnapshot setting isPlaying:', d.isPlaying, '| was:', isPlayingRef.current);
+            setIsPlaying(d.isPlaying);
+            isPlayingRef.current = d.isPlaying;
+          }
         }
         if (typeof d.speed === "number") {
           setSpeed(d.speed);
@@ -394,6 +494,9 @@ function TeleprompterContent({ id }: { id: string }) {
           if (containerRef.current) containerRef.current.scrollTop = 0;
           lastProcessedReset.current = d.resetRequest;
         }
+
+        // Sincronizar contagem regressiva via Firestore (mirror usa BC, nenhuma ação necessária)
+        // O BroadcastChannel já sincroniza os ticks em tempo real - Firestore não é mais usado para countdown
       }
     });
     return () => unsub();
@@ -417,6 +520,8 @@ function TeleprompterContent({ id }: { id: string }) {
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Bloquear key-repeat (segurar tecla pressionada)
+      if (e.repeat) return;
       // Impedir print e mapear para próxima cena (Cmd+P / Ctrl+P / Alt+P)
       if ((e.metaKey || e.ctrlKey || e.altKey) && e.code === 'KeyP') {
         e.preventDefault();
@@ -440,13 +545,40 @@ function TeleprompterContent({ id }: { id: string }) {
         case 'KeyB':
           e.preventDefault();
           {
-            const needsChecklist = user?.requiresChecklist !== false;
-            if (isPlayingRef.current) {
-              updateDoc(doc(db, "scripts", id), { isPlaying: false });
-            } else if (!checklistDone && needsChecklist) {
-              setShowChecklist(true);
+            if (countdownActiveRef.current) {
+              console.log('[DEBUG] Countdown cancelled via keyboard');
+              if (countdownRef.current) clearInterval(countdownRef.current);
+              countdownActiveRef.current = false;
+              setShowCountdown(false);
+              updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
+              if (bcRef.current) {
+                bcRef.current.postMessage({ type: 'countdown', value: 0 });
+              }
+              break;
+            }
+            if (isMirrorWindow) {
+              if (isPlayingRef.current) {
+                console.log('[DEBUG] Keyboard pause on mirror, writing isPlaying=false');
+                updateDoc(doc(db, "scripts", id), { isPlaying: false });
+              } else {
+                if (bcRef.current) {
+                  console.log('[DEBUG] Keyboard play on mirror, sending start-countdown');
+                  bcRef.current.postMessage({ type: 'start-countdown' });
+                } else {
+                  console.log('[DEBUG] Keyboard play on mirror, no BroadcastChannel, fallback to isPlaying=true');
+                  updateDoc(doc(db, "scripts", id), { isPlaying: true });
+                }
+              }
             } else {
-              updateDoc(doc(db, "scripts", id), { isPlaying: true });
+              const needsChecklist = user?.requiresChecklist !== false;
+              if (isPlayingRef.current) {
+                console.log('[DEBUG] Keyboard pause on main, writing isPlaying=false');
+                updateDoc(doc(db, "scripts", id), { isPlaying: false });
+              } else if (!checklistDone && needsChecklist) {
+                setShowChecklist(true);
+              } else {
+                startCountdownRef.current();
+              }
             }
           }
           break;
@@ -459,18 +591,22 @@ function TeleprompterContent({ id }: { id: string }) {
           updateDoc(doc(db, "scripts", id), { speed: Math.min(speedRef.current + 0.5, 30) });
           break;
         case 'ArrowRight':
+        case 'KeyD':
           e.preventDefault();
           updateDoc(doc(db, "scripts", id), { speed: Math.min(speedRef.current + 0.5, 30) });
           break;
         case 'ArrowLeft':
+        case 'KeyA':
           e.preventDefault();
           updateDoc(doc(db, "scripts", id), { speed: Math.max(speedRef.current - 0.5, 0) });
           break;
         case 'ArrowUp':
+        case 'KeyW':
           e.preventDefault();
           goToPrev();
           break;
         case 'ArrowDown':
+        case 'KeyS':
           e.preventDefault();
           goToNext();
           break;
@@ -482,9 +618,14 @@ function TeleprompterContent({ id }: { id: string }) {
 
   // --- 4. MOTOR DE SCROLL E BROADCAST ---
   useEffect(() => {
+    let scrollCount = 0;
     const scrollFn = () => {
       if (containerRef.current && !isMirrorWindow) {
         if (isPlayingRef.current) {
+          scrollCount++;
+          if (scrollCount <= 5) {
+            console.log('[DEBUG] SCROLL FRAME isPlaying=true, scrollCount:', scrollCount);
+          }
           const scrollStep = speedRef.current * 0.5;
           containerRef.current.scrollTop += scrollStep;
         }
@@ -515,7 +656,18 @@ function TeleprompterContent({ id }: { id: string }) {
     bcRef.current = bc;
 
     if (isMirrorWindow) {
+      // Mirror anuncia sua presença
+      bc.postMessage({ type: 'mirror-connect', mirrorId: mirrorIdRef.current });
+      
+      const handleBeforeUnload = () => {
+        bc.postMessage({ type: 'mirror-disconnect', mirrorId: mirrorIdRef.current });
+      };
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      
       bc.onmessage = (ev) => {
+        if (ev.data.type === 'ping-mirror') {
+          bc.postMessage({ type: 'mirror-connect', mirrorId: mirrorIdRef.current });
+        }
         if (ev.data.type === 'syncScroll' && containerRef.current) {
           containerRef.current.scrollTop = ev.data.scrollTop;
           setLocalProgress(ev.data.progress);
@@ -556,7 +708,43 @@ function TeleprompterContent({ id }: { id: string }) {
             speedRef.current = ev.data.speed;
           }
         }
+        if (ev.data.type === 'countdown') {
+          if (ev.data.value > 0) {
+            setShowCountdown(true);
+            setCountdownValue(ev.data.value);
+            if (ev.data.value === 3) {
+              countdownActiveRef.current = true;
+            }
+          } else {
+            countdownActiveRef.current = false;
+            setShowCountdown(false);
+          }
+        }
       };
+      return () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+        bc.close();
+      };
+    } else {
+      // Main window: track mirror connections
+      bc.onmessage = (ev) => {
+        if (ev.data.type === 'mirror-connect' && ev.data.mirrorId) {
+          activeMirrorsRef.current.add(ev.data.mirrorId);
+          mirrorCountRef.current = activeMirrorsRef.current.size;
+          console.log('[DEBUG] Mirror connected. Active mirrors:', Array.from(activeMirrorsRef.current));
+        }
+        if (ev.data.type === 'mirror-disconnect' && ev.data.mirrorId) {
+          activeMirrorsRef.current.delete(ev.data.mirrorId);
+          mirrorCountRef.current = activeMirrorsRef.current.size;
+          console.log('[DEBUG] Mirror disconnected. Active mirrors:', Array.from(activeMirrorsRef.current));
+        }
+        if (ev.data.type === 'start-countdown') {
+          console.log('[DEBUG] start-countdown requested by mirror');
+          startCountdownRef.current();
+        }
+      };
+      // Envia ping para encontrar mirrors que já estejam abertos
+      bc.postMessage({ type: 'ping-mirror' });
     }
     return () => bc.close();
   }, [id, isMirrorWindow]);
@@ -776,22 +964,47 @@ function TeleprompterContent({ id }: { id: string }) {
         </div>
       )}
 
+      {/* CONTAGEM REGRESSIVA 3, 2, 1 */}
+      {showCountdown && isMirrorWindow && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-sm">
+          <span 
+            key={countdownValue}
+            className="text-[25vw] font-black text-white select-none animate-in zoom-in-50 duration-300 drop-shadow-[0_0_60px_rgba(255,255,255,0.3)]"
+          >
+            {countdownValue}
+          </span>
+        </div>
+      )}
+      {showCountdown && !isMirrorWindow && (
+        <div className="fixed top-6 right-6 z-[200] flex items-center justify-center w-16 h-16 rounded-2xl bg-black/80 backdrop-blur-sm border border-zinc-800 shadow-2xl">
+          <span 
+            key={countdownValue}
+            className="text-2xl font-black text-white select-none animate-in zoom-in-50 duration-300"
+          >
+            {countdownValue}
+          </span>
+        </div>
+      )}
+
+      {/* PAUSADO OVERLAY - Fora do container de texto para visibilidade máxima */}
+      {!isPlaying && (
+        <div className="fixed bottom-8 right-8 z-[210] flex items-center gap-3 px-5 py-2.5 rounded-2xl backdrop-blur-md shadow-2xl border animate-in fade-in slide-in-from-bottom-4 duration-500"
+          style={{ 
+            backgroundColor: isMirrorWindow ? 'rgba(239,68,68,0.25)' : 'rgba(34,197,94,0.15)',
+            borderColor: isMirrorWindow ? 'rgba(239,68,68,0.4)' : 'rgba(34,197,94,0.3)',
+            color: isMirrorWindow ? '#ef4444' : '#22c55e',
+            transform: isMirrorWindow ? 'scaleX(-1)' : undefined
+          }}
+        >
+          <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: isMirrorWindow ? '#ef4444' : '#22c55e' }} />
+          <span className="text-xs font-black uppercase tracking-[0.3em]">PAUSADO</span>
+        </div>
+      )}
+
       {/* ÁREA DO TEXTO */}
       <div className="flex-1 h-full overflow-y-auto relative no-scrollbar" ref={containerRef}>
         {showReadingStrip && (
           <div className="fixed top-1/2 left-0 w-full h-32 bg-white/5 pointer-events-none -translate-y-1/2 z-10 border-y border-white/10 shadow-2xl" />
-        )}
-        {!isPlaying && (
-          <div className="fixed bottom-8 right-8 z-20 flex items-center gap-3 px-5 py-2.5 rounded-2xl backdrop-blur-md shadow-2xl border animate-in fade-in slide-in-from-bottom-4 duration-500"
-            style={{ 
-              backgroundColor: isMirrorWindow ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
-              borderColor: isMirrorWindow ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)',
-              color: isMirrorWindow ? '#ef4444' : '#22c55e'
-            }}
-          >
-            <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: isMirrorWindow ? '#ef4444' : '#22c55e' }} />
-            <span className="text-xs font-black uppercase tracking-[0.3em]">PAUSADO</span>
-          </div>
         )}
         <div 
           className={`mx-auto px-12 py-[60vh] transition-all duration-300 relative ${fontFamily} ${maxWidth}`}
@@ -1038,14 +1251,29 @@ function TeleprompterContent({ id }: { id: string }) {
                       speed={speed}
                       duration={duration}
                       progress={localProgress}
-                      update={(data) => {
-                        const needsChecklist = user?.requiresChecklist !== false;
-                        if (data.isPlaying === true && !checklistDone && needsChecklist) {
-                          setShowChecklist(true);
-                        } else {
-                          updateDoc(doc(db, "scripts", id), data);
-                        }
-                      }}
+                        update={(data) => {
+                          if (countdownActiveRef.current) {
+                            if (data.isPlaying !== undefined) {
+                              if (countdownRef.current) clearInterval(countdownRef.current);
+                              countdownActiveRef.current = false;
+                              setShowCountdown(false);
+                              console.log('[DEBUG] RemoteControlUI cancel during countdown, writing isPlaying=false');
+                              updateDoc(doc(db, "scripts", id), { countdownStartedAt: null, isPlaying: false });
+                            } else {
+                              updateDoc(doc(db, "scripts", id), data);
+                            }
+                            return;
+                          }
+                          const needsChecklist = user?.requiresChecklist !== false;
+                          if (data.isPlaying === true && !checklistDone && needsChecklist) {
+                            setShowChecklist(true);
+                          } else if (data.isPlaying === true) {
+                            startCountdown();
+                          } else {
+                            console.log('[DEBUG] RemoteControlUI else branch, writing data:', JSON.stringify(data));
+                            updateDoc(doc(db, "scripts", id), data);
+                          }
+                        }}
                       manualScroll={(amt) => { if (containerRef.current) containerRef.current.scrollBy({ top: amt, behavior: 'smooth' }); }}
                       goToPrevScene={goToPrevScene}
                       goToNextScene={goToNextScene}
@@ -1084,13 +1312,23 @@ function TeleprompterContent({ id }: { id: string }) {
 
              {/* 2. PLAY / PAUSE */}
              <div className="flex items-center gap-3">
-                 <button 
-                   onClick={() => {
-                     const needsChecklist = user?.requiresChecklist !== false;
-                    if (isPlaying) updateGlobalStyle({ isPlaying: false });
-                    else if (!checklistDone && needsChecklist) setShowChecklist(true);
-                    else updateGlobalStyle({ isPlaying: true });
-                  }}
+                  <button 
+                    onClick={() => {
+                      if (countdownActiveRef.current) {
+                        if (countdownRef.current) clearInterval(countdownRef.current);
+                        countdownActiveRef.current = false;
+                        setShowCountdown(false);
+                        updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
+                        return;
+                      }
+                      const needsChecklist = user?.requiresChecklist !== false;
+                      if (isPlaying) {
+                        console.log('[DEBUG] Bottom bar pause button, writing isPlaying=false');
+                        updateGlobalStyle({ isPlaying: false });
+                      }
+                     else if (!checklistDone && needsChecklist) setShowChecklist(true);
+                     else startCountdown();
+                   }}
                   className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isPlaying ? 'bg-red-500/20 text-red-500 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'bg-emerald-500/20 text-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]'}`}
                 >
                   {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
@@ -1100,6 +1338,18 @@ function TeleprompterContent({ id }: { id: string }) {
                   <span className="text-[10px] font-bold text-white uppercase font-mono">{Math.floor(localProgress * 100)}%</span>
                 </div>
              </div>
+
+             <div className="h-8 w-px bg-zinc-800" />
+
+             {/* REINICIAR */}
+             <button
+               onClick={() => updateGlobalStyle({ resetRequest: Date.now(), isPlaying: false, progress: 0 })}
+               className="flex flex-col items-center justify-center hover:text-white text-zinc-500 transition-colors"
+               title="Reiniciar roteiro"
+             >
+               <RotateCcw size={18} />
+               <span className="text-[8px] font-black uppercase tracking-widest mt-0.5">Reiniciar</span>
+             </button>
 
              <div className="h-8 w-px bg-zinc-800" />
 
@@ -1138,7 +1388,7 @@ function TeleprompterContent({ id }: { id: string }) {
 
       {/* MODAL DE PRÓXIMO ROTEIRO */}
       <Dialog open={showNextModal} onOpenChange={setShowNextModal}>
-        <DialogContent className="sm:max-w-[500px] bg-zinc-950 border-zinc-800 rounded-[32px] p-0 shadow-[0_0_100px_rgba(37,99,235,0.2)] max-h-[90vh] overflow-y-auto overflow-x-hidden">
+        <DialogContent className="sm:max-w-full bg-zinc-950 border-zinc-800 rounded-[32px] p-0 shadow-[0_0_100px_rgba(37,99,235,0.2)] max-h-[90vh] overflow-y-auto overflow-x-hidden">
           <div className="bg-gradient-to-br from-blue-600/20 to-purple-600/20 p-8 border-b border-zinc-800">
             <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mb-6 shadow-xl shadow-blue-600/20">
               <Zap size={32} className="text-white" />
@@ -1271,7 +1521,7 @@ function TeleprompterContent({ id }: { id: string }) {
                 }
                 setChecklistDone(true);
                 setShowChecklist(false);
-                updateGlobalStyle({ isPlaying: true });
+                startCountdown();
               }}
               disabled={!Object.values(checklistItems).every(Boolean) || isSavingChecklist}
               className="flex-[2] h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-600/20 disabled:opacity-50"
