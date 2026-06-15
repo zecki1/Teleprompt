@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef, use, Suspense } from "react";
-import { doc, getDoc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, arrayUnion, where } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { doc, getDoc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, arrayUnion, where, setDoc } from "firebase/firestore";
+import { db, dbZecki } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
 import { Scene } from "@/lib/parser";
 import { ScriptDoc } from "@/types/script";
@@ -119,6 +119,37 @@ function TeleprompterContent({ id }: { id: string }) {
   const [sceneGap, setSceneGap] = useState("mb-32");
   const [referenceInches, setReferenceInches] = useState(11);
   const [operatorInches, setOperatorInches] = useState(27);
+
+  // Carregar preferências salvas do usuário
+  useEffect(() => {
+    if (!user?.uid || isMirrorWindow) return;
+    const userRef = doc(dbZecki, "users", user.uid);
+    getDoc(userRef).then((snap) => {
+      if (!snap.exists()) return;
+      const prefs = snap.data()?.tpPreferences;
+      if (!prefs) return;
+      if (prefs.fontSize) setFontSize(prefs.fontSize);
+      if (prefs.textAlign) setTextAlign(prefs.textAlign);
+      if (prefs.fontFamily) setFontFamily(prefs.fontFamily);
+      if (prefs.fontWeight) setFontWeight(prefs.fontWeight);
+      if (prefs.lineHeight) setLineHeight(prefs.lineHeight);
+      if (prefs.maxWidth) setMaxWidth(prefs.maxWidth);
+      if (prefs.bgColor) setBgColor(prefs.bgColor);
+      if (prefs.textColor) setTextColor(prefs.textColor);
+      if (typeof prefs.showReadingStrip === "boolean") setShowReadingStrip(prefs.showReadingStrip);
+      if (prefs.sceneGap) setSceneGap(prefs.sceneGap);
+      if (typeof prefs.referenceInches === "number") setReferenceInches(prefs.referenceInches);
+      if (typeof prefs.operatorInches === "number") setOperatorInches(prefs.operatorInches);
+      if (typeof prefs.speed === "number") { setSpeed(prefs.speed); speedRef.current = prefs.speed; }
+    }).catch(() => {});
+  }, [user?.uid, isMirrorWindow]);
+
+  const saveUserPreferences = async (data: Record<string, unknown>) => {
+    if (!user?.uid || isMirrorWindow) return;
+    try {
+      await setDoc(doc(dbZecki, "users", user.uid), { tpPreferences: data }, { merge: true });
+    } catch (e) { console.error("Erro ao salvar preferências:", e); }
+  };
 
   // CSS para ocultar marcadores no TP e garantir estabilidade na edição
   useEffect(() => {
@@ -264,6 +295,7 @@ function TeleprompterContent({ id }: { id: string }) {
     if (isMirrorWindow) return;
     try {
       await updateDoc(doc(db, "scripts", id), data);
+      saveUserPreferences(data);
     } catch (e) { console.error(e); }
   };
 
@@ -481,6 +513,7 @@ function TeleprompterContent({ id }: { id: string }) {
   useEffect(() => {
     const bc = new BroadcastChannel(`tp-sync-${id}`);
     bcRef.current = bc;
+
     if (isMirrorWindow) {
       bc.onmessage = (ev) => {
         if (ev.data.type === 'syncScroll' && containerRef.current) {
@@ -488,6 +521,17 @@ function TeleprompterContent({ id }: { id: string }) {
           setLocalProgress(ev.data.progress);
         }
         if (ev.data.type === 'syncScenes') setScenes(ev.data.scenes);
+        if (ev.data.type === 'syncAll') {
+          if (ev.data.scenes) setScenes(ev.data.scenes);
+          if (typeof ev.data.isPlaying === 'boolean') {
+            setIsPlaying(ev.data.isPlaying);
+            isPlayingRef.current = ev.data.isPlaying;
+          }
+          if (typeof ev.data.speed === 'number') {
+            setSpeed(ev.data.speed);
+            speedRef.current = ev.data.speed;
+          }
+        }
         if (ev.data.type === 'syncStyles') {
            setFontSize(ev.data.styles.fontSize);
            setTextAlign(ev.data.styles.textAlign);
@@ -498,20 +542,65 @@ function TeleprompterContent({ id }: { id: string }) {
            setFontWeight(ev.data.styles.fontWeight);
            setLineHeight(ev.data.styles.lineHeight);
            if (ev.data.styles.sceneGap) setSceneGap(ev.data.styles.sceneGap);
+           if (typeof ev.data.styles.referenceInches === 'number') setReferenceInches(ev.data.styles.referenceInches);
+           if (typeof ev.data.styles.operatorInches === 'number') setOperatorInches(ev.data.styles.operatorInches);
+           if (typeof ev.data.styles.showReadingStrip === 'boolean') setShowReadingStrip(ev.data.styles.showReadingStrip);
          }
+        if (ev.data.type === 'syncPlayState') {
+          if (typeof ev.data.isPlaying === 'boolean') {
+            setIsPlaying(ev.data.isPlaying);
+            isPlayingRef.current = ev.data.isPlaying;
+          }
+          if (typeof ev.data.speed === 'number') {
+            setSpeed(ev.data.speed);
+            speedRef.current = ev.data.speed;
+          }
+        }
       };
     }
     return () => bc.close();
   }, [id, isMirrorWindow]);
 
+  // Full sync na montagem (para quando der refresh na tela principal)
+  useEffect(() => {
+    if (isMirrorWindow || !bcRef.current) return;
+    const id2 = setTimeout(() => {
+      if (bcRef.current) {
+        try {
+          bcRef.current.postMessage({ type: 'syncAll', scenes, isPlaying, speed });
+          bcRef.current.postMessage({
+            type: 'syncStyles',
+            styles: { fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap, referenceInches, operatorInches, showReadingStrip }
+          });
+        } catch {}
+      }
+    }, 300);
+    return () => clearTimeout(id2);
+  }, [id, isMirrorWindow]);
+
+  // Sincronizar cenas quando alteradas
+  useEffect(() => {
+    if (!isMirrorWindow && bcRef.current && scenes.length > 0) {
+      bcRef.current.postMessage({ type: 'syncScenes', scenes });
+    }
+  }, [scenes, isMirrorWindow]);
+
+  // Sincronizar play state
+  useEffect(() => {
+    if (!isMirrorWindow && bcRef.current) {
+      bcRef.current.postMessage({ type: 'syncPlayState', isPlaying, speed });
+    }
+  }, [isPlaying, speed, isMirrorWindow]);
+
+  // Sincronizar estilos
   useEffect(() => {
     if (!isMirrorWindow && bcRef.current) {
       bcRef.current.postMessage({ 
         type: 'syncStyles', 
-        styles: { fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap } 
+        styles: { fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap, referenceInches, operatorInches, showReadingStrip } 
       });
     }
-  }, [fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap, isMirrorWindow]);
+  }, [fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap, referenceInches, operatorInches, showReadingStrip, isMirrorWindow]);
   
   if (loading) return <LoadingScreen />;
 
@@ -692,11 +781,23 @@ function TeleprompterContent({ id }: { id: string }) {
         {showReadingStrip && (
           <div className="fixed top-1/2 left-0 w-full h-32 bg-white/5 pointer-events-none -translate-y-1/2 z-10 border-y border-white/10 shadow-2xl" />
         )}
+        {!isPlaying && (
+          <div className="fixed bottom-8 right-8 z-20 flex items-center gap-3 px-5 py-2.5 rounded-2xl backdrop-blur-md shadow-2xl border animate-in fade-in slide-in-from-bottom-4 duration-500"
+            style={{ 
+              backgroundColor: isMirrorWindow ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
+              borderColor: isMirrorWindow ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)',
+              color: isMirrorWindow ? '#ef4444' : '#22c55e'
+            }}
+          >
+            <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: isMirrorWindow ? '#ef4444' : '#22c55e' }} />
+            <span className="text-xs font-black uppercase tracking-[0.3em]">PAUSADO</span>
+          </div>
+        )}
         <div 
           className={`mx-auto px-12 py-[60vh] transition-all duration-300 relative ${fontFamily} ${maxWidth}`}
           style={{ 
             transform: isMirrored ? "scaleX(-1)" : "none", 
-            color: textColor,
+            color: isPlaying ? textColor : (isMirrorWindow ? '#ef4444' : '#22c55e'),
             zoom: !isMirrorWindow && referenceInches > 0 ? operatorInches / referenceInches : 1,
           }}
         >
@@ -714,7 +815,7 @@ function TeleprompterContent({ id }: { id: string }) {
                   if (el.innerHTML !== html) el.innerHTML = html;
                 }
               }}
-              className={`${sceneGap} break-words outline-none whitespace-pre-wrap transition-opacity duration-700 ${textAlign} ${fontWeight} ${fontSize} ${lineHeight} ${isPlaying ? 'opacity-100' : 'opacity-30'}`} 
+              className={`${sceneGap} break-words outline-none whitespace-pre-wrap transition-all duration-700 ${textAlign} ${fontWeight} ${fontSize} ${lineHeight}`} 
               contentEditable={!isMirrorWindow} 
               suppressContentEditableWarning={true}
               onFocus={() => {
