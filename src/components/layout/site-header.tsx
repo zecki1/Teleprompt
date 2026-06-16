@@ -1,8 +1,10 @@
 "use client";
 
+import React, { useState } from "react";
 import Link from "next/link";
-import { Terminal, Menu, Maximize, LogOut, User, LayoutDashboard, FolderOpen, Users, BarChart3 } from "lucide-react";
+import { Terminal, Menu, Maximize, LogOut, User, LayoutDashboard, FolderOpen, Users, BarChart3, Repeat, Plus, Briefcase } from "lucide-react";
 import { SettingsMenu } from "@/components/settings-menu";
+import { CreateOrJoinWorkspaceModal } from "@/components/auth/CreateOrJoinWorkspaceModal";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -21,8 +23,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+
 import { useAuth } from "@/contexts/AuthContext";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import {
   Select,
   SelectContent,
@@ -30,7 +33,7 @@ import {
   SelectTrigger,
   SelectValue
 } from "@/components/ui/select";
-import { Briefcase } from "lucide-react";
+
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
@@ -38,8 +41,12 @@ const navItems = [
 ];
 
 export function SiteHeader() {
-  const { user, currentWorkspace, userWorkspacesDetailed, switchWorkspace, logOut } = useAuth();
+  const { user, currentWorkspace, userWorkspacesDetailed, switchWorkspace, leaveWorkspace, logOut } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+  const [showNewWs, setShowNewWs] = useState(false);
+
+  if (pathname === "/login") return null;
 
   const handleLogout = async () => {
     await logOut();
@@ -51,9 +58,11 @@ export function SiteHeader() {
     return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
   };
 
-  const isAdmin = user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br" || user?.role === "SuperAdmin";
+  const canSeeAdmin = user?.canViewAdmin === true;
+  const canSeeReports = user?.canViewReports === true;
 
   return (
+    <>
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
       <div className="container mx-auto flex h-16 items-center justify-between px-4">
 
@@ -80,7 +89,7 @@ export function SiteHeader() {
               {item.label}
             </Link>
           ))}
-          {isAdmin && (
+          {canSeeAdmin && (
             <Link
               href="/admin"
               className="hover:text-primary transition-colors whitespace-nowrap font-bold text-blue-500"
@@ -88,7 +97,7 @@ export function SiteHeader() {
               Administração
             </Link>
           )}
-          {isAdmin && (
+          {canSeeReports && (
             <Link
               href="/relatorio"
               className="hover:text-primary transition-colors whitespace-nowrap flex items-center gap-1.5"
@@ -174,13 +183,13 @@ export function SiteHeader() {
                   <FolderOpen className="mr-2 h-4 w-4" />
                   Projetos
                 </DropdownMenuItem>
-                {isAdmin && (
+                {canSeeAdmin && (
                   <DropdownMenuItem onClick={() => router.push("/admin")}>
                     <Users className="mr-2 h-4 w-4" />
                     Painel Admin
                   </DropdownMenuItem>
                 )}
-                {isAdmin && (
+                {canSeeReports && (
                   <DropdownMenuItem onClick={() => router.push("/relatorio")}>
                     <BarChart3 className="mr-2 h-4 w-4" />
                     Relatórios
@@ -190,6 +199,20 @@ export function SiteHeader() {
                 <DropdownMenuItem onClick={() => router.push("/profile")}>
                   <User className="mr-2 h-4 w-4" />
                   Perfil
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowNewWs(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Novo Workspace
+                </DropdownMenuItem>
+                {user?.workspaces && user.workspaces.length > 1 && (
+                  <DropdownMenuItem onClick={leaveWorkspace} className="text-amber-500">
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Sair deste Workspace
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => { logOut(); router.push("/login?switch=1"); }}>
+                  <Repeat className="mr-2 h-4 w-4" />
+                  Trocar de conta
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={handleLogout} className="text-red-500">
                   <LogOut className="mr-2 h-4 w-4" />
@@ -219,7 +242,7 @@ export function SiteHeader() {
                     <span>Navegação</span>
                   </SheetTitle>
                 </SheetHeader>
-                <div className="flex flex-col gap-4 mt-8">
+                <div className="flex flex-col gap-4 mt-8 mx-4">
                   {navItems.map((item) => (
                     <Link
                       key={item.href}
@@ -229,12 +252,12 @@ export function SiteHeader() {
                       {item.label}
                     </Link>
                   ))}
-                  {isAdmin && (
+                  {canSeeAdmin && (
                     <Link href="/admin" className="text-lg font-bold text-blue-500 hover:text-primary transition-colors">
                       Administração
                     </Link>
                   )}
-                  {isAdmin && (
+                  {canSeeReports && (
                     <Link href="/relatorio" className="text-lg font-medium hover:text-primary transition-colors flex items-center gap-2">
                       <BarChart3 className="w-4 h-4" />
                       Relatórios
@@ -259,5 +282,8 @@ export function SiteHeader() {
         </div>
       </div>
     </header>
+
+    <CreateOrJoinWorkspaceModal open={showNewWs} onOpenChange={setShowNewWs} />
+    </>
   );
 }

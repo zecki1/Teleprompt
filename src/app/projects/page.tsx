@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
-import { fetchZeckiProjects as getProjects, ZeckiProject as Project, createZeckiProject as createProject, deleteZeckiProject as deleteProject, updateZeckiProject } from "@/lib/zecki";
-import { SENAI_WORKSPACE_ID } from "@/lib/constants";
+import { fetchProjects, Project, createProject, deleteProject, updateProject } from "@/services/projects";
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -212,14 +212,13 @@ export default function ProjectsPage() {
 
   const loadProjects = useCallback(async () => {
     try {
-      const workspaceId = user?.workspaceId || SENAI_WORKSPACE_ID;
-      const projectsData = await getProjects(workspaceId);
+      const workspaceId = user?.workspaceId || "";
+      if (!workspaceId) return;
+      const projectsData = await fetchProjects(workspaceId, false);
       setProjects(projectsData);
 
       const scriptsRef = collection(db, "scripts");
-      const q = workspaceId === SENAI_WORKSPACE_ID
-        ? query(scriptsRef)
-        : query(scriptsRef, where("workspaceId", "==", workspaceId));
+      const q = query(scriptsRef, where("workspaceId", "==", workspaceId));
       const snapshot = await getDocs(q);
       const allScripts = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -253,7 +252,8 @@ export default function ProjectsPage() {
     
     setCreating(true);
     try {
-      const workspaceId = user?.workspaceId || SENAI_WORKSPACE_ID;
+      const workspaceId = user?.workspaceId;
+      if (!workspaceId) return;
       
       const created = await createProject({
         name: newProject.name,
@@ -294,7 +294,7 @@ export default function ProjectsPage() {
           projectId,
           projectName,
           snapshot: projects.find(p => p.id === projectId) as unknown as Record<string, unknown> | undefined,
-          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+          workspaceId: user.workspaceId || "",
         });
       }
       toast.success("Projeto excluído com sucesso!");
@@ -324,7 +324,7 @@ export default function ProjectsPage() {
       return;
     }
     try {
-      await updateZeckiProject(projectId, { code: editCodeValue.trim() });
+      await updateProject(projectId, { code: editCodeValue.trim() });
       setProjects(projects.map(p => p.id === projectId ? { ...p, code: editCodeValue.trim() } : p));
       if (user) {
         const { logActivity } = await import("@/lib/activity");
@@ -337,7 +337,7 @@ export default function ProjectsPage() {
           projectName: project?.name || "",
           metadata: `Código alterado para "${editCodeValue.trim()}"`,
           snapshot: { previousName: project?.name || "", previousCode: project?.code || "" } as Record<string, unknown>,
-          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+          workspaceId: user.workspaceId || "",
         });
       }
       toast.success("Código do projeto atualizado!");
@@ -359,7 +359,7 @@ export default function ProjectsPage() {
     }
     const newName = editNameValue.trim();
     try {
-      await updateZeckiProject(projectId, { name: newName });
+      await updateProject(projectId, { name: newName });
       setProjects(projects.map(p => p.id === projectId ? { ...p, name: newName } : p));
 
       const scriptsRef = collection(db, "scripts");
@@ -380,7 +380,7 @@ export default function ProjectsPage() {
           projectName: newName,
           metadata: `Renomeado de "${oldName}"`,
           snapshot: { previousName: oldName, previousCode: project?.code || "" } as Record<string, unknown>,
-          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+          workspaceId: user.workspaceId || "",
         });
       }
 
@@ -436,7 +436,7 @@ export default function ProjectsPage() {
             <DialogHeader>
               <DialogTitle>Criar Novo Projeto</DialogTitle>
               <DialogDescription>
-                O projeto será criado automaticamente no Teleprompt e no Zecki Dashboard.
+                O projeto será criado automaticamente no Teleprompt.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">

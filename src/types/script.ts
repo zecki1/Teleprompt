@@ -54,6 +54,9 @@ export interface ScriptDoc {
   bgColor?: string;
   textColor?: string;
   isPlaceholder?: boolean;
+
+  /** Workspace a que este script pertence */
+  workspaceId?: string;
 }
 
 /** A node in the virtual folder tree built from scripts */

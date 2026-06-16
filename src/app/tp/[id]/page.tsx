@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, use, Suspense } from "react";
 import { doc, getDoc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, arrayUnion, where, setDoc } from "firebase/firestore";
-import { db, dbZecki } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
 import { Scene } from "@/lib/parser";
 import { ScriptDoc } from "@/types/script";
@@ -35,7 +35,6 @@ import {
 import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { updateTaskVideomaker } from "@/lib/zecki";
 import { getScriptPath } from "@/lib/pathUtils";
 import Link from "next/link";
 import { CommentsPanel } from "@/components/tp/CommentsPanel";
@@ -133,7 +132,7 @@ function TeleprompterContent({ id }: { id: string }) {
   // Carregar preferências salvas do usuário
   useEffect(() => {
     if (!user?.uid || isMirrorWindow) return;
-    const userRef = doc(dbZecki, "users", user.uid);
+    const userRef = doc(db, "users", user.uid);
     getDoc(userRef).then((snap) => {
       if (!snap.exists()) return;
       const prefs = snap.data()?.tpPreferences;
@@ -157,7 +156,7 @@ function TeleprompterContent({ id }: { id: string }) {
   const saveUserPreferences = async (data: Record<string, unknown>) => {
     if (!user?.uid || isMirrorWindow) return;
     try {
-      await setDoc(doc(dbZecki, "users", user.uid), { tpPreferences: data }, { merge: true });
+      await setDoc(doc(db, "users", user.uid), { tpPreferences: data }, { merge: true });
     } catch (e) { console.error("Erro ao salvar preferências:", e); }
   };
 
@@ -204,7 +203,6 @@ function TeleprompterContent({ id }: { id: string }) {
     countdownActiveRef.current = true;
     setShowCountdown(true);
     setCountdownValue(3);
-    console.log('[DEBUG] runLocalCountdown started, isInitiator:', isInitiator);
 
     if (isInitiator && bcRef.current) {
       bcRef.current.postMessage({ type: 'countdown', value: 3 });
@@ -222,18 +220,15 @@ function TeleprompterContent({ id }: { id: string }) {
         if (countdownRef.current) clearInterval(countdownRef.current);
         countdownActiveRef.current = false;
         setShowCountdown(false);
-        console.log('[DEBUG] runLocalCountdown FINISHED, isInitiator:', isInitiator);
         if (isInitiator) {
           if (bcRef.current) {
             bcRef.current.postMessage({ type: 'countdown', value: 0 });
           }
-          console.log('[DEBUG] Setting isPlaying=true, isPlayingRef.current=true');
           setIsPlaying(true);
           isPlayingRef.current = true;
           countdownJustFinishedRef.current = true;
           setTimeout(() => { countdownJustFinishedRef.current = false; }, 2000);
           updateDoc(doc(db, "scripts", id), { isPlaying: true }).then(() => {
-            console.log('[DEBUG] Firestore update done: isPlaying=true');
           });
         }
       }
@@ -243,11 +238,9 @@ function TeleprompterContent({ id }: { id: string }) {
   const startCountdown = () => {
     if (countdownActiveRef.current || isPlayingRef.current) return;
     if (mirrorCountRef.current > 0) {
-      console.log('[DEBUG] startCountdown: mirror connected, running countdown');
       runLocalCountdown(true);
       // Sem countdownStartedAt no Firestore: apenas BroadcastChannel sincroniza
     } else {
-      console.log('[DEBUG] startCountdown: no mirror, starting immediately');
       setIsPlaying(true);
       isPlayingRef.current = true;
       updateDoc(doc(db, "scripts", id), { isPlaying: true });
@@ -404,7 +397,6 @@ function TeleprompterContent({ id }: { id: string }) {
         if (snap.exists()) {
           const d = snap.data();
           if (d.countdownStartedAt && !d.isPlaying) {
-            console.log('[DEBUG] Cleaning stale countdownStartedAt on load');
             await updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
           }
         }
@@ -452,13 +444,10 @@ function TeleprompterContent({ id }: { id: string }) {
           setIsPlaying(false);
           isPlayingRef.current = false;
           setShowChecklist(true);
-          console.log('[DEBUG] Checklist interception writing isPlaying=false');
           updateDoc(doc(db, "scripts", id), { isPlaying: false });
         } else if (typeof d.isPlaying === "boolean") {
           if (!d.isPlaying && countdownJustFinishedRef.current) {
-            console.log('[DEBUG] onSnapshot ignoring isPlaying=false (countdown just finished)');
           } else {
-            console.log('[DEBUG] onSnapshot setting isPlaying:', d.isPlaying, '| was:', isPlayingRef.current);
             setIsPlaying(d.isPlaying);
             isPlayingRef.current = d.isPlaying;
           }
@@ -546,7 +535,6 @@ function TeleprompterContent({ id }: { id: string }) {
           e.preventDefault();
           {
             if (countdownActiveRef.current) {
-              console.log('[DEBUG] Countdown cancelled via keyboard');
               if (countdownRef.current) clearInterval(countdownRef.current);
               countdownActiveRef.current = false;
               setShowCountdown(false);
@@ -558,21 +546,17 @@ function TeleprompterContent({ id }: { id: string }) {
             }
             if (isMirrorWindow) {
               if (isPlayingRef.current) {
-                console.log('[DEBUG] Keyboard pause on mirror, writing isPlaying=false');
                 updateDoc(doc(db, "scripts", id), { isPlaying: false });
               } else {
                 if (bcRef.current) {
-                  console.log('[DEBUG] Keyboard play on mirror, sending start-countdown');
                   bcRef.current.postMessage({ type: 'start-countdown' });
                 } else {
-                  console.log('[DEBUG] Keyboard play on mirror, no BroadcastChannel, fallback to isPlaying=true');
                   updateDoc(doc(db, "scripts", id), { isPlaying: true });
                 }
               }
             } else {
               const needsChecklist = user?.requiresChecklist !== false;
               if (isPlayingRef.current) {
-                console.log('[DEBUG] Keyboard pause on main, writing isPlaying=false');
                 updateDoc(doc(db, "scripts", id), { isPlaying: false });
               } else if (!checklistDone && needsChecklist) {
                 setShowChecklist(true);
@@ -624,7 +608,6 @@ function TeleprompterContent({ id }: { id: string }) {
         if (isPlayingRef.current) {
           scrollCount++;
           if (scrollCount <= 5) {
-            console.log('[DEBUG] SCROLL FRAME isPlaying=true, scrollCount:', scrollCount);
           }
           const scrollStep = speedRef.current * 0.5;
           containerRef.current.scrollTop += scrollStep;
@@ -731,15 +714,12 @@ function TeleprompterContent({ id }: { id: string }) {
         if (ev.data.type === 'mirror-connect' && ev.data.mirrorId) {
           activeMirrorsRef.current.add(ev.data.mirrorId);
           mirrorCountRef.current = activeMirrorsRef.current.size;
-          console.log('[DEBUG] Mirror connected. Active mirrors:', Array.from(activeMirrorsRef.current));
         }
         if (ev.data.type === 'mirror-disconnect' && ev.data.mirrorId) {
           activeMirrorsRef.current.delete(ev.data.mirrorId);
           mirrorCountRef.current = activeMirrorsRef.current.size;
-          console.log('[DEBUG] Mirror disconnected. Active mirrors:', Array.from(activeMirrorsRef.current));
         }
         if (ev.data.type === 'start-countdown') {
-          console.log('[DEBUG] start-countdown requested by mirror');
           startCountdownRef.current();
         }
       };
@@ -820,14 +800,6 @@ function TeleprompterContent({ id }: { id: string }) {
         videomakerName: user?.displayName || user?.name || "Videomaker"
       };
 
-      if (projectId && recordingTaskId && user?.uid) {
-        try {
-          await updateTaskVideomaker(projectId, recordingTaskId, user.uid);
-        } catch (zeckiError) {
-          console.error("Erro ao atribuir videomaker no Zecki:", zeckiError);
-        }
-      }
-
       if (user?.uid) {
         const scriptRef = doc(db, "scripts", id);
         const prevSnap = await getDoc(scriptRef);
@@ -882,10 +854,10 @@ function TeleprompterContent({ id }: { id: string }) {
       const activeWorkspaceId = workspaceId || "senai";
       const scriptsRef = collection(db, "scripts");
       
-      // Busca todos os roteiros do workspace para garantir a ordem correta
+      const scriptsConstraints = user?.isSuperAdmin ? [] : [where("workspaceId", "==", activeWorkspaceId)];
       const q = query(
         scriptsRef, 
-        where("workspaceId", "==", activeWorkspaceId)
+        ...scriptsConstraints
       );
       
       const snapshot = await getDocs(q);
@@ -988,7 +960,7 @@ function TeleprompterContent({ id }: { id: string }) {
 
       {/* PAUSADO OVERLAY - Fora do container de texto para visibilidade máxima */}
       {!isPlaying && (
-        <div className="fixed bottom-8 right-8 z-[210] flex items-center gap-3 px-5 py-2.5 rounded-2xl backdrop-blur-md shadow-2xl border animate-in fade-in slide-in-from-bottom-4 duration-500"
+        <div className="fixed bottom-18 left-8 z-[210] flex items-center gap-3 px-5 py-2.5 rounded-2xl backdrop-blur-md shadow-2xl border animate-in fade-in slide-in-from-bottom-4 duration-500"
           style={{ 
             backgroundColor: isMirrorWindow ? 'rgba(239,68,68,0.25)' : 'rgba(34,197,94,0.15)',
             borderColor: isMirrorWindow ? 'rgba(239,68,68,0.4)' : 'rgba(34,197,94,0.3)',
@@ -1257,7 +1229,6 @@ function TeleprompterContent({ id }: { id: string }) {
                               if (countdownRef.current) clearInterval(countdownRef.current);
                               countdownActiveRef.current = false;
                               setShowCountdown(false);
-                              console.log('[DEBUG] RemoteControlUI cancel during countdown, writing isPlaying=false');
                               updateDoc(doc(db, "scripts", id), { countdownStartedAt: null, isPlaying: false });
                             } else {
                               updateDoc(doc(db, "scripts", id), data);
@@ -1270,7 +1241,6 @@ function TeleprompterContent({ id }: { id: string }) {
                           } else if (data.isPlaying === true) {
                             startCountdown();
                           } else {
-                            console.log('[DEBUG] RemoteControlUI else branch, writing data:', JSON.stringify(data));
                             updateDoc(doc(db, "scripts", id), data);
                           }
                         }}
@@ -1323,7 +1293,6 @@ function TeleprompterContent({ id }: { id: string }) {
                       }
                       const needsChecklist = user?.requiresChecklist !== false;
                       if (isPlaying) {
-                        console.log('[DEBUG] Bottom bar pause button, writing isPlaying=false');
                         updateGlobalStyle({ isPlaying: false });
                       }
                      else if (!checklistDone && needsChecklist) setShowChecklist(true);

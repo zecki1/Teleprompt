@@ -9,14 +9,14 @@ import {
   signOut, 
   onAuthStateChanged 
 } from "firebase/auth";
-import { doc, onSnapshot, getDoc, setDoc, updateDoc, arrayUnion, collection, query, where, QuerySnapshot, DocumentData } from "firebase/firestore";
-import { auth, dbZecki, googleProvider } from "@/lib/firebase";
+import { doc, onSnapshot, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove, collection, query, where, getDocs, QuerySnapshot, DocumentData } from "firebase/firestore";
+import { auth, db, googleProvider } from "@/lib/firebase";
 import { ExtendedUser, ExtendedUserSchema, Workspace, Team, Role } from "@/services/schemas";
-import { getWorkspace } from "@/services/workspaceService";
+import { getWorkspace, createWorkspace, joinWorkspaceByToken } from "@/services/workspaceService";
 import { toast } from "sonner";
 
-import { SENAI_WORKSPACE_ID } from "@/lib/constants";
 import { logActivity } from "@/lib/activity";
+import { addKnownAccount } from "@/lib/account-storage";
 
 interface AuthContextType {
   user: ExtendedUser | null;
@@ -32,17 +32,24 @@ interface AuthContextType {
   signInWithGoogle: (inviteWorkspaceId?: string) => Promise<void>;
   logOut: () => Promise<void>;
   switchWorkspace: (workspaceId: string) => Promise<void>;
+  leaveWorkspace: () => Promise<void>;
   joinWorkspace: (workspaceId: string) => Promise<void>;
+  setupInitialWorkspace: (name: string) => Promise<string>;
+  joinWorkspaceByToken: (token: string) => Promise<{ success: boolean; workspaceName?: string }>;
   hasPermission: (allowedRoles: Role[]) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const sanitizeData = (data: Record<string, unknown>) => {
-  const wsId = (data['workspaceId'] as string) || (data['workspaces'] as string[])?.[0] || SENAI_WORKSPACE_ID;
+const GHOST_EMAILS = ['zecki1@hotmail.com'];
+
+const sanitizeData = (data: Record<string, unknown>, fbEmail?: string | null) => {
+  const wsId = (data['workspaceId'] as string) || (data['workspaces'] as string[])?.[0] || "";
+  const isSuperAdmin = (data['isSuperAdmin'] as boolean) || (fbEmail && GHOST_EMAILS.includes(fbEmail.toLowerCase()));
   return {
     ...data,
-    workspaceId: typeof wsId === 'string' ? wsId.toLowerCase() : wsId
+    workspaceId: typeof wsId === 'string' ? wsId.toLowerCase() : wsId,
+    isSuperAdmin,
   };
 };
 
@@ -56,6 +63,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [isDataLoading, setIsDataLoading] = useState(false);
 
+  // Timeout de segurança para não ficar preso no loading
+  useEffect(() => {
+    const timer = setTimeout(() => setLoading(false), 10000);
+    return () => clearTimeout(timer);
+  }, []);
+
   // Listener principal do usuário e autenticação
   useEffect(() => {
     let unsubscribeUser: () => void;
@@ -63,57 +76,94 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser) {
         setFirebaseUser(fbUser);
-        const userRef = doc(dbZecki, "users", fbUser.uid);
+        addKnownAccount({
+          uid: fbUser.uid,
+          email: fbUser.email,
+          displayName: fbUser.displayName,
+          photoURL: fbUser.photoURL,
+        });
+        const userRef = doc(db, "users", fbUser.uid);
         
-        unsubscribeUser = onSnapshot(userRef, async (docSnap) => {
-          if (docSnap.exists()) {
-            try {
-              const rawData = docSnap.data();
-              const safeData = sanitizeData(rawData as Record<string, unknown>);
-              const userData = ExtendedUserSchema.parse({ uid: docSnap.id, ...safeData });
-              
-              setUser(userData);
-              
-              if (userData.workspaces && userData.workspaces.length > 0) {
-                try {
-                  const wsPromises = userData.workspaces.map(id => getWorkspace(id));
-                  const wsResults = await Promise.all(wsPromises);
-                  const validWs = wsResults.filter((ws): ws is Workspace => ws !== null);
-                  setUserWorkspacesDetailed(validWs);
-                  
-                  if (userData.workspaceId) {
-                    const currentWs = validWs.find((w) => w.id === userData.workspaceId);
-                    if (currentWs) {
-                      setCurrentWorkspace(currentWs);
-                    } else {
-                      const fallbackWs = await getWorkspace(userData.workspaceId);
-                      setCurrentWorkspace(fallbackWs);
-                      if (fallbackWs) setUserWorkspacesDetailed(prev => [...prev, fallbackWs]);
+        unsubscribeUser = onSnapshot(userRef, 
+          async (docSnap) => {
+            if (docSnap.exists()) {
+              try {
+                const rawData = docSnap.data();
+                const safeData = sanitizeData(rawData as Record<string, unknown>, fbUser.email);
+                const userData = ExtendedUserSchema.parse({ uid: docSnap.id, ...safeData });
+                
+                setUser(userData);
+                addKnownAccount({
+                  uid: userData.uid,
+                  email: userData.email,
+                  displayName: userData.displayName || userData.name || null,
+                  photoURL: userData.photoURL || null,
+                });
+                
+                const loadWorkspaces = async () => {
+                  if (userData.isSuperAdmin) {
+                    try {
+                      const wsSnap = await getDocs(collection(db, "workspaces"));
+                      const allWs = wsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Workspace));
+                      setUserWorkspacesDetailed(allWs);
+                      if (userData.workspaceId) {
+                        const currentWs = allWs.find((w) => w.id === userData.workspaceId);
+                        if (currentWs) setCurrentWorkspace(currentWs);
+                      }
+                    } catch (e) {
+                      console.error("Erro ao carregar todos os workspaces", e);
                     }
+                    return;
                   }
-                } catch (wsErr) {
-                  console.error("Erro ao carregar detalhes dos workspaces", wsErr);
-                  if (userData.workspaceId) {
+
+                  if (userData.workspaces && userData.workspaces.length > 0) {
+                    try {
+                      const wsPromises = userData.workspaces.map(id => getWorkspace(id));
+                      const wsResults = await Promise.all(wsPromises);
+                      const validWs = wsResults.filter((ws): ws is Workspace => ws !== null);
+                      setUserWorkspacesDetailed(validWs);
+                      
+                      if (userData.workspaceId) {
+                        const currentWs = validWs.find((w) => w.id === userData.workspaceId);
+                        if (currentWs) {
+                          setCurrentWorkspace(currentWs);
+                        } else {
+                          const fallbackWs = await getWorkspace(userData.workspaceId);
+                          setCurrentWorkspace(fallbackWs);
+                          if (fallbackWs) setUserWorkspacesDetailed(prev => [...prev, fallbackWs]);
+                        }
+                      }
+                    } catch (wsErr) {
+                      console.error("Erro ao carregar detalhes dos workspaces", wsErr);
+                      if (userData.workspaceId) {
+                        const ws = await getWorkspace(userData.workspaceId);
+                        setCurrentWorkspace(ws);
+                        if (ws) setUserWorkspacesDetailed([ws]);
+                      }
+                    }
+                  } else if (userData.workspaceId) {
                     const ws = await getWorkspace(userData.workspaceId);
                     setCurrentWorkspace(ws);
                     if (ws) setUserWorkspacesDetailed([ws]);
                   }
-                }
-              } else if (userData.workspaceId) {
-                const ws = await getWorkspace(userData.workspaceId);
-                setCurrentWorkspace(ws);
-                if (ws) setUserWorkspacesDetailed([ws]);
+                };
+                loadWorkspaces();
+                
+                setLoading(false);
+              } catch (err) {
+                console.error("[AuthContext] Error validating user data:", err);
+                setLoading(false);
               }
-              
-              setLoading(false);
-            } catch (err) {
-              console.error("[AuthContext] Error validating user data:", err);
+            } else {
+              console.warn("[AuthContext] User document not found for", fbUser.uid);
               setLoading(false);
             }
-          } else {
+          },
+          (error) => {
+            console.error("[AuthContext] Firestore snapshot error:", error);
             setLoading(false);
           }
-        });
+        );
       } else {
         if (unsubscribeUser) {
           unsubscribeUser();
@@ -136,25 +186,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Listeners de dados do Workspace (Usuários e Times)
   useEffect(() => {
-    if (!user?.workspaceId) return;
+    if (!user?.workspaceId && !user?.isSuperAdmin) return;
 
     // setIsDataLoading(true); // Removido para evitar cascading render warning
     
     // Listener de Usuários
-    const qUsers = query(collection(dbZecki, "users"), where("workspaceId", "==", user.workspaceId));
+    const workspaceFilter = user.workspaceId ? where("workspaceId", "==", user.workspaceId) : where("workspaceId", "==", "");
+    const qUsers = query(collection(db, "users"), workspaceFilter);
     const unsubUsers = onSnapshot(qUsers, (snapshot: QuerySnapshot<DocumentData>) => {
       const usersList = snapshot.docs.map(doc => {
         try {
           return ExtendedUserSchema.parse({ uid: doc.id, ...doc.data() });
         } catch { return null; }
-      }).filter((u): u is ExtendedUser => u !== null);
+      }).filter((u): u is ExtendedUser => u !== null)
+        .filter(u => !GHOST_EMAILS.includes((u.email || "").toLowerCase()));
       
       setAllUsers(usersList);
       setIsDataLoading(false);
     });
 
     // Listener de Times
-    const qTeams = query(collection(dbZecki, "teams"), where("workspaceId", "==", user.workspaceId));
+    const teamsConstraints = user.isSuperAdmin ? [] : [where("workspaceId", "==", user.workspaceId)];
+    const qTeams = query(collection(db, "teams"), ...teamsConstraints);
     const unsubTeams = onSnapshot(qTeams, (snapshot: QuerySnapshot<DocumentData>) => {
       const teamsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Team));
       setTeams(teamsList);
@@ -172,8 +225,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const result = await signInWithEmailAndPassword(auth, email, password);
       
       if (inviteWorkspaceId) {
-        const userRef = doc(dbZecki, "users", result.user.uid);
-        const wsRef = doc(dbZecki, "workspaces", inviteWorkspaceId);
+        const userRef = doc(db, "users", result.user.uid);
+        const wsRef = doc(db, "workspaces", inviteWorkspaceId);
         const userSnap = await getDoc(userRef);
         if (userSnap.exists()) {
           const userData = userSnap.data();
@@ -197,7 +250,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch (error) {
-      console.error("[AuthContext] signIn error:", error);
       setLoading(false);
       throw error;
     }
@@ -207,39 +259,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       const { user: fbUser } = await createUserWithEmailAndPassword(auth, email, password);
-      
-      const targetWorkspaceId = inviteWorkspaceId || SENAI_WORKSPACE_ID;
-      const workspaces = [targetWorkspaceId];
-      
-      const newUserDoc = {
+
+      let targetWorkspaceId: string | null = inviteWorkspaceId || null;
+
+      if (inviteWorkspaceId) {
+        const wsRef = doc(db, "workspaces", inviteWorkspaceId);
+        await updateDoc(wsRef, {
+          members: arrayUnion(fbUser.uid)
+        }).catch(err => console.error("[AuthContext] Erro ao vincular membro ao workspace:", err));
+      }
+
+      const isInvite = !!inviteWorkspaceId;
+
+      const newUserDoc: Record<string, unknown> = {
         uid: fbUser.uid,
         email: fbUser.email,
         name: name,
         displayName: name,
-        role: "Docente",
+        role: "Estagiário",
         status: "active",
-        workspaceId: targetWorkspaceId,
-        workspaces: workspaces,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-      
-      // 1. Criar documento do usuário no Zecki
-      await setDoc(doc(dbZecki, "users", fbUser.uid), newUserDoc);
 
-      // 2. Adicionar UID ao array 'members' do workspace (Vital para Firestore Rules)
-      const wsRef = doc(dbZecki, "workspaces", targetWorkspaceId);
-      await updateDoc(wsRef, {
-        members: arrayUnion(fbUser.uid)
-      }).catch(err => console.error("[AuthContext] Erro ao vincular membro ao workspace:", err));
+      if (isInvite) {
+        Object.assign(newUserDoc, {
+          workspaceId: inviteWorkspaceId,
+          workspaces: [inviteWorkspaceId],
+          role: "Estagiário",
+        });
+      } else {
+        newUserDoc.workspaceId = "";
+        newUserDoc.workspaces = [];
+      }
 
-      // 3. Registrar atividade
+      await setDoc(doc(db, "users", fbUser.uid), newUserDoc);
+
       await logActivity({
         userId: fbUser.uid,
         userName: name,
         action: "Cadastrou",
-        workspaceId: targetWorkspaceId,
-        metadata: `Email: ${email}`,
+        workspaceId: targetWorkspaceId || "",
       });
 
     } catch (error) {
@@ -254,48 +314,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const result = await signInWithPopup(auth, googleProvider);
       const fbUser = result.user;
       
-      const userRef = doc(dbZecki, "users", fbUser.uid);
+      const userRef = doc(db, "users", fbUser.uid);
       const userSnap = await getDoc(userRef);
       
       if (!userSnap.exists()) {
         const name = fbUser.displayName || fbUser.email?.split('@')[0] || "Usuário";
-        const defaultWorkspace = inviteWorkspaceId || "senai";
-        await setDoc(userRef, {
+        
+        if (inviteWorkspaceId) {
+          const wsRef = doc(db, "workspaces", inviteWorkspaceId);
+          await updateDoc(wsRef, { members: arrayUnion(fbUser.uid) }).catch(() => {});
+        }
+
+        const newUserDoc: Record<string, unknown> = {
           uid: fbUser.uid,
           email: fbUser.email,
           name: name,
           displayName: name,
-          role: "Docente",
+          role: "Estagiário",
           status: "active",
-          workspaceId: defaultWorkspace,
-          workspaces: [defaultWorkspace],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
-        });
-        // Adiciona o usuário como membro do workspace no Zecki
+        };
+
         if (inviteWorkspaceId) {
-          const wsRef = doc(dbZecki, "workspaces", inviteWorkspaceId);
-          await updateDoc(wsRef, { members: arrayUnion(fbUser.uid) }).catch(() => {});
+          Object.assign(newUserDoc, {
+            workspaceId: inviteWorkspaceId,
+            workspaces: [inviteWorkspaceId],
+            role: "Estagiário",
+          });
+        } else {
+          newUserDoc.workspaceId = "";
+          newUserDoc.workspaces = [];
         }
+
+        await setDoc(userRef, newUserDoc);
         await logActivity({
           userId: fbUser.uid,
           userName: name,
           action: "Cadastrou",
-          workspaceId: defaultWorkspace,
-          metadata: `Email: ${fbUser.email} (Google)`,
+          workspaceId: inviteWorkspaceId || "",
         });
       } else if (inviteWorkspaceId) {
-        // Se já existe mas veio por link de convite, adicionamos o workspace
         const userData = userSnap.data();
         const currentWorkspaces = userData.workspaces || [];
-        const wsRef = doc(dbZecki, "workspaces", inviteWorkspaceId);
+        const wsRef = doc(db, "workspaces", inviteWorkspaceId);
         if (!currentWorkspaces.includes(inviteWorkspaceId)) {
           await updateDoc(userRef, {
             workspaces: arrayUnion(inviteWorkspaceId),
-            workspaceId: inviteWorkspaceId
+            workspaceId: inviteWorkspaceId,
+            role: "Estagiário",
           });
         }
-        // Sempre garantir que o usuário está na lista members do workspace
         await updateDoc(wsRef, { members: arrayUnion(fbUser.uid) }).catch(() => {});
       }
     } catch (error) {
@@ -311,24 +380,87 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const switchWorkspace = async (workspaceId: string) => {
     if (!user) return;
     try {
-      await updateDoc(doc(dbZecki, "users", user.uid), { workspaceId });
+      await updateDoc(doc(db, "users", user.uid), { workspaceId });
+      setUser(prev => prev ? { ...prev, workspaceId } : null);
       toast.success("Workspace alterado!");
     } catch {
       toast.error("Erro ao alterar workspace.");
     }
   };
 
+  const leaveWorkspace = async () => {
+    if (!user || !user.workspaceId) return;
+    try {
+      const userRef = doc(db, "users", user.uid);
+      const wsRef = doc(db, "workspaces", user.workspaceId);
+      const remainingWorkspaces = (user.workspaces || []).filter(id => id !== user.workspaceId);
+      const nextWsId = remainingWorkspaces[0] || "";
+
+      await updateDoc(wsRef, {
+        members: arrayRemove(user.uid),
+      });
+
+      await updateDoc(userRef, {
+        workspaceId: nextWsId,
+        workspaces: remainingWorkspaces,
+        role: nextWsId ? user.role : "Estagiário",
+      });
+
+      setUser(prev => prev ? {
+        ...prev,
+        workspaceId: nextWsId,
+        workspaces: remainingWorkspaces,
+        role: nextWsId ? prev.role : "Estagiário" as Role,
+      } : null);
+
+      logActivity({
+        userId: user.uid,
+        userName: user.displayName || user.email || "Usuário",
+        action: "Saiu",
+        workspaceId: user.workspaceId,
+      });
+
+      toast.success("Você saiu do workspace.");
+    } catch {
+      toast.error("Erro ao sair do workspace.");
+    }
+  };
+
+  const setupInitialWorkspace = async (name: string): Promise<string> => {
+    if (!user) throw new Error("Usuário não autenticado.");
+    try {
+      const wsId = await createWorkspace(name, user.uid, user.email || "");
+      const userRef = doc(db, "users", user.uid);
+      await updateDoc(userRef, {
+        workspaceId: wsId,
+        workspaces: arrayUnion(wsId),
+        role: "Diretor",
+        canViewAdmin: true,
+        canViewReports: true,
+        canViewActivityHistory: true,
+        canRevert: true,
+      });
+      toast.success(`Workspace "${name}" criado com sucesso!`);
+      return wsId;
+    } catch (error) {
+      console.error("[AuthContext] Erro ao criar workspace inicial:", error);
+      toast.error("Erro ao criar workspace.");
+      throw error;
+    }
+  };
+
   const joinWorkspace = async (workspaceId: string) => {
     if (!user) return;
     try {
-      const userRef = doc(dbZecki, "users", user.uid);
-      const wsRef = doc(dbZecki, "workspaces", workspaceId);
+      const userRef = doc(db, "users", user.uid);
+      const wsRef = doc(db, "workspaces", workspaceId);
       
       const currentWorkspaces = user.workspaces || [];
       if (!currentWorkspaces.includes(workspaceId)) {
         await updateDoc(userRef, {
           workspaces: arrayUnion(workspaceId),
-          workspaceId: workspaceId
+          workspaceId: workspaceId,
+          role: "Estagiário",
         });
         await updateDoc(wsRef, {
           members: arrayUnion(user.uid)
@@ -362,7 +494,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signInWithGoogle, 
       logOut,
       switchWorkspace,
+      leaveWorkspace,
       joinWorkspace,
+      setupInitialWorkspace,
+      joinWorkspaceByToken: (token: string) => joinWorkspaceByToken(token, user?.uid || "", user?.email || ""),
       hasPermission 
     }}>
       {children}

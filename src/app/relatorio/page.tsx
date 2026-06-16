@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { useRouter } from "next/navigation";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+
 import { ScriptDoc } from "@/types/script";
 import {
   Card,
@@ -62,28 +63,33 @@ export default function RelatorioPage() {
   const [userStats, setUserStats] = useState<UserStats[]>([]);
   const [senaiUsers, setSenaiUsers] = useState<Map<string, UserInfo>>(new Map());
 
+  const isSuperAdmin = user?.role === "SuperAdmin" || user?.isSuperAdmin === true;
+
   useEffect(() => {
     if (!user) {
       router.push("/login");
       return;
     }
 
-    const isAdmin = user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br" || user?.role === "SuperAdmin";
+    const canAccess = isSuperAdmin || user?.canViewReports === true;
 
-    if (!isAdmin) {
+    if (!canAccess) {
       router.push("/dashboard");
       return;
     }
 
-    loadData();
+    loadData(user?.workspaceId || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [user, user?.workspaceId]);
 
-  const loadData = async () => {
+  const loadData = async (workspaceId: string) => {
     try {
+      const scriptsQuery = query(collection(db, "scripts"), where("workspaceId", "==", workspaceId));
+      const usersQuery = query(collection(db, "users"), where("workspaceId", "==", workspaceId));
+
       const [scriptsSnap, usersSnap] = await Promise.all([
-        getDocs(collection(db, "scripts")),
-        getDocs(collection(db, "users")),
+        getDocs(scriptsQuery),
+        getDocs(usersQuery),
       ]);
 
       const userMap = new Map<string, UserInfo>();

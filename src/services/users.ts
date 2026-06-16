@@ -9,33 +9,30 @@ import {
   where,
   serverTimestamp 
 } from "firebase/firestore";
-import { dbZecki } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 import { ExtendedUser, ExtendedUserSchema, Role } from "@/services/schemas";
 
-import { SENAI_WORKSPACE_ID, SENAI_SLUG } from "@/lib/constants";
 
-export const getUsers = async (workspaceId?: string): Promise<ExtendedUser[]> => {
+
+export const getUsers = async (workspaceId?: string, isSuperAdmin?: boolean): Promise<ExtendedUser[]> => {
   const restrictedEmails = [
-    'zecki1@hotmail.com',
     'milinhacmldias@gmail.com',
     'ederson.gui@gmail.com',
-    'zecki1@ezequiel.com.br'
+    'zecki1@hotmail.com'
   ].map(e => e.toLowerCase());
 
-  // Workspace padrão para o Admin
-  const targetWorkspace = workspaceId || SENAI_WORKSPACE_ID;
+  const constraints = isSuperAdmin ? [] : [where("workspaceId", "==", workspaceId || "")];
+  if (!isSuperAdmin && !workspaceId) return [];
   
-  // Buscamos usuários que tenham o ID oficial ou o slug legado
   const q = query(
-    collection(dbZecki, "users"), 
-    where("workspaceId", "in", [targetWorkspace, SENAI_SLUG])
+    collection(db, "users"), 
+    ...constraints
   );
   
   const snapshot = await getDocs(q);
   
   const users = snapshot.docs.map(doc => {
     const data = doc.data();
-    // Filtro extra no cliente para os emails restritos (segurança em camadas)
     if (data.email && restrictedEmails.includes(data.email.toLowerCase())) {
       return null;
     }
@@ -50,10 +47,14 @@ export const getUsers = async (workspaceId?: string): Promise<ExtendedUser[]> =>
         name: data.name || "",
         role: (data.role as Role) || "Docente",
         status: data.status || "active",
-        workspaceId: data.workspaceId || SENAI_WORKSPACE_ID,
-        workspaces: data.workspaces || [SENAI_WORKSPACE_ID],
+        workspaceId: data.workspaceId || "",
+        workspaces: data.workspaces || [],
         isEditor: data.isEditor || false,
         isRevisor: data.isRevisor || false,
+        canRevert: data.canRevert || false,
+        canViewAdmin: data.canViewAdmin || false,
+        canViewReports: data.canViewReports || false,
+        canViewActivityHistory: data.canViewActivityHistory || false,
         requiresChecklist: data.requiresChecklist ?? true,
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
@@ -67,7 +68,7 @@ export const getUsers = async (workspaceId?: string): Promise<ExtendedUser[]> =>
 };
 
 export const getUserById = async (uid: string): Promise<ExtendedUser | null> => {
-  const docRef = doc(dbZecki, "users", uid);
+  const docRef = doc(db, "users", uid);
   const docSnap = await getDoc(docRef);
   
   if (!docSnap.exists()) return null;
@@ -83,17 +84,21 @@ export const getUserById = async (uid: string): Promise<ExtendedUser | null> => 
       name: data.name || "",
       role: (data.role as Role) || "Docente",
       status: data.status || "active",
-      workspaceId: data.workspaceId || SENAI_WORKSPACE_ID,
-      workspaces: data.workspaces || [SENAI_WORKSPACE_ID],
+      workspaceId: data.workspaceId || "",
+      workspaces: data.workspaces || [],
       isEditor: data.isEditor || false,
       isRevisor: data.isRevisor || false,
+      canRevert: data.canRevert || false,
+      canViewAdmin: data.canViewAdmin || false,
+      canViewReports: data.canViewReports || false,
+      canViewActivityHistory: data.canViewActivityHistory || false,
       requiresChecklist: data.requiresChecklist ?? true,
     } as ExtendedUser;
   }
 };
 
 export const updateUserRole = async (uid: string, role: string): Promise<void> => {
-  const docRef = doc(dbZecki, "users", uid);
+  const docRef = doc(db, "users", uid);
   await updateDoc(docRef, {
     role,
     updatedAt: serverTimestamp(),
@@ -101,15 +106,15 @@ export const updateUserRole = async (uid: string, role: string): Promise<void> =
 };
 
 export const updateUserWorkspace = async (uid: string, workspaceId: string): Promise<void> => {
-  const docRef = doc(dbZecki, "users", uid);
+  const docRef = doc(db, "users", uid);
   await updateDoc(docRef, {
     workspaceId,
     updatedAt: serverTimestamp(),
   });
 };
 
-export const updateUserPermissions = async (uid: string, permissions: { isEditor?: boolean; isRevisor?: boolean }): Promise<void> => {
-  const docRef = doc(dbZecki, "users", uid);
+export const updateUserPermissions = async (uid: string, permissions: { isEditor?: boolean; isRevisor?: boolean; canRevert?: boolean; canViewAdmin?: boolean; canViewReports?: boolean; canViewActivityHistory?: boolean; requiresChecklist?: boolean }): Promise<void> => {
+  const docRef = doc(db, "users", uid);
   await updateDoc(docRef, {
     ...permissions,
     updatedAt: serverTimestamp(),
@@ -117,5 +122,5 @@ export const updateUserPermissions = async (uid: string, permissions: { isEditor
 };
 
 export const deleteUser = async (uid: string): Promise<void> => {
-  await deleteDoc(doc(dbZecki, "users", uid));
+  await deleteDoc(doc(db, "users", uid));
 };

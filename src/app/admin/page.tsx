@@ -51,6 +51,7 @@ import {
   Video,
   CheckCircle2,
   Edit2,
+  LogOut,
 } from "lucide-react";
 import { 
   Select, 
@@ -61,9 +62,10 @@ import {
 } from "@/components/ui/select";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { updateDoc, doc, serverTimestamp, collection, getDocs, query, orderBy, limit } from "firebase/firestore";
-import { db, dbZecki } from "@/lib/firebase";
+import { updateDoc, doc, deleteDoc, serverTimestamp, collection, getDocs, query, orderBy, limit, where } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { toDate } from "@/lib/firebase-utils";
+import { backfillActivitiesWorkspaceId, BackfillResult } from "@/lib/migrate-activities";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -74,7 +76,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { SENAI_WORKSPACE_ID } from "@/lib/constants";
+
 
 const roleConfig: Record<Role, { label: string; color: string; icon: React.ElementType }> = {
   "SuperAdmin": { label: "Super Admin", color: "bg-red-600", icon: ShieldAlert },
@@ -106,6 +108,8 @@ const actionConfig: Record<string, { label: string; color: string; icon: React.E
    ExportouBackup: { label: "Exportou Backup", color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", icon: Download },
    Reverteu: { label: "Reverteu", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400", icon: RotateCcw },
    EditouProjeto: { label: "Editou Projeto", color: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400", icon: Edit2 },
+   Entrou: { label: "Entrou", color: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400", icon: UserPlus },
+   Saiu: { label: "Saiu", color: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400", icon: LogOut },
  };
 
 interface ActivityItem {
@@ -138,6 +142,7 @@ export default function AdminPage() {
   const [revertingId, setRevertingId] = useState<string | null>(null);
   const [revertConfirmId, setRevertConfirmId] = useState<string | null>(null);
   const [actionFilter, setActionFilter] = useState<string>("all");
+  const [backfilling, setBackfilling] = useState(false);
   
   const handleCopyInvite = () => {
     if (!user?.workspaceId) {
@@ -150,9 +155,9 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
-    const isAdmin = user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br" || user?.role === "SuperAdmin";
+    const canAccess = user?.role === "SuperAdmin" || user?.isSuperAdmin === true || user?.canViewAdmin === true;
     
-    if (user && !isAdmin) {
+    if (user && !canAccess) {
       router.push("/dashboard");
       return;
     }
@@ -165,11 +170,14 @@ export default function AdminPage() {
 
   const loadActivities = async () => {
     try {
-      const q = query(
-        collection(db, "activities"),
+      const constraints: Parameters<typeof query>[1][] = [
         orderBy("timestamp", "desc"),
-        limit(100)
-      );
+        limit(100),
+      ];
+      if (user?.workspaceId) {
+        constraints.unshift(where("workspaceId", "==", user.workspaceId));
+      }
+      const q = query(collection(db, "activities"), ...constraints);
       const snapshot = await getDocs(q);
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setActivities(data);
@@ -197,7 +205,7 @@ export default function AdminPage() {
             userAvatar: user.photoURL || null,
             action: "Reverteu",
             metadata: `Reverteu atividade ${id}`,
-            workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+            workspaceId: user.workspaceId || "",
           });
         }
         toast.success("Item restaurado com sucesso!");
@@ -213,9 +221,36 @@ export default function AdminPage() {
     }
   };
 
+  const handleDeleteActivity = async (activityId: string) => {
+    if (!confirm("Tem certeza que deseja excluir esta atividade?")) return;
+    try {
+      await deleteDoc(doc(db, "activities", activityId));
+      setActivities(prev => prev.filter(a => a.id !== activityId));
+      toast.success("Atividade excluída!");
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao excluir atividade.");
+    }
+  };
+
+  const handleBackfillActivities = async () => {
+    if (!confirm("Isso vai preencher o workspaceId nas atividades antigas. Continuar?")) return;
+    setBackfilling(true);
+    try {
+      const result = await backfillActivitiesWorkspaceId();
+      toast.success(`${result.updated} atividades atualizadas.`);
+      loadActivities();
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao migrar atividades.");
+    } finally {
+      setBackfilling(false);
+    }
+  };
+
   const loadUsers = async () => {
     try {
-      const usersData = await getUsers();
+      const usersData = await getUsers(user?.workspaceId, false);
       setUsersList(usersData);
     } catch (error) {
       console.error("Erro ao carregar usuários:", error);
@@ -239,23 +274,27 @@ export default function AdminPage() {
     }
   };
 
-  const togglePermission = async (uid: string, field: 'isEditor' | 'isRevisor' | 'requiresChecklist' | 'canRevert', value: boolean) => {
+  const togglePermission = async (uid: string, field: 'isEditor' | 'isRevisor' | 'requiresChecklist' | 'canRevert' | 'canViewAdmin' | 'canViewReports' | 'canViewActivityHistory', value: boolean) => {
     setUpdating(uid);
     try {
-      const userRef = doc(dbZecki, "users", uid);
+      const userRef = doc(db, "users", uid);
       await updateDoc(userRef, {
         [field]: value,
         updatedAt: serverTimestamp()
       });
       setUsersList(usersList.map(u => u.uid === uid ? { ...u, [field]: value } : u));
       
-      let label = "";
-      if (field === 'isEditor') label = "Editor";
-      else if (field === 'isRevisor') label = "Revisor";
-      else if (field === 'canRevert') label = "Reverter";
-      else label = "Checklist";
+      const labels: Record<string, string> = {
+        isEditor: "Editor",
+        isRevisor: "Revisor",
+        canRevert: "Reverter",
+        canViewAdmin: "Ver Administração",
+        canViewReports: "Ver Relatórios",
+        canViewActivityHistory: "Ver Histórico",
+        requiresChecklist: "Checklist",
+      };
 
-      toast.success(`Permissão de "${label}" atualizada!`);
+      toast.success(`Permissão "${labels[field] || field}" atualizada!`);
     } catch (error) {
       console.error("Erro ao atualizar permissão:", error);
       toast.error("Erro ao atualizar permissão.");
@@ -327,9 +366,11 @@ export default function AdminPage() {
           <TabsTrigger value="permissoes" className="rounded-xl px-8 h-full data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-800 data-[state=active]:shadow-lg font-bold flex gap-2">
             <Shield className="w-4 h-4" /> Permissões e Cargos
           </TabsTrigger>
-          <TabsTrigger value="atividades" className="rounded-xl px-8 h-full data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-800 data-[state=active]:shadow-lg font-bold flex gap-2">
-            <Activity className="w-4 h-4" /> Histórico de Atividades
-          </TabsTrigger>
+          {(user?.role === "SuperAdmin" || user?.isSuperAdmin || user?.canViewActivityHistory) && (
+            <TabsTrigger value="atividades" className="rounded-xl px-8 h-full data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-800 data-[state=active]:shadow-lg font-bold flex gap-2">
+              <Activity className="w-4 h-4" /> Histórico de Atividades
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="usuarios">
@@ -452,6 +493,9 @@ export default function AdminPage() {
                     <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Revisor</TableHead>
                     <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Reverter</TableHead>
                     <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Checklist</TableHead>
+                    <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100 text-[11px]">Admin</TableHead>
+                    <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100 text-[11px]">Relatórios</TableHead>
+                    <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100 text-[11px]">Histórico</TableHead>
                     <TableHead className="font-bold text-zinc-900 dark:text-zinc-100">Status Atual</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -506,12 +550,42 @@ export default function AdminPage() {
                           />
                         </div>
                       </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex justify-center">
+                          <Switch 
+                            checked={userItem.canViewAdmin} 
+                            onCheckedChange={(val) => togglePermission(userItem.uid, 'canViewAdmin', val)}
+                            disabled={updating === userItem.uid}
+                          />
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex justify-center">
+                          <Switch 
+                            checked={userItem.canViewReports} 
+                            onCheckedChange={(val) => togglePermission(userItem.uid, 'canViewReports', val)}
+                            disabled={updating === userItem.uid}
+                          />
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex justify-center">
+                          <Switch 
+                            checked={userItem.canViewActivityHistory} 
+                            onCheckedChange={(val) => togglePermission(userItem.uid, 'canViewActivityHistory', val)}
+                            disabled={updating === userItem.uid}
+                          />
+                        </div>
+                      </TableCell>
                       <TableCell>
                          <div className="flex gap-1 flex-wrap">
                             {userItem.isEditor && <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-none text-[9px]">EDITOR</Badge>}
                             {userItem.isRevisor && <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border-none text-[9px]">REVISOR</Badge>}
                             {userItem.canRevert && <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-none text-[9px]">REVERTER</Badge>}
-                            {!userItem.isEditor && !userItem.isRevisor && !userItem.canRevert && <span className="text-zinc-400 text-xs italic">Sem atribuições</span>}
+                            {userItem.canViewAdmin && <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 border-none text-[9px]">ADMIN</Badge>}
+                            {userItem.canViewReports && <Badge className="bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400 border-none text-[9px]">RELATÓRIOS</Badge>}
+                            {userItem.canViewActivityHistory && <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-none text-[9px]">HISTÓRICO</Badge>}
+                            {!userItem.isEditor && !userItem.isRevisor && !userItem.canRevert && !userItem.canViewAdmin && !userItem.canViewReports && !userItem.canViewActivityHistory && <span className="text-zinc-400 text-xs italic">Sem atribuições</span>}
                          </div>
                       </TableCell>
                     </TableRow>
@@ -533,6 +607,17 @@ export default function AdminPage() {
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
+                  {(user?.role === "SuperAdmin" || user?.isSuperAdmin) && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleBackfillActivities}
+                      disabled={backfilling}
+                      className="h-9 rounded-xl text-[10px] font-black uppercase tracking-widest border-zinc-200 dark:border-zinc-800"
+                    >
+                      {backfilling ? "Migrando..." : "Migrar Activities"}
+                    </Button>
+                  )}
                   <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Filtrar:</span>
                   <Select value={actionFilter} onValueChange={setActionFilter}>
                     <SelectTrigger className="w-[180px] h-9 rounded-xl border-zinc-200 dark:border-zinc-800 text-xs font-bold">
@@ -623,22 +708,35 @@ export default function AdminPage() {
                             }) : "N/A"}
                           </TableCell>
                           <TableCell className="text-center">
-                            {canRevert ? (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-700 hover:bg-blue-50"
-                                onClick={() => setRevertConfirmId(act.id)}
-                                disabled={revertingId === act.id}
-                              >
-                                {revertingId === act.id ? (
-                                  <span className="w-3 h-3 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
-                                ) : (
-                                  <RotateCcw className="w-3 h-3 mr-1" />
-                                )}
-                                Reverter
-                              </Button>
-                            ) : null}
+                            <div className="flex items-center justify-center gap-1">
+                              {canRevert ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                                  onClick={() => setRevertConfirmId(act.id)}
+                                  disabled={revertingId === act.id}
+                                >
+                                  {revertingId === act.id ? (
+                                    <span className="w-3 h-3 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="w-3 h-3 mr-1" />
+                                  )}
+                                  Reverter
+                                </Button>
+                              ) : null}
+                              {(user?.role === "SuperAdmin" || user?.isSuperAdmin) && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-7 p-0 text-zinc-400 hover:text-red-500 hover:bg-red-50"
+                                  onClick={() => handleDeleteActivity(act.id)}
+                                  title="Excluir atividade"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -649,6 +747,8 @@ export default function AdminPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+
       </Tabs>
 
       {/* Revert Confirmation */}
