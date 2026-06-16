@@ -37,6 +37,7 @@ export interface ScriptDoc {
   lesson?: string;
 
   createdAt: string;
+  updatedAt?: string | { toDate?: () => Date } | null;
   status: ScriptStatus;
   category?: ScriptCategory;
   editorId?: string;

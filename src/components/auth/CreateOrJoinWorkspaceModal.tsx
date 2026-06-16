@@ -79,7 +79,7 @@ export function CreateOrJoinWorkspaceModal({ open, onOpenChange }: Props) {
         onOpenChange(v);
       }}
     >
-      <DialogContent className="sm:max-w-lgNo convidar eq rounded-2xl" showCloseButton={false}>
+      <DialogContent className="w-lg rounded-2xl" showCloseButton={false}>
         {step === "choose" && (
           <>
             <DialogHeader className="text-center pt-4">
