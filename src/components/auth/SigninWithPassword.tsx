@@ -1,23 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Eye, EyeOff, Hourglass } from "lucide-react";
+import { Eye, EyeOff, Hourglass, LogIn } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface SigninWithPasswordProps {
   onSwitchToSignup: () => void;
   inviteWorkspaceId?: string;
+  initialEmail?: string;
 }
  
-const SigninWithPassword: React.FC<SigninWithPasswordProps> = ({ inviteWorkspaceId }) => {
-  const [email, setEmail] = useState("");
+const SigninWithPassword: React.FC<SigninWithPasswordProps> = ({ inviteWorkspaceId, initialEmail = "" }) => {
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
+
+  useEffect(() => {
+    if (initialEmail) setEmail(initialEmail);
+  }, [initialEmail]);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const { signIn } = useAuth();
@@ -29,8 +34,20 @@ const SigninWithPassword: React.FC<SigninWithPasswordProps> = ({ inviteWorkspace
       await signIn(email, password, inviteWorkspaceId);
       toast.success("Login realizado com sucesso!");
     } catch (err: unknown) {
-      const error = err as { code?: string; message?: string };
-      toast.error(`Erro ao entrar: ${error?.message || "Verifique suas credenciais."}`);
+      const fbError = err as { code?: string; message?: string };
+      const code = fbError?.code || fbError?.message?.match(/\((\w+\/[\w-]+)\)/)?.[1] || "";
+      console.log("[DEBUG] err:", err, "code:", code);
+      const messages: Record<string, string> = {
+        "auth/invalid-credential": "E-mail ou senha incorretos.",
+        "auth/user-not-found": "Usuário não encontrado.",
+        "auth/wrong-password": "Senha incorreta.",
+        "auth/invalid-email": "E-mail inválido.",
+        "auth/too-many-requests": "Muitas tentativas. Tente novamente mais tarde.",
+        "auth/user-disabled": "Esta conta foi desativada.",
+        "auth/network-request-failed": "Erro de conexão. Verifique sua internet.",
+      };
+      const friendlyMsg = messages[code];
+      toast.error(friendlyMsg || "Erro ao entrar. Verifique suas credenciais.");
     } finally {
       setLoading(false);
     }
@@ -106,7 +123,7 @@ const SigninWithPassword: React.FC<SigninWithPasswordProps> = ({ inviteWorkspace
             Entrando...
           </>
         ) : (
-          "Entrar"
+          <><LogIn className="mr-2 h-4 w-4" /> Entrar</>
         )}
       </Button>
     </form>

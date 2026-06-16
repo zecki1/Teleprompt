@@ -5,7 +5,7 @@ export type ActivityAction =
   | "Editou" | "Gravou" | "Criou" | "Revisou" | "Comentou"
   | "ExcluiuRoteiro" | "ExcluiuPasta" | "ExcluiuProjeto"
   | "ExportouBackup" | "Reverteu" | "EditouProjeto"
-  | "Cadastrou";
+  | "Cadastrou" | "Entrou" | "Saiu";
 
 export interface ActivityData {
   userId: string;

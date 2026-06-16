@@ -1,11 +1,12 @@
 "use client";
 
 import { 
-  collection, doc, getDoc, getDocs, 
+  collection, doc, getDoc, getDocs, setDoc,
   query, where, arrayUnion, writeBatch 
 } from "firebase/firestore";
-import { dbZecki } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 import { Workspace, WorkspaceSchema, Role } from "@/services/schemas";
+import { logActivity } from "@/lib/activity";
 import { DateTime } from "luxon";
 import { toast } from "sonner";
 
@@ -14,7 +15,7 @@ import { toast } from "sonner";
  */
 export const getWorkspace = async (workspaceId: string): Promise<Workspace | null> => {
   try {
-    const docRef = doc(dbZecki, "workspaces", workspaceId);
+    const docRef = doc(db, "workspaces", workspaceId);
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
@@ -30,18 +31,65 @@ export const getWorkspace = async (workspaceId: string): Promise<Workspace | nul
 /**
  * Permite que um usuário entre em um workspace usando um token de convite.
  */
+/**
+ * Cria um novo workspace e adiciona o usuário como admin.
+ */
+export const createWorkspace = async (
+  name: string,
+  ownerUid: string,
+  ownerEmail: string,
+): Promise<string> => {
+  const workspaceId = crypto.randomUUID();
+  const now = DateTime.now().toISO();
+
+  const workspaceData = {
+    name,
+    ownerId: ownerUid,
+    ownerEmail,
+    members: [ownerUid],
+    createdAt: now,
+    updatedAt: now,
+    plan: "free",
+    roleLabels: {
+      Diretor: "Diretor",
+      Docente: "Docente",
+    },
+  };
+
+  await setDoc(doc(db, "workspaces", workspaceId), workspaceData);
+  return workspaceId;
+};
+
 export const joinWorkspaceByToken = async (
   token: string,
   userUid: string,
   userEmail: string,
-  defaultRole: Role = 'Docente'
+  defaultRole: Role = 'Estagiário'
 ): Promise<{ success: boolean; workspaceName?: string }> => {
   try {
+    // Try by inviteToken first
     const q = query(
-      collection(dbZecki, "workspaces"),
+      collection(db, "workspaces"),
       where("inviteToken", "==", token)
     );
-    const snap = await getDocs(q);
+    let snap = await getDocs(q);
+
+    // If not found, try by workspace document ID
+    if (snap.empty) {
+      const docRef = doc(db, "workspaces", token);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        // Create a fake snapshot structure
+        snap = {
+          empty: false,
+          docs: [{
+            id: docSnap.id,
+            data: () => docSnap.data(),
+          } as unknown as typeof snap.docs[0]],
+          size: 1,
+        } as typeof snap;
+      }
+    }
 
     if (snap.empty) {
       toast.error("Link de convite inválido ou expirado.");
@@ -56,9 +104,9 @@ export const joinWorkspaceByToken = async (
       return { success: true, workspaceName: wsData.name };
     }
 
-    const batch = writeBatch(dbZecki);
-    const wsRef = doc(dbZecki, "workspaces", wsDoc.id);
-    const userRef = doc(dbZecki, "users", userUid);
+    const batch = writeBatch(db);
+    const wsRef = doc(db, "workspaces", wsDoc.id);
+    const userRef = doc(db, "users", userUid);
 
     batch.update(wsRef, { 
       members: arrayUnion(userUid), 
@@ -68,10 +116,22 @@ export const joinWorkspaceByToken = async (
     batch.update(userRef, {
       workspaceId: wsDoc.id,
       workspaces: arrayUnion(wsDoc.id),
-      role: defaultRole
+      role: defaultRole,
+      canViewAdmin: false,
+      canViewReports: false,
+      canViewActivityHistory: false,
+      canRevert: false,
     });
 
     await batch.commit();
+
+    logActivity({
+      userId: userUid,
+      userName: userEmail?.split("@")[0] || "Usuário",
+      action: "Entrou",
+      workspaceId: wsDoc.id,
+      projectName: wsData.name,
+    });
 
     toast.success(`Bem-vindo ao ${wsData.name}!`);
     return { success: true, workspaceName: wsData.name };

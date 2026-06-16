@@ -73,11 +73,12 @@ export default function ActivitiesPage() {
       return;
     }
 
+    const activitiesConstraints = user.isSuperAdmin
+      ? [orderBy("timestamp", "desc"), limit(200)]
+      : [where("workspaceId", "==", user.workspaceId || "senai"), orderBy("timestamp", "desc"), limit(200)];
     const q = query(
       collection(db, "activities"),
-      where("workspaceId", "==", user.workspaceId || "senai"),
-      orderBy("timestamp", "desc"),
-      limit(200)
+      ...activitiesConstraints
     );
 
     const unsub = onSnapshot(q, (snapshot) => {

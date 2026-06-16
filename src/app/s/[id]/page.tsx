@@ -24,7 +24,6 @@ import {
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
-import { createRecordingTask } from "@/lib/zecki";
 import { toast } from "sonner";
 
 interface ScriptData {
@@ -146,16 +145,6 @@ export default function PublicScriptPage({
       });
       
       setScript({ ...script, status: newStatus });
-
-      if (newStatus === "aguardando_gravacao" && script.projectId) {
-        await createRecordingTask(
-          script.projectId, 
-          script.title, 
-          script.id, 
-          user?.uid || "system",
-          script.workspaceId || user?.workspaceId || "senai"
-        );
-      }
 
       toast.success(`Roteiro movido para: ${statusConfig[newStatus]?.label}`);
     } catch (e) {

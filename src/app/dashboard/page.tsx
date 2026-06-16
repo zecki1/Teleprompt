@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { collection, query, deleteDoc, doc, updateDoc, writeBatch, where, addDoc, serverTimestamp, onSnapshot, orderBy, limit, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
-import { SENAI_WORKSPACE_ID } from "@/lib/constants";
+
 import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Suspense } from "react";
-import { fetchZeckiProjects, ZeckiProject, createRecordingTask, createEditingTask, createZeckiProject, deleteZeckiProject, updateZeckiProject } from "@/lib/zecki";
+import { fetchProjects, Project, createProject, deleteProject, updateProject } from "@/services/projects";
 import { toDate } from "@/lib/firebase-utils";
 import { toast } from "sonner";
 import {
@@ -52,6 +52,7 @@ import { FolderTree } from "@/components/tp/FolderTree";
 import { MoveScriptModal } from "@/components/tp/MoveScriptModal";
 import { MoveFolderModal } from "@/components/tp/MoveFolderModal";
 import { CommentsPanel } from "@/components/tp/CommentsPanel";
+import { WelcomeModal } from "@/components/auth/WelcomeModal";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -89,7 +90,7 @@ function DashboardContent() {
   const searchParams = useSearchParams();
   
   const [scripts, setScripts] = useState<ScriptDoc[]>([]);
-  const [projects, setProjects] = useState<ZeckiProject[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [assigningScript, setAssigningScript] = useState<ScriptDoc | null>(null);
   const [loadingProjects, setLoadingProjects] = useState(true);
@@ -128,9 +129,8 @@ function DashboardContent() {
       toast.error("Você não está vinculado a um workspace.");
       return;
     }
-    const inviteUrl = `${window.location.origin}/login?workspaceId=${user.workspaceId}`;
-    navigator.clipboard.writeText(inviteUrl);
-    toast.success("Link de convite copiado para a área de transferência!");
+    navigator.clipboard.writeText(user.workspaceId);
+    toast.success("Chave do workspace copiada!");
   };
   const [selectedCategory, setSelectedCategory] = useState<ScriptCategory>("video");
   
@@ -195,7 +195,7 @@ function DashboardContent() {
         action: "ExportouBackup",
         metadata: "JSON",
         projectName,
-        workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+        workspaceId: user.workspaceId || "",
       });
     }
     toast.success(`Backup do projeto "${projectName}" baixado!`);
@@ -250,7 +250,7 @@ function DashboardContent() {
           action: "ExportouBackup",
           metadata: "Word",
           projectName,
-          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+          workspaceId: user.workspaceId || "",
         });
       }
       toast.success(`Word exportado com sucesso para o projeto "${projectName}"!`);
@@ -288,7 +288,7 @@ function DashboardContent() {
           action: "ExportouBackup",
           metadata: "PPT",
           projectName,
-          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+          workspaceId: user.workspaceId || "",
         });
       }
       toast.success(`PPT exportado com sucesso para o projeto "${projectName}"!`);
@@ -381,15 +381,16 @@ function DashboardContent() {
 
   const loadProjects = useCallback(async () => {
     try {
-      const workspaceId = user?.workspaceId || SENAI_WORKSPACE_ID;
-      const projectsData = await fetchZeckiProjects(workspaceId);
+      const workspaceId = user?.workspaceId || "";
+      if (!workspaceId) { setLoadingProjects(false); return; }
+      const projectsData = await fetchProjects(workspaceId, false);
       setProjects(projectsData);
     } catch (error) {
       console.error("Erro ao carregar projetos:", error);
     } finally {
       setLoadingProjects(false);
     }
-  }, [user?.workspaceId]);
+  }, [user?.workspaceId, user?.isSuperAdmin]);
 
     useEffect(() => {
     if (!user) {
@@ -397,16 +398,18 @@ function DashboardContent() {
       return;
     }
 
-    const activeWorkspaceId = user.workspaceId || SENAI_WORKSPACE_ID;
+    const activeWorkspaceId = user.workspaceId || "";
     
-    // 1. Load projects once (they change less often)
+    if (!activeWorkspaceId) {
+      setScripts([]);
+      setLoading(false);
+      return;
+    }
+
     loadProjects();
 
-    // 2. Real-time scripts sync
     const scriptsRef = collection(db, "scripts");
-    const q = activeWorkspaceId === SENAI_WORKSPACE_ID 
-      ? query(scriptsRef) 
-      : query(scriptsRef, where("workspaceId", "==", activeWorkspaceId)); 
+    const q = query(scriptsRef, where("workspaceId", "==", activeWorkspaceId));
 
     const unsub = onSnapshot(q, (snapshot) => {
       const fetched = snapshot.docs.map(doc => {
@@ -475,7 +478,7 @@ function DashboardContent() {
     const projectName = projects.find(p => p.id === projectId)?.name || "";
     setDeleteConfirmProject(null);
     try {
-      await deleteZeckiProject(projectId);
+      await deleteProject(projectId);
       setProjects(projects.filter(p => p.id !== projectId));
       if (projectIdFilter === projectId) {
         localStorage.removeItem("teleprompt_last_project_id");
@@ -490,7 +493,7 @@ function DashboardContent() {
           projectId,
           projectName,
           snapshot: projects.find(p => p.id === projectId) as unknown as Record<string, unknown> | undefined,
-          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+          workspaceId: user.workspaceId || "",
         });
       }
       toast.success("Projeto excluído com sucesso!");
@@ -538,39 +541,6 @@ function DashboardContent() {
       
       await updateDoc(scriptRef, updateData);
       
-      if (reviewingScript.projectId) {
-        const recordingTaskId = await createRecordingTask(
-          reviewingScript.projectId,
-          reviewingScript.title,
-          reviewingScript.id,
-          user?.uid || "",
-          user?.workspaceId || SENAI_WORKSPACE_ID,
-          selectedCategory,
-          `${window.location.origin}/tp/${reviewingScript.id}`,
-          reviewingScript.editorId,
-          reviewingScript.reviewerId
-        );
-        
-        const editingTaskId = await createEditingTask(
-          reviewingScript.projectId,
-          reviewingScript.title,
-          reviewingScript.id,
-          user?.uid || "",
-          user?.workspaceId || SENAI_WORKSPACE_ID,
-          selectedCategory,
-          `${window.location.origin}/tp/${reviewingScript.id}`,
-          reviewingScript.editorId,
-          reviewingScript.reviewerId
-        );
-
-        await updateDoc(scriptRef, {
-          recordingTaskId,
-          editingTaskId
-        });
-        
-        toast.success(`Tarefas de Gravação e Edição de ${selectedCategory === "video" ? "Vídeo" : "Podcast"} criadas!`);
-      }
-      
       setScripts(scripts.map(s => s.id === reviewingScript.id ? { ...s, ...updateData } : s));
       toast.success("Revisão concluída com sucesso!");
       setReviewingScript(null);
@@ -610,7 +580,7 @@ function DashboardContent() {
           projectId: scriptData?.projectId || null,
           projectName: scriptData?.projectName || scriptData?.project || null,
           path: scriptData?.path || null,
-          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+          workspaceId: user.workspaceId || "",
           snapshot: scriptData as unknown as Record<string, unknown>,
         });
       }
@@ -654,7 +624,7 @@ function DashboardContent() {
           projectName: folderScripts[0]?.projectName || folderScripts[0]?.project || null,
           path: folderScripts[0]?.path || null,
           folder: folderName,
-          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+          workspaceId: user.workspaceId || "",
           snapshotIds: folderScripts.map(s => s.id),
           snapshot: folderSnapshot,
         });
@@ -699,7 +669,7 @@ function DashboardContent() {
 
       const project = projects.find(p => p.name === oldName);
       if (project) {
-        await updateZeckiProject(project.id, { name: newProjectTitle });
+        await updateProject(project.id, { name: newProjectTitle });
       }
 
       setScripts(scripts.map(s => (s.projectName || s.project || "Geral") === oldName ? { ...s, projectName: newProjectTitle } : s));
@@ -716,7 +686,7 @@ function DashboardContent() {
           projectName: newProjectTitle,
           metadata: `Renomeado de "${oldName}"`,
           snapshot: { previousName: oldName, previousCode: project?.code || "" } as Record<string, unknown>,
-          workspaceId: user.workspaceId || SENAI_WORKSPACE_ID,
+          workspaceId: user.workspaceId || "",
         });
       }
       toast.success("Projeto renomeado com sucesso!");
@@ -732,16 +702,16 @@ function DashboardContent() {
     if (!newProjectData.name.trim()) return;
     setIsCreatingProject(true);
     try {
-      const workspaceId = user?.workspaceId || SENAI_WORKSPACE_ID;
+      const workspaceId = user?.workspaceId || "";
       
-      const payload: Partial<ZeckiProject> = {
+      const payload: Partial<Project> = {
         name: newProjectData.name,
         code: newProjectData.code || newProjectData.name.toUpperCase().slice(0, 3),
         workspaceId: workspaceId,
         status: 'active'
       };
 
-      const createdProj = await createZeckiProject(payload);
+      const createdProj = await createProject(payload);
       
       setProjects([createdProj, ...projects]);
       setIsCreateProjectOpen(false);
@@ -779,7 +749,9 @@ function DashboardContent() {
       );
 
   return (
-    <div className="container mx-auto py-10 px-4 max-w-6xl">
+    <>
+      <WelcomeModal />
+      <div className="container mx-auto py-10 px-4 max-w-6xl">
       <div className="flex justify-between items-center mb-8">
         
         <div className="flex gap-3">
@@ -1473,7 +1445,7 @@ function DashboardContent() {
                                       onClick={() => setMovingScript(script)}>
                                       <FolderInput className="w-3 h-3 mr-1" /> Mover
                                     </Button>
-                                    {(user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br" || user?.role === "SuperAdmin") && (
+                                    {(user?.role === "SuperAdmin" || user?.isSuperAdmin) && (
                                       <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-blue-500 uppercase tracking-widest" onClick={() => setAssigningScript(script)}>
                                         <UserPlus className="w-3 h-3 mr-1" /> Equipe
                                       </Button>
@@ -1588,7 +1560,7 @@ function DashboardContent() {
                     status: "rascunho",
                     createdAt: serverTimestamp(),
                     updatedAt: serverTimestamp(),
-                    workspaceId: user?.workspaceId || SENAI_WORKSPACE_ID,
+                    workspaceId: user?.workspaceId || user?.workspaceId || "",
                     isPlaceholder: true,
                   });
                   
@@ -1727,7 +1699,7 @@ function DashboardContent() {
         <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded-[40px] p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)]">
           <DialogHeader>
             <DialogTitle className="text-2xl font-black text-center mb-2">Concluir Revisão</DialogTitle>
-            <p className="text-center text-zinc-500 text-sm font-medium mb-6">Confirme a categoria do roteiro para gerar a tarefa de gravação no Zecki.</p>
+            <p className="text-center text-zinc-500 text-sm font-medium mb-6">Confirme a categoria do roteiro para gerar a tarefa de gravação.</p>
           </DialogHeader>
           
           <div className="space-y-6">
@@ -1790,7 +1762,7 @@ function DashboardContent() {
           <DialogHeader>
             <DialogTitle className="text-2xl font-black text-center mb-2 uppercase tracking-widest">Novo Projeto</DialogTitle>
             <DialogDescription className="text-center text-zinc-500 text-sm font-medium mb-6">
-              O projeto será criado no Teleprompt e sincronizado com o Zecki Dashboard.
+              O projeto será criado no Teleprompt.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -1895,5 +1867,6 @@ function DashboardContent() {
         </div>
       )}
     </div>
+    </>
   );
 }

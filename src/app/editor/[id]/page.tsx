@@ -66,7 +66,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
-import { fetchZeckiProjects, ZeckiProject } from "@/lib/zecki";
+import { fetchProjects, Project, createProject } from "@/services/projects";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import {
@@ -281,7 +281,7 @@ function EditorContent({ id }: { id: string }) {
   const [category, setCategory] = useState<"video" | "podcast">("video");
   const [isPublic, setIsPublic] = useState(false);
   const [lockedForEditing, setLockedForEditing] = useState(false);
-  const [zeckiProjects, setZeckiProjects] = useState<ZeckiProject[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [existingFolders, setExistingFolders] = useState<string[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [reviewerId, setReviewerId] = useState<string | null>(null);
@@ -293,8 +293,7 @@ function EditorContent({ id }: { id: string }) {
   const [loadingError, setLoadingError] = useState<string | null>(null);
 
   const { user, hasPermission } = useAuth();
-  const isWhitelisted = user?.email === "zecki1@hotmail.com" || user?.email === "ezequiel.rmoncao@sp.senai.br";
-  const isSuper = user?.isSuperAdmin || isWhitelisted;
+  const isSuper = user?.isSuperAdmin;
   const canEdit = isSuper || (hasPermission(["Docente", "Especialista", "Coordenador", "Diretor", "Orientador", "Assistente", "Analista", "editor", "validador"]) && (!lockedForEditing || scriptStatus === "rascunho"));
 
   const [isEditingMode, setIsEditingMode] = useState(true);
@@ -502,7 +501,7 @@ function EditorContent({ id }: { id: string }) {
 
   useEffect(() => {
     if (user?.workspaceId) {
-      fetchZeckiProjects(user.workspaceId).then(setZeckiProjects);
+      fetchProjects(user.workspaceId).then(setProjects);
     }
   }, [user?.workspaceId]);
   
@@ -514,7 +513,7 @@ function EditorContent({ id }: { id: string }) {
 
     const q = query(
       collection(db, "scripts"),
-      where("workspaceId", "==", workspaceId || user?.workspaceId || "senai"),
+      ...(user?.isSuperAdmin ? [] : [where("workspaceId", "==", workspaceId || user?.workspaceId || "senai")]),
       where("projectName", "==", project)
     );
 
@@ -534,13 +533,13 @@ function EditorContent({ id }: { id: string }) {
   }, [project, workspaceId, user?.workspaceId]);
 
   useEffect(() => {
-    if (!projectId && project !== "Geral" && zeckiProjects.length > 0) {
-       const found = zeckiProjects.find(p => p.name === project);
+    if (!projectId && project !== "Geral" && projects.length > 0) {
+       const found = projects.find(p => p.name === project);
        if (found) {
          setProjectId(found.id);
        }
     }
-  }, [project, projectId, zeckiProjects]);
+  }, [project, projectId, projects]);
 
 
 
@@ -888,15 +887,14 @@ function EditorContent({ id }: { id: string }) {
     
     setIsCreatingProject(true);
     try {
-      const { createZeckiProject } = await import("@/lib/zecki");
-      const created = await createZeckiProject({
+      const created = await createProject({
         name: newProjectData.name,
         code: newProjectData.code,
         workspaceId: workspaceId || user?.workspaceId || "senai",
         status: "active",
       });
       
-      setZeckiProjects([created, ...zeckiProjects]);
+      setProjects([created, ...projects]);
       setProjectId(created.id);
       setProject(created.name);
       setIsCreateProjectOpen(false);
@@ -955,7 +953,7 @@ function EditorContent({ id }: { id: string }) {
                     } else if (val === "new") {
                       setIsCreateProjectOpen(true);
                     } else {
-                      const selected = zeckiProjects.find(p => p.id === val);
+                      const selected = projects.find(p => p.id === val);
                       if (selected) {
                         setProjectId(selected.id);
                         setProject(selected.name);
@@ -969,7 +967,7 @@ function EditorContent({ id }: { id: string }) {
                   <SelectContent className="rounded border-none shadow-2xl bg-white dark:bg-zinc-900 p-2">
                     <SelectItem value="geral" className="text-[11px] font-bold rounded focus:bg-zinc-100 dark:focus:bg-zinc-800">Geral</SelectItem>
                     <SelectItem value="new" className="text-[11px] font-bold rounded text-blue-500 focus:text-blue-600 focus:bg-blue-50 dark:focus:bg-blue-900/20 border-t border-zinc-100 dark:border-zinc-800 mt-1 pt-2">+ Criar Novo Projeto</SelectItem>
-                    {zeckiProjects.map((p) => (
+                    {projects.map((p) => (
                       <SelectItem key={p.id} value={p.id} className="text-[11px] font-bold rounded focus:bg-zinc-100 dark:focus:bg-zinc-800">{p.name}</SelectItem>
                     ))}
                   </SelectContent>
@@ -1410,7 +1408,7 @@ function EditorContent({ id }: { id: string }) {
 
       {/* FOOTER FIXO */}
       {isEditingMode && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3">
+        <div className="fixed left-1/2 -translate-x-1/2 z-50 flex items-center gap-3" style={{ bottom: '3.5rem' }}>
           <Button onClick={() => { setImportText(generateRawTextFromBlocks(scenes)); setShowImportModal(true); }} variant="outline" className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl shadow-2xl rounded h-12 px-6 border-2 font-black text-[10px] tracking-widest uppercase"><Import size={18} className="mr-2" /> Texto Bruto</Button>
           <Button onClick={handleSaveClick} className="bg-zinc-900 border-2 dark:bg-zinc-100 text-white dark:text-black shadow-2xl rounded h-12 px-8 font-black text-[10px] tracking-widest uppercase hover:scale-105 transition-all"><Save size={18} className="mr-2" /> Salvar Tudo</Button>
         </div>
@@ -1468,7 +1466,7 @@ function EditorContent({ id }: { id: string }) {
           <DialogHeader>
             <DialogTitle className="text-2xl font-black text-center mb-2 uppercase tracking-widest">Novo Projeto</DialogTitle>
             <DialogDescription className="text-center text-zinc-500 text-sm font-medium mb-6">
-              O projeto será criado no Teleprompt e sincronizado com o Zecki Dashboard.
+              O projeto será criado no TelepromptZ.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import SigninWithPassword from "@/components/auth/SigninWithPassword";
 import SignupWithPassword from "@/components/auth/SignupWithPassword";
@@ -9,9 +9,11 @@ import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTheme } from "next-themes";
-import { Sun, Moon, Info } from "lucide-react";
+import { Sun, Moon, Info, LogOut, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { getKnownAccounts, removeKnownAccount } from "@/lib/account-storage";
 
 const ThemeSwitcher = () => {
   const { theme, setTheme } = useTheme();
@@ -43,10 +45,20 @@ export default function LoginPage() {
   const searchParams = useSearchParams();
   const redirectPath = searchParams.get("redirect") || "/dashboard";
   const inviteWorkspaceId = searchParams.get("workspaceId") || undefined;
+  const paramAccount = searchParams.get("account") || undefined;
+  const isSwitching = searchParams.get("switch") === "1";
   
   const [isSignup, setIsSignup] = useState(false);
+  const [selectedEmail, setSelectedEmail] = useState(paramAccount || "");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const initialMount = useRef(true);
+  const knownAccounts = getKnownAccounts();
 
   useEffect(() => {
+    if (initialMount.current) {
+      initialMount.current = false;
+      return;
+    }
     if (!loading && user) {
       if (inviteWorkspaceId && !user.workspaces?.includes(inviteWorkspaceId)) {
         joinWorkspace(inviteWorkspaceId).then(() => {
@@ -57,6 +69,16 @@ export default function LoginPage() {
       }
     }
   }, [user, loading, router, redirectPath, inviteWorkspaceId, joinWorkspace]);
+
+  const handleSelectAccount = (email: string) => {
+    setSelectedEmail(email);
+  };
+
+  const handleRemoveAccount = (e: React.MouseEvent, uid: string) => {
+    e.stopPropagation();
+    removeKnownAccount(uid);
+    setRefreshKey((k) => k + 1);
+  };
 
   if (loading) {
     return <LoadingScreen />;
@@ -70,6 +92,11 @@ export default function LoginPage() {
     initial: { opacity: 0, x: 20 },
     animate: { opacity: 1, x: 0 },
     exit: { opacity: 0, x: -20 },
+  };
+
+  const getInitials = (name: string | null | undefined) => {
+    if (!name) return "?";
+    return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
   };
 
   return (
@@ -99,6 +126,38 @@ export default function LoginPage() {
                   </Alert>
                 </motion.div>
               )}
+              {!isSignup && knownAccounts.length > 0 && (
+                <div className="mb-6">
+                  <p className="text-xs font-medium text-muted-foreground mb-3">Contas conhecidas</p>
+                  <div className="flex flex-wrap gap-2">
+                    {knownAccounts.map((account) => (
+                      <button
+                        key={account.uid}
+                        onClick={() => handleSelectAccount(account.email)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-left transition-all hover:bg-accent w-full ${
+                          selectedEmail === account.email ? "ring-2 ring-primary border-primary" : "border-border"
+                        }`}
+                      >
+                        <Avatar className="h-8 w-8 shrink-0">
+                          <AvatarImage src={account.photoURL || undefined} />
+                          <AvatarFallback className="text-[10px]">{getInitials(account.displayName)}</AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium truncate max-w-[140px]">{account.displayName || account.email}</p>
+                          <p className="text-[10px] text-muted-foreground truncate max-w-[140px]">{account.email}</p>
+                        </div>
+                        <span
+                          onClick={(e) => handleRemoveAccount(e, account.uid)}
+                          className="ml-auto shrink-0 p-1.5 rounded cursor-pointer hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                          title="Remover conta"
+                        >
+                          <Trash2 size={14} />
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <CardTitle className="text-3xl font-bold">{isSignup ? "Crie sua Conta" : "Bem-vindo(a)!"}</CardTitle>
               <CardDescription>{isSignup ? "Preencha os campos para começar." : "Faça login para acessar seu painel."}</CardDescription>
             </CardHeader>
@@ -110,7 +169,7 @@ export default function LoginPage() {
                   </motion.div>
                 ) : (
                   <motion.div key="signin" variants={formVariants} initial="initial" animate="animate" exit="exit" transition={{ duration: 0.25 }}>
-                    <SigninWithPassword onSwitchToSignup={() => setIsSignup(true)} inviteWorkspaceId={inviteWorkspaceId} />
+                    <SigninWithPassword onSwitchToSignup={() => setIsSignup(true)} inviteWorkspaceId={inviteWorkspaceId} initialEmail={selectedEmail} />
                   </motion.div>
                 )}
               </AnimatePresence>
