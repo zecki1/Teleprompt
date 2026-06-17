@@ -1,16 +1,26 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, increment, doc, updateDoc, arrayUnion } from "firebase/firestore";
+import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, increment, doc, updateDoc, arrayUnion, deleteDoc, arrayRemove } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { MessageSquare, Send, Clock, X } from "lucide-react";
+import { MessageSquare, Send, Clock, X, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export interface Comment {
   id: string;
@@ -27,6 +37,7 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
   const [newComment, setNewComment] = useState("");
   const [selectedMarker, setSelectedMarker] = useState<number | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [deletingComment, setDeletingComment] = useState<{ id: string; userName: string } | null>(null);
 
   useEffect(() => {
     const q = query(
@@ -76,6 +87,23 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
     }
   };
 
+  const handleDelete = async () => {
+    if (!deletingComment) return;
+    try {
+      await deleteDoc(doc(db, "scripts", scriptId, "comments", deletingComment.id));
+
+      const scriptRef = doc(db, "scripts", scriptId);
+      await updateDoc(scriptRef, {
+        commentCount: increment(-1),
+        commentAuthors: arrayRemove(deletingComment.userName),
+      });
+    } catch (error) {
+      console.error("Error deleting comment:", error);
+    } finally {
+      setDeletingComment(null);
+    }
+  };
+
   const getInitials = (name: string) => {
     return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
   };
@@ -116,11 +144,22 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
                     {comment.createdAt?.toDate ? format(comment.createdAt.toDate(), "HH:mm '•' dd/MM", { locale: ptBR }) : "Enviando..."}
                   </span>
                 </div>
-                {comment.marker && (
-                  <Badge className="ml-auto bg-red-600 hover:bg-red-700 text-white border-none text-[9px] h-4">
-                    [{comment.marker}]
-                  </Badge>
-                )}
+                <div className="ml-auto flex items-center gap-1">
+                  {comment.marker && (
+                    <Badge className="bg-red-600 hover:bg-red-700 text-white border-none text-[9px] h-4">
+                      [{comment.marker}]
+                    </Badge>
+                  )}
+                  {user?.uid === comment.userId && (
+                    <button
+                      onClick={() => setDeletingComment({ id: comment.id, userName: comment.userName })}
+                      className="text-zinc-600 hover:text-red-400 transition-colors p-1"
+                      title="Excluir comentário"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800/50">
                 <p className="text-xs text-zinc-300 leading-relaxed">{comment.text}</p>
@@ -170,6 +209,25 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
           </Button>
         </form>
       </div>
+
+      <AlertDialog open={!!deletingComment} onOpenChange={(open) => !open && setDeletingComment(null)}>
+        <AlertDialogContent className="bg-zinc-950 border-zinc-800 rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Excluir comentário</AlertDialogTitle>
+            <AlertDialogDescription className="text-zinc-400">
+              Tem certeza que deseja excluir este comentário? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-zinc-900 text-zinc-300 border-zinc-700 hover:bg-zinc-800 hover:text-white rounded-xl">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-500 text-white rounded-xl">
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

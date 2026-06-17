@@ -121,6 +121,7 @@ export const joinWorkspaceByToken = async (
       canViewReports: false,
       canViewActivityHistory: false,
       canRevert: false,
+      canAssign: false,
     });
 
     await batch.commit();

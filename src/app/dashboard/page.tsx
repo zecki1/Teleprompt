@@ -1445,7 +1445,7 @@ function DashboardContent() {
                                       onClick={() => setMovingScript(script)}>
                                       <FolderInput className="w-3 h-3 mr-1" /> Mover
                                     </Button>
-                                    {(user?.role === "SuperAdmin" || user?.isSuperAdmin) && (
+                                    {(user?.role === "SuperAdmin" || user?.isSuperAdmin || user?.canAssign) && (
                                       <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-blue-500 uppercase tracking-widest" onClick={() => setAssigningScript(script)}>
                                         <UserPlus className="w-3 h-3 mr-1" /> Equipe
                                       </Button>

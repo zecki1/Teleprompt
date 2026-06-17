@@ -51,6 +51,7 @@ export const UserSchema = z.object({
   canViewAdmin: z.boolean().default(false),
   canViewReports: z.boolean().default(false),
   canViewActivityHistory: z.boolean().default(false),
+  canAssign: z.boolean().default(false),
   requiresChecklist: z.boolean().default(true),
   avatarUrl: z.string().optional().default(""),
   photoURL: z.string().nullable().optional(),

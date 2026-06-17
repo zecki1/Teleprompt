@@ -93,9 +93,12 @@ interface ProjectStats {
   rejected: number;
   draft: number;
   totalScenes: number;
+  totalChars: number;
   avgLeadTimeHours: number;
   avgWritingTimeHours: number;   // createdAt → primeira ação "Gravou"
   avgRecordingTimeHours: number; // primeira ação "Gravou" → última ação "Gravou"
+  totalWritingTimeHours: number; // soma total de criação (todos os roteiros)
+  totalRecordingTimeHours: number; // soma total de gravação (todos os roteiros)
 }
 
 interface EnhancedUserStats {
@@ -145,21 +148,17 @@ const parseDate = (ts: unknown): Date | null => {
   return null;
 };
 
-const formatMinutes = (minutes: number) => {
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
-};
-
-const formatLeadTime = (hours: number) => {
-  if (hours <= 0) return "N/A";
-  if (hours < 24) {
-    const h = Math.floor(hours);
-    const m = Math.round((hours - h) * 60);
+const formatDuration = (minutes: number) => {
+  const WORK_DAY = 8 * 60;
+  const rounded = Math.round(minutes);
+  if (rounded <= 0) return "N/A";
+  if (rounded < 60) return `${rounded} min`;
+  if (rounded < WORK_DAY) {
+    const h = Math.floor(rounded / 60);
+    const m = rounded % 60;
     return m > 0 ? `${h}h ${m}m` : `${h}h`;
   }
-  const days = hours / 24;
+  const days = rounded / WORK_DAY;
   return `${days.toFixed(1)} dias`;
 };
 
@@ -303,7 +302,8 @@ export default function RelatorioPage() {
       }
 
       setWorkspaceActivities(allActivities);
-      aggregateData(allScripts, userMap, allActivities);
+      const charMap = await fetchScriptsCharMap(allScripts);
+      aggregateData(allScripts, userMap, allActivities, charMap);
     } catch (err) {
       console.error("Erro ao carregar dados:", err);
     } finally {
@@ -311,10 +311,47 @@ export default function RelatorioPage() {
     }
   };
 
+  const fetchScriptsCharMap = async (scripts: ScriptDoc[]): Promise<Map<string, number>> => {
+    const charMap = new Map<string, number>();
+    const batchSize = 20;
+    for (let i = 0; i < scripts.length; i += batchSize) {
+      const batch = scripts.slice(i, i + batchSize);
+      const results = await Promise.allSettled(
+        batch.map(async (script) => {
+          const vQ = query(
+            collection(db, "scripts", script.id, "versions"),
+            orderBy("createdAt", "desc"),
+            limit(1)
+          );
+          const vSnap = await getDocs(vQ);
+          if (!vSnap.empty) {
+            const vData = vSnap.docs[0].data();
+            const scenes = vData.scenes || [];
+            if (Array.isArray(scenes)) {
+              const chars = scenes.reduce((sum: number, sc: unknown) => {
+                const s = sc as Record<string, unknown>;
+                return sum + (typeof s.spokenText === "string" ? (s.spokenText as string).length : 0);
+              }, 0);
+              return { id: script.id, chars };
+            }
+          }
+          return { id: script.id, chars: 0 };
+        })
+      );
+      for (const result of results) {
+        if (result.status === "fulfilled" && result.value) {
+          charMap.set(result.value.id, result.value.chars);
+        }
+      }
+    }
+    return charMap;
+  };
+
   const aggregateData = (
     allScripts: ScriptDoc[],
     userMap: Map<string, UserInfo>,
-    allActivities: ActivityLog[]
+    allActivities: ActivityLog[],
+    charMap: Map<string, number>
   ) => {
   // 1. Agregação por Projetos
     const projectMap = new Map<string, ScriptDoc[]>();
@@ -337,64 +374,105 @@ export default function RelatorioPage() {
       const draft = projectScripts.filter((s) => s.status === "rascunho").length;
 
       const totalScenes = projectScripts.reduce((sum, s) => {
-        const script = s as Record<string, unknown>;
+        const script = s as unknown as Record<string, unknown>;
         const scenes = script.scenes;
         return sum + (Array.isArray(scenes) ? scenes.length : 10);
       }, 0);
 
-      // Calcular Lead Time total + breakdown criação vs gravação
+      const totalChars = projectScripts.reduce((sum, s) => {
+        const chars = charMap.get(s.id) || 0;
+        return sum + chars;
+      }, 0);
+
+      // Calcular tempo ativo de criação e gravação por sessões de trabalho
+      const SESSION_GAP_MS = 2 * 60 * 60 * 1000; // 2h de inatividade = nova sessão
+      let projectWritingMs = 0;
+      let projectRecordingMs = 0;
+      let scriptsWithWriting = 0;
+      let scriptsWithRecording = 0;
+
+      projectScripts.forEach((s) => {
+        const scriptActivities = allActivities.filter((a) => a.scriptId === s.id);
+
+        // Atividades ordenadas com timestamp válido
+        const sortedActs = scriptActivities
+          .filter((a) => a.action)
+          .map((a) => ({
+            action: a.action.toLowerCase(),
+            time: parseDate(a.timestamp)?.getTime() || 0,
+          }))
+          .filter((a) => a.time > 0)
+          .sort((a, b) => a.time - b.time);
+
+        if (sortedActs.length < 2) return;
+
+        // Agrupar em sessões (gap > 2h = nova sessão)
+        const sessions: { duration: number; hasRecording: boolean }[] = [];
+        let sessStart = sortedActs[0].time;
+        let sessEnd = sortedActs[0].time;
+        let hasRecording = sortedActs[0].action.includes("grav");
+
+        for (let i = 1; i < sortedActs.length; i++) {
+          const gap = sortedActs[i].time - sortedActs[i - 1].time;
+          if (gap > SESSION_GAP_MS) {
+            sessions.push({ duration: sessEnd - sessStart, hasRecording });
+            sessStart = sortedActs[i].time;
+            sessEnd = sortedActs[i].time;
+            hasRecording = sortedActs[i].action.includes("grav");
+          } else {
+            sessEnd = sortedActs[i].time;
+            if (sortedActs[i].action.includes("grav")) hasRecording = true;
+          }
+        }
+        sessions.push({ duration: sessEnd - sessStart, hasRecording });
+
+        // Separar por tipo
+        let scriptWritingMs = 0;
+        let scriptRecordingMs = 0;
+        for (const s of sessions) {
+          if (s.duration <= 0) continue;
+          if (s.hasRecording) scriptRecordingMs += s.duration;
+          else scriptWritingMs += s.duration;
+        }
+
+        if (scriptWritingMs > 0) {
+          projectWritingMs += scriptWritingMs;
+          scriptsWithWriting++;
+        }
+        if (scriptRecordingMs > 0) {
+          projectRecordingMs += scriptRecordingMs;
+          scriptsWithRecording++;
+        }
+      });
+
+      const avgWritingTimeHours = scriptsWithWriting > 0
+        ? (projectWritingMs / scriptsWithWriting / (1000 * 60 * 60))
+        : 0;
+      const avgRecordingTimeHours = scriptsWithRecording > 0
+        ? (projectRecordingMs / scriptsWithRecording / (1000 * 60 * 60))
+        : 0;
+
+      // Lead time total (soma dos tempos decorridos por roteiro)
       let projectLeadTimeSum = 0;
       let projectLeadTimeCount = 0;
-      let writingTimeSum = 0;
-      let writingTimeCount = 0;
-      let recordingTimeSum = 0;
-      let recordingTimeCount = 0;
-
       projectScripts.forEach((s) => {
         const scriptActivities = allActivities.filter((a) => a.scriptId === s.id);
         const activityTimestamps = scriptActivities
           .map((a) => parseDate(a.timestamp)?.getTime())
           .filter((t): t is number => !!t);
-
         const createdTime = parseDate(s.createdAt)?.getTime() ||
           (activityTimestamps.length > 0 ? Math.min(...activityTimestamps) : null);
-
         const completedTime = parseDate(s.updatedAt)?.getTime() ||
           (activityTimestamps.length > 0 ? Math.max(...activityTimestamps) : null);
-
         if (createdTime && completedTime && completedTime > createdTime) {
           projectLeadTimeSum += completedTime - createdTime;
           projectLeadTimeCount++;
         }
-
-        // Calcular breakdown: criação (escrita/revisão) vs gravação
-        const recordingActs = scriptActivities
-          .filter((a) => a.action && a.action.toLowerCase().includes("grav"))
-          .map((a) => parseDate(a.timestamp)?.getTime())
-          .filter((t): t is number => !!t)
-          .sort((a, b) => a - b);
-
-        if (createdTime && recordingActs.length > 0) {
-          const firstRecording = recordingActs[0];
-          const lastRecording = recordingActs[recordingActs.length - 1];
-
-          // Tempo de criação: da criação até a primeira gravação
-          if (firstRecording > createdTime) {
-            writingTimeSum += firstRecording - createdTime;
-            writingTimeCount++;
-          }
-
-          // Tempo de gravação: da primeira à última ação de gravação (múltiplas takes)
-          if (lastRecording > firstRecording) {
-            recordingTimeSum += lastRecording - firstRecording;
-            recordingTimeCount++;
-          }
-        }
       });
-
       const avgLeadTimeHours = projectLeadTimeCount > 0 ? (projectLeadTimeSum / projectLeadTimeCount / (1000 * 60 * 60)) : 0;
-      const avgWritingTimeHours = writingTimeCount > 0 ? (writingTimeSum / writingTimeCount / (1000 * 60 * 60)) : 0;
-      const avgRecordingTimeHours = recordingTimeCount > 0 ? (recordingTimeSum / recordingTimeCount / (1000 * 60 * 60)) : 0;
+
+      const totalWritingTimeHours = projectWritingMs / (1000 * 60 * 60);
+      const totalRecordingTimeHours = projectRecordingMs / (1000 * 60 * 60);
 
       stats.push({
         projectName,
@@ -405,9 +483,12 @@ export default function RelatorioPage() {
         rejected,
         draft,
         totalScenes,
+        totalChars,
         avgLeadTimeHours,
         avgWritingTimeHours,
         avgRecordingTimeHours,
+        totalWritingTimeHours,
+        totalRecordingTimeHours,
       });
     }
 
@@ -623,13 +704,13 @@ export default function RelatorioPage() {
     setMaxThroughput(currentMaxThroughput);
 
     // --- Cálculos de Adoção & ROI (Modelo de Estimativa) ---
-    // Usando o modelo matemático: 4 páginas e 12 cenas/slides por roteiro em média
+    const totalCharsAll = allScripts.reduce((sum, s) => sum + (charMap.get(s.id) || 0), 0);
     const computedTotalScenes = allScripts.length * 12;
     setTotalScenes(computedTotalScenes);
 
-    // Média de 3 minutos por página + 1.5 minutos por cena (Word) + 1 minuto por slide (PPT)
-    // Para 1 roteiro: (4 * 3) + (12 * 1.5) + (12 * 1) = 12 + 18 + 12 = 42 minutos economizados por roteiro
-    const computedTimeSaved = allScripts.length * 42;
+    // Baseado em caracteres: Word 10 min / 1000 chars + PPT 5 min / 1000 chars
+    const estTotalChars = totalCharsAll > 0 ? totalCharsAll : allScripts.length * 1000;
+    const computedTimeSaved = (estTotalChars / 1000) * 15;
     setTotalTimeSaved(computedTimeSaved);
 
     const activeUserIds = new Set<string>();
@@ -932,7 +1013,7 @@ export default function RelatorioPage() {
                                 <div className="flex items-center gap-1.5">
                                   <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">✏️ Criação:</span>
                                   <span className="text-[11px] font-black text-amber-700 dark:text-amber-300">
-                                    {formatLeadTime(proj.avgWritingTimeHours)}
+                                    {formatDuration(proj.avgWritingTimeHours * 60)}
                                   </span>
                                   <span className="text-[9px] text-muted-foreground">(até 1ª gravação)</span>
                                 </div>
@@ -947,7 +1028,7 @@ export default function RelatorioPage() {
                                 <div className="flex items-center gap-1.5">
                                   <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">🎬 Gravação:</span>
                                   <span className="text-[11px] font-black text-emerald-700 dark:text-emerald-300">
-                                    {formatLeadTime(proj.avgRecordingTimeHours)}
+                                    {formatDuration(proj.avgRecordingTimeHours * 60)}
                                   </span>
                                   <span className="text-[9px] text-muted-foreground">(entre takes)</span>
                                 </div>
@@ -968,7 +1049,7 @@ export default function RelatorioPage() {
                                   <div className="flex items-center gap-1.5">
                                     <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">🔄 Total:</span>
                                     <span className="text-[11px] font-black text-blue-700 dark:text-blue-300">
-                                      {formatLeadTime(proj.avgLeadTimeHours)}
+                                      {formatDuration(proj.avgLeadTimeHours * 60)}
                                     </span>
                                   </div>
                                 </>
@@ -1160,7 +1241,7 @@ export default function RelatorioPage() {
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">Tempo Salvo (ROI)</p>
                     <p className="text-2xl font-black text-amber-700 dark:text-amber-300 mt-2">
-                      {formatMinutes(totalTimeSaved)}
+                      {formatDuration(totalTimeSaved)}
                     </p>
                   </div>
                   <div className="p-2 bg-white/80 dark:bg-amber-900/40 rounded-xl shadow-sm">
@@ -1392,23 +1473,23 @@ export default function RelatorioPage() {
                         <th className="p-3">Projeto</th>
                         <th className="p-3 text-center">Roteiros</th>
                         <th className="p-3 text-center">Cenas</th>
-                        <th className="p-3 text-center text-red-500 dark:text-red-400">Tempo Manual (Word + PPT)</th>
-                        <th className="p-3 text-center text-amber-500 dark:text-amber-400">✏️ Criação no Teleprompt</th>
-                        <th className="p-3 text-center text-emerald-500 dark:text-emerald-400">🎬 Gravação no Teleprompt</th>
+                        <th className="p-3 text-center text-red-500 dark:text-red-400">Tempo Manual (Word + PPT) <span className="block text-[8px] font-normal opacity-70">total projeto</span></th>
+                        <th className="p-3 text-center text-amber-500 dark:text-amber-400">✏️ Criação no Teleprompt <span className="block text-[8px] font-normal opacity-70">média por roteiro</span></th>
+                        <th className="p-3 text-center text-emerald-500 dark:text-emerald-400">🎬 Gravação no Teleprompt <span className="block text-[8px] font-normal opacity-70">média por roteiro</span></th>
                         <th className="p-3 text-right text-blue-500 dark:text-blue-400">Poupado de Formatação</th>
                       </tr>
                     </thead>
                     <tbody className="text-[11px] text-zinc-650 dark:text-zinc-400">
                       {projectStats.map((proj) => {
                         const scriptCount = proj.total;
-                        // Modelo de estimativa de páginas e cenas por roteiro (1 min/slide)
-                        const estPages = scriptCount * 4;
-                        const estScenes = proj.totalScenes > 0 ? proj.totalScenes : scriptCount * 12;
+                        const estChars = proj.totalChars > 0
+                          ? proj.totalChars
+                          : scriptCount * 1000;
 
-                        // Tempo no Word: 3 min por página + 1.5 min por cena
-                        const wordTime = (estPages * 3) + (estScenes * 1.5);
-                        // Tempo no PPT: 1 min por slide/cena (para cópia + espelhamento)
-                        const pptTime = estScenes * 1;
+                        // Tempo no Word: 10 min por 1000 caracteres (formatação de texto, tabelas)
+                        const wordTime = (estChars / 1000) * 10;
+                        // Tempo no PPT: 5 min por 1000 caracteres (cópia + espelhamento)
+                        const pptTime = (estChars / 1000) * 5;
                         // Tempo Total do fluxo antigo
                         const oldTime = wordTime + pptTime;
 
@@ -1419,11 +1500,11 @@ export default function RelatorioPage() {
                           <tr key={proj.projectName} className="border-b border-zinc-200 dark:border-zinc-800 last:border-0 hover:bg-zinc-50/50 dark:hover:bg-zinc-850/25">
                             <td className="p-3 font-bold text-zinc-800 dark:text-zinc-200">{proj.projectName}</td>
                             <td className="p-3 text-center">{scriptCount}</td>
-                            <td className="p-3 text-center font-semibold">{estScenes}</td>
+                            <td className="p-3 text-center font-semibold">{proj.totalScenes}</td>
                             <td className="p-3 text-center text-red-600 dark:text-red-400/80 font-medium">
-                              {formatMinutes(oldTime)}
+                              {formatDuration(oldTime)}
                               <span className="block text-[9px] text-muted-foreground mt-0.5">
-                                Word: {formatMinutes(wordTime)} + PPT: {formatMinutes(pptTime)}
+                                Word: {formatDuration(wordTime)} + PPT: {formatDuration(pptTime)}
                               </span>
                             </td>
 
@@ -1431,7 +1512,7 @@ export default function RelatorioPage() {
                             <td className="p-3 text-center">
                               {hasWriting ? (
                                 <span className="font-bold text-amber-600 dark:text-amber-400">
-                                  {formatLeadTime(proj.avgWritingTimeHours)}
+                                  {formatDuration(proj.avgWritingTimeHours * 60)}
                                   <span className="block text-[9px] text-muted-foreground font-normal mt-0.5">
                                     criação → 1ª gravação
                                   </span>
@@ -1445,7 +1526,7 @@ export default function RelatorioPage() {
                             <td className="p-3 text-center">
                               {hasRecording ? (
                                 <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                                  {formatLeadTime(proj.avgRecordingTimeHours)}
+                                  {formatDuration(proj.avgRecordingTimeHours * 60)}
                                   <span className="block text-[9px] text-muted-foreground font-normal mt-0.5">
                                     1ª take → última take
                                   </span>
@@ -1464,7 +1545,7 @@ export default function RelatorioPage() {
 
                             <td className="p-3 text-right text-blue-600 dark:text-blue-400 font-black">
                               <span className="inline-flex items-center gap-1 bg-blue-500/10 text-blue-600 dark:text-blue-400 px-2.5 py-0.5 rounded-full font-bold">
-                                {formatMinutes(oldTime)} salvos
+                                {formatDuration(oldTime)} salvos
                               </span>
                             </td>
                           </tr>
@@ -1700,7 +1781,7 @@ export default function RelatorioPage() {
                             </div>
                             <p className="text-xs text-muted-foreground mb-1">Tempo total (criação → edição)</p>
                             <p className="text-lg font-black text-amber-700 dark:text-amber-300">
-                              {creationTimeMinutes > 0 ? formatMinutes(creationTimeMinutes) : "N/A"}
+                              {creationTimeMinutes > 0 ? formatDuration(creationTimeMinutes) : "N/A"}
                             </p>
                             <p className="text-[10px] text-muted-foreground mt-1">
                               {createdTime && createdTime > 0 && (
@@ -1718,7 +1799,7 @@ export default function RelatorioPage() {
                             </div>
                             <p className="text-xs text-muted-foreground mb-1">Tempo de edição contínua</p>
                             <p className="text-lg font-black text-blue-700 dark:text-blue-300">
-                              {hasEditing ? formatMinutes(editingTimeMinutes) : "N/A"}
+                              {hasEditing ? formatDuration(editingTimeMinutes) : "N/A"}
                             </p>
                             <p className="text-[10px] text-muted-foreground mt-1">
                               {hasEditing && editingActs.length > 0 && (
@@ -1736,7 +1817,7 @@ export default function RelatorioPage() {
                             </div>
                             <p className="text-xs text-muted-foreground mb-1">Tempo de revisão contínua</p>
                             <p className="text-lg font-black text-emerald-700 dark:text-emerald-300">
-                              {hasReviewing ? formatMinutes(reviewingTimeMinutes) : "N/A"}
+                              {hasReviewing ? formatDuration(reviewingTimeMinutes) : "N/A"}
                             </p>
                             <p className="text-[10px] text-muted-foreground mt-1">
                               {hasReviewing && reviewingActs.length > 0 && (
@@ -1754,7 +1835,7 @@ export default function RelatorioPage() {
                             </div>
                             <p className="text-xs text-muted-foreground mb-1">Tempo de gravação (take → take)</p>
                             <p className="text-lg font-black text-purple-700 dark:text-purple-300">
-                              {hasRecording ? formatMinutes(recordingTimeMinutes) : "N/A"}
+                              {hasRecording ? formatDuration(recordingTimeMinutes) : "N/A"}
                             </p>
                             <p className="text-[10px] text-muted-foreground mt-1">
                               {hasRecording && recordingActs.length > 0 && (
@@ -1771,7 +1852,7 @@ export default function RelatorioPage() {
                               Timeline de Atividades ({scriptActivities.length} ações)
                             </p>
                               <div className="space-y-1 max-h-32 overflow-y-auto">
-                                {scriptActivities.slice(0, 5).map((act, activityIndex) => { // activityIndex used as key
+                                {scriptActivities.slice(0, 5).map((act) => (
                                 <div key={act.id} className="flex items-center gap-2 text-[10px]">
                                   <div className="w-1.5 h-1.5 rounded-full bg-zinc-400 flex-shrink-0" />
                                   <span className="text-muted-foreground w-20">
@@ -1784,7 +1865,7 @@ export default function RelatorioPage() {
                                      {act.userName || 'Usuário'}
                                    </span>
                                  </div>
-                               })}
+                               ))}
                                {scriptActivities.length > 5 && (
                                 <div className="text-[10px] text-muted-foreground italic">
                                   ... e mais {scriptActivities.length - 5} ações
