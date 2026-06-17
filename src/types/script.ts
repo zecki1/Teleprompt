@@ -46,6 +46,7 @@ export interface ScriptDoc {
   reviewerName?: string;
   videomakerId?: string;
   videomakerName?: string;
+  presenterIds?: string[];
   commentCount?: number;
   commentAuthors?: string[];
   
