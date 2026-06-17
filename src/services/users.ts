@@ -55,6 +55,7 @@ export const getUsers = async (workspaceId?: string, isSuperAdmin?: boolean): Pr
         canViewAdmin: data.canViewAdmin || false,
         canViewReports: data.canViewReports || false,
         canViewActivityHistory: data.canViewActivityHistory || false,
+        canAssign: data.canAssign || false,
         requiresChecklist: data.requiresChecklist ?? true,
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
@@ -92,6 +93,7 @@ export const getUserById = async (uid: string): Promise<ExtendedUser | null> => 
       canViewAdmin: data.canViewAdmin || false,
       canViewReports: data.canViewReports || false,
       canViewActivityHistory: data.canViewActivityHistory || false,
+      canAssign: data.canAssign || false,
       requiresChecklist: data.requiresChecklist ?? true,
     } as ExtendedUser;
   }
@@ -113,7 +115,7 @@ export const updateUserWorkspace = async (uid: string, workspaceId: string): Pro
   });
 };
 
-export const updateUserPermissions = async (uid: string, permissions: { isEditor?: boolean; isRevisor?: boolean; canRevert?: boolean; canViewAdmin?: boolean; canViewReports?: boolean; canViewActivityHistory?: boolean; requiresChecklist?: boolean }): Promise<void> => {
+export const updateUserPermissions = async (uid: string, permissions: { isEditor?: boolean; isRevisor?: boolean; canRevert?: boolean; canAssign?: boolean; canViewAdmin?: boolean; canViewReports?: boolean; canViewActivityHistory?: boolean; requiresChecklist?: boolean }): Promise<void> => {
   const docRef = doc(db, "users", uid);
   await updateDoc(docRef, {
     ...permissions,

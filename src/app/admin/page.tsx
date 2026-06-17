@@ -250,7 +250,11 @@ export default function AdminPage() {
 
   const loadUsers = async () => {
     try {
-      const usersData = await getUsers(user?.workspaceId, false);
+      let usersData = await getUsers(user?.workspaceId, user?.isSuperAdmin);
+      // Fallback: se não achou usuários com workspaceId, tenta sem filtro (admin)
+      if (usersData.length === 0 && !user?.isSuperAdmin) {
+        usersData = await getUsers(user?.workspaceId, true);
+      }
       setUsersList(usersData);
     } catch (error) {
       console.error("Erro ao carregar usuários:", error);
@@ -274,7 +278,7 @@ export default function AdminPage() {
     }
   };
 
-  const togglePermission = async (uid: string, field: 'isEditor' | 'isRevisor' | 'requiresChecklist' | 'canRevert' | 'canViewAdmin' | 'canViewReports' | 'canViewActivityHistory', value: boolean) => {
+  const togglePermission = async (uid: string, field: 'isEditor' | 'isRevisor' | 'requiresChecklist' | 'canRevert' | 'canAssign' | 'canViewAdmin' | 'canViewReports' | 'canViewActivityHistory', value: boolean) => {
     setUpdating(uid);
     try {
       const userRef = doc(db, "users", uid);
@@ -288,6 +292,7 @@ export default function AdminPage() {
         isEditor: "Editor",
         isRevisor: "Revisor",
         canRevert: "Reverter",
+        canAssign: "Atribuir",
         canViewAdmin: "Ver Administração",
         canViewReports: "Ver Relatórios",
         canViewActivityHistory: "Ver Histórico",
@@ -476,7 +481,7 @@ export default function AdminPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="permissoes">
+          <TabsContent value="permissoes">
           <Card className="border-none shadow-2xl bg-white dark:bg-zinc-950 overflow-hidden rounded-[32px]">
             <CardHeader className="bg-zinc-50/50 dark:bg-zinc-900/50 border-b border-zinc-100 dark:border-zinc-900 p-8">
               <CardTitle className="text-2xl font-bold">Gestão de Operadores</CardTitle>
@@ -493,6 +498,7 @@ export default function AdminPage() {
                     <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Revisor</TableHead>
                     <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Reverter</TableHead>
                     <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Checklist</TableHead>
+                    <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100 text-[11px]">Atribuir</TableHead>
                     <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100 text-[11px]">Admin</TableHead>
                     <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100 text-[11px]">Relatórios</TableHead>
                     <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100 text-[11px]">Histórico</TableHead>
@@ -500,7 +506,15 @@ export default function AdminPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {usersList.map((userItem) => (
+                  {usersList.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center py-12 text-zinc-400">
+                        <Users className="w-8 h-8 mx-auto mb-3 opacity-50" />
+                        <p className="font-medium">Nenhum colaborador encontrado</p>
+                        <p className="text-sm mt-1">Verifique se os usuários possuem um workspace vinculado.</p>
+                      </TableCell>
+                    </TableRow>
+                  ) : usersList.map((userItem) => (
                     <TableRow key={userItem.uid} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 border-zinc-100 dark:border-zinc-900 transition-colors">
                       <TableCell className="px-8 py-5">
                         <div className="flex items-center gap-4">
@@ -553,6 +567,15 @@ export default function AdminPage() {
                       <TableCell className="text-center">
                         <div className="flex justify-center">
                           <Switch 
+                            checked={userItem.canAssign} 
+                            onCheckedChange={(val) => togglePermission(userItem.uid, 'canAssign', val)}
+                            disabled={updating === userItem.uid}
+                          />
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex justify-center">
+                          <Switch 
                             checked={userItem.canViewAdmin} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canViewAdmin', val)}
                             disabled={updating === userItem.uid}
@@ -582,10 +605,11 @@ export default function AdminPage() {
                             {userItem.isEditor && <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-none text-[9px]">EDITOR</Badge>}
                             {userItem.isRevisor && <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border-none text-[9px]">REVISOR</Badge>}
                             {userItem.canRevert && <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-none text-[9px]">REVERTER</Badge>}
+                            {userItem.canAssign && <Badge className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400 border-none text-[9px]">ATRIBUIR</Badge>}
                             {userItem.canViewAdmin && <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 border-none text-[9px]">ADMIN</Badge>}
                             {userItem.canViewReports && <Badge className="bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400 border-none text-[9px]">RELATÓRIOS</Badge>}
                             {userItem.canViewActivityHistory && <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-none text-[9px]">HISTÓRICO</Badge>}
-                            {!userItem.isEditor && !userItem.isRevisor && !userItem.canRevert && !userItem.canViewAdmin && !userItem.canViewReports && !userItem.canViewActivityHistory && <span className="text-zinc-400 text-xs italic">Sem atribuições</span>}
+                            {!userItem.isEditor && !userItem.isRevisor && !userItem.canRevert && !userItem.canAssign && !userItem.canViewAdmin && !userItem.canViewReports && !userItem.canViewActivityHistory && <span className="text-zinc-400 text-xs italic">Sem atribuições</span>}
                          </div>
                       </TableCell>
                     </TableRow>

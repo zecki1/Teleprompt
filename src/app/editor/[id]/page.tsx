@@ -1142,7 +1142,7 @@ function EditorContent({ id }: { id: string }) {
                 onClick={() => setShowComments(true)}
                 className="h-9 px-4 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 border-amber-200 dark:border-amber-900 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20"
               >
-                <MessageSquare size={16} /> {Object.values(commentCounts).reduce((a, b) => a + b, 0) || 0}
+                <MessageSquare size={16} /> {comments.length}
               </Button>
 
               <Button 

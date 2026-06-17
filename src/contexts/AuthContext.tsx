@@ -195,9 +195,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const qUsers = query(collection(db, "users"), workspaceFilter);
     const unsubUsers = onSnapshot(qUsers, (snapshot: QuerySnapshot<DocumentData>) => {
       const usersList = snapshot.docs.map(doc => {
+        const data = doc.data();
         try {
-          return ExtendedUserSchema.parse({ uid: doc.id, ...doc.data() });
-        } catch { return null; }
+          return ExtendedUserSchema.parse({ uid: doc.id, ...data });
+        } catch {
+          return {
+            uid: doc.id,
+            email: data.email || "",
+            displayName: data.displayName || data.name || "Usuário",
+            name: data.name || "",
+            role: (data.role as Role) || "Docente",
+            status: data.status || "active",
+            workspaceId: data.workspaceId || "",
+            workspaces: data.workspaces || [],
+            isEditor: data.isEditor || false,
+            isRevisor: data.isRevisor || false,
+            canRevert: data.canRevert || false,
+            canViewAdmin: data.canViewAdmin || false,
+            canViewReports: data.canViewReports || false,
+            canViewActivityHistory: data.canViewActivityHistory || false,
+            canAssign: data.canAssign || false,
+            requiresChecklist: data.requiresChecklist ?? true,
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt,
+          } as ExtendedUser;
+        }
       }).filter((u): u is ExtendedUser => u !== null)
         .filter(u => !GHOST_EMAILS.includes((u.email || "").toLowerCase()));
       
