@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, use, Suspense } from "react";
+import dynamic from "next/dynamic";
 import { doc, getDoc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, arrayUnion, where, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
@@ -37,7 +38,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getScriptPath } from "@/lib/pathUtils";
 import Link from "next/link";
-import { CommentsPanel } from "@/components/tp/CommentsPanel";
+const CommentsPanel = dynamic(
+  () => import("@/components/tp/CommentsPanel").then((m) => ({ default: m.CommentsPanel })),
+  { ssr: false }
+);
 import { 
   Dialog, 
   DialogContent, 
@@ -974,7 +978,7 @@ function TeleprompterContent({ id }: { id: string }) {
       )}
 
       {/* ÁREA DO TEXTO */}
-      <div className="flex-1 h-full overflow-y-auto relative no-scrollbar" ref={containerRef}>
+      <div data-tour="tp-text" className="flex-1 h-full overflow-y-auto relative no-scrollbar" ref={containerRef}>
         {showReadingStrip && (
           <div className="fixed top-1/2 left-0 w-full h-32 bg-white/5 pointer-events-none -translate-y-1/2 z-10 border-y border-white/10 shadow-2xl" />
         )}
@@ -1038,7 +1042,7 @@ function TeleprompterContent({ id }: { id: string }) {
       </div>
 
       {!isMirrorWindow && isSidebarVisible && (
-        <div className="w-[400px] shrink-0 h-full bg-zinc-950 border-l border-zinc-800 flex flex-col z-20 shadow-2xl overflow-hidden animate-in slide-in-from-left-4 duration-300">
+        <div data-tour="tp-sidebar" className="w-[400px] shrink-0 h-full bg-zinc-950 border-l border-zinc-800 flex flex-col z-20 shadow-2xl overflow-hidden animate-in slide-in-from-left-4 duration-300">
           <div className="p-4 border-b border-zinc-900 flex items-center justify-between">
             <Link href={`/editor/${id}`} className="p-2 text-zinc-500 hover:text-white transition"><ChevronLeft size={20}/></Link>
             <span className="text-[10px] font-black tracking-[0.2em] text-zinc-400 uppercase font-mono">Master Control</span>
@@ -1266,8 +1270,8 @@ function TeleprompterContent({ id }: { id: string }) {
         <div className="fixed bottom-0 left-0 right-0 h-16 bg-zinc-950/90 backdrop-blur-md border-t border-zinc-800 z-50 flex items-center justify-between px-6 animate-in slide-in-from-bottom-4 duration-300">
           <div className="flex items-center gap-6 flex-1">
              {/* 1. VELOCIDADE */}
-             <div className="flex flex-col">
-               <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">Velocidade</span>
+             <div data-tour="tp-speed" className="flex flex-col">
+                <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">Velocidade</span>
                <div className="flex items-center gap-2">
                  <button onClick={() => updateGlobalStyle({speed: Math.max(speed - 0.5, 0)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronDown size={14}/></button>
                  <div className="flex items-baseline gap-1">
@@ -1282,26 +1286,27 @@ function TeleprompterContent({ id }: { id: string }) {
 
              {/* 2. PLAY / PAUSE */}
              <div className="flex items-center gap-3">
-                  <button 
-                    onClick={() => {
-                      if (countdownActiveRef.current) {
-                        if (countdownRef.current) clearInterval(countdownRef.current);
-                        countdownActiveRef.current = false;
-                        setShowCountdown(false);
-                        updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
-                        return;
-                      }
-                      const needsChecklist = user?.requiresChecklist !== false;
-                      if (isPlaying) {
-                        updateGlobalStyle({ isPlaying: false });
-                      }
-                     else if (!checklistDone && needsChecklist) setShowChecklist(true);
-                     else startCountdown();
-                   }}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isPlaying ? 'bg-red-500/20 text-red-500 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'bg-emerald-500/20 text-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]'}`}
-                >
-                  {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
-                </button>
+                   <button 
+                     data-tour="tp-play-pause"
+                     onClick={() => {
+                       if (countdownActiveRef.current) {
+                         if (countdownRef.current) clearInterval(countdownRef.current);
+                         countdownActiveRef.current = false;
+                         setShowCountdown(false);
+                         updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
+                         return;
+                       }
+                       const needsChecklist = user?.requiresChecklist !== false;
+                       if (isPlaying) {
+                         updateGlobalStyle({ isPlaying: false });
+                       }
+                      else if (!checklistDone && needsChecklist) setShowChecklist(true);
+                      else startCountdown();
+                     }}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isPlaying ? 'bg-red-500/20 text-red-500 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'bg-emerald-500/20 text-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]'}`}
+                  >
+                    {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
+                  </button>
                 <div className="flex flex-col">
                   <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">{isPlaying ? 'Executando' : 'Pausado'}</span>
                   <span className="text-[10px] font-bold text-white uppercase font-mono">{Math.floor(localProgress * 100)}%</span>
@@ -1312,6 +1317,7 @@ function TeleprompterContent({ id }: { id: string }) {
 
              {/* REINICIAR */}
              <button
+               data-tour="tp-restart"
                onClick={() => updateGlobalStyle({ resetRequest: Date.now(), isPlaying: false, progress: 0 })}
                className="flex flex-col items-center justify-center hover:text-white text-zinc-500 transition-colors"
                title="Reiniciar roteiro"
@@ -1339,6 +1345,7 @@ function TeleprompterContent({ id }: { id: string }) {
                <MessageSquare size={20} />
              </button>
              <button 
+               data-tour="tp-mark-recorded"
                onClick={handleSetRecorded}
                className="h-10 px-6 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-black text-[10px] tracking-widest transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2"
              >
