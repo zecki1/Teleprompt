@@ -63,6 +63,7 @@ import {
 import { Scene, parseScript } from "@/lib/parser";
 import { exportAllToWord } from "@/lib/export-all-word";
 import { exportAllToPPT } from "@/lib/export-all-ppt";
+import { Presenter, addPresenter, getPresenters, deletePresenter } from "@/services/presenters";
 
 type ScriptCategory = "video" | "podcast";
 
@@ -111,6 +112,14 @@ function DashboardContent() {
   const [showConcluded, setShowConcluded] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'scroll'>('scroll');
   const [treeCollapseVersions, setTreeCollapseVersions] = useState<Record<string, number>>({});
+  const [presenters, setPresenters] = useState<Presenter[]>([]);
+  const [newPresenterName, setNewPresenterName] = useState("");
+
+  useEffect(() => {
+    if (user?.workspaceId) {
+      getPresenters(user.workspaceId).then(setPresenters);
+    }
+  }, [user?.workspaceId]);
 
   function getAllFolderPaths(nodes: Record<string, FolderNode>): string[] {
     const paths: string[] = [];
@@ -522,6 +531,38 @@ function DashboardContent() {
     } catch (error) {
       console.error("Erro ao atribuir:", error);
       toast.error("Erro ao realizar atribuição.");
+    }
+  };
+
+  const handleTogglePresenter = async (scriptId: string, presenterId: string) => {
+    const script = scripts.find(s => s.id === scriptId);
+    if (!script) return;
+    const current = script.presenterIds || [];
+    const isAssigned = current.includes(presenterId);
+    const newIds = isAssigned ? current.filter(id => id !== presenterId) : [...current, presenterId];
+    try {
+      await updateDoc(doc(db, "scripts", scriptId), {
+        presenterIds: newIds,
+        updatedAt: new Date().toISOString(),
+      });
+      setScripts(scripts.map(s => s.id === scriptId ? { ...s, presenterIds: newIds } : s));
+      toast.success(isAssigned ? "Apresentador removido" : "Apresentador atribuído");
+    } catch (error) {
+      console.error("Erro ao atribuir apresentador:", error);
+      toast.error("Erro ao atribuir apresentador.");
+    }
+  };
+
+  const handleCreatePresenter = async () => {
+    if (!newPresenterName.trim() || !user?.workspaceId) return;
+    try {
+      const id = await addPresenter(newPresenterName.trim(), user.workspaceId, user.uid);
+      setPresenters([...presenters, { id, name: newPresenterName.trim(), workspaceId: user.workspaceId, createdBy: user.uid }]);
+      setNewPresenterName("");
+      toast.success("Apresentador cadastrado!");
+    } catch (error) {
+      console.error("Erro ao cadastrar apresentador:", error);
+      toast.error("Erro ao cadastrar apresentador.");
     }
   };
 
@@ -1382,6 +1423,19 @@ function DashboardContent() {
                                           {script.videomakerId && <div className="w-4 h-4 rounded bg-purple-500/20 flex items-center justify-center text-[8px] font-bold text-purple-600">VM</div>}
                                         </div>
                                       </div>
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[8px] font-black uppercase text-zinc-400 tracking-tighter">Apresentador</span>
+                                        <button
+                                          onClick={() => setAssigningScript(script)}
+                                          className="flex items-center gap-1.5 hover:text-amber-500 transition-colors"
+                                        >
+                                          <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300">
+                                            {script.presenterIds && script.presenterIds.length > 0
+                                              ? script.presenterIds.map(id => presenters.find(p => p.id === id)?.name).filter(Boolean).join(", ")
+                                              : "Não atribuído"}
+                                          </span>
+                                        </button>
+                                      </div>
                                     </div>
                                     <p className="text-[10px] text-zinc-400 flex items-center gap-1.5 font-bold uppercase tracking-widest">
                                       <Clock className="w-3 h-3" />
@@ -1686,6 +1740,44 @@ function DashboardContent() {
                   ))
                 ) : (
                   <p className="text-xs text-zinc-400 italic">Nenhum usuário disponível.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-4 pt-4 border-t border-zinc-100 dark:border-zinc-800">
+              <h4 className="text-[10px] font-black uppercase tracking-widest text-amber-500 flex items-center gap-2">
+                <Users className="w-4 h-4" /> Apresentador(es)
+              </h4>
+              <div className="flex gap-2">
+                <Input
+                  value={newPresenterName}
+                  onChange={e => setNewPresenterName(e.target.value)}
+                  placeholder="Nome do apresentador"
+                  className="h-10 text-sm rounded bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800"
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCreatePresenter(); } }}
+                />
+                <Button onClick={handleCreatePresenter} disabled={!newPresenterName.trim()} size="sm" className="h-10 rounded font-black text-[10px] uppercase tracking-widest">
+                  <Plus className="w-3.5 h-3.5 mr-1" /> Add
+                </Button>
+              </div>
+              <div className="grid gap-2 max-h-40 overflow-y-auto">
+                {presenters.length > 0 ? (
+                  presenters.map(p => {
+                    const assigned = assigningScript?.presenterIds?.includes(p.id) || false;
+                    return (
+                      <Button 
+                        key={p.id} 
+                        variant={assigned ? "secondary" : "outline"}
+                        className={`justify-between h-10 rounded font-bold transition-all ${assigned ? 'border-amber-500 ring-2 ring-amber-500/20 bg-amber-500/5' : ''}`}
+                        onClick={() => handleTogglePresenter(assigningScript!.id, p.id)}
+                      >
+                        <span>{p.name}</span>
+                        {assigned && <Check className="w-4 h-4 text-amber-500" />}
+                      </Button>
+                    );
+                  })
+                ) : (
+                  <p className="text-xs text-zinc-400 italic">Nenhum apresentador cadastrado.</p>
                 )}
               </div>
             </div>
