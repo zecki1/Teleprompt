@@ -104,7 +104,7 @@ export default function ProjectsPage() {
     }
     if (viewMode === 'scroll') {
       return (
-        <div className="flex gap-6 overflow-x-auto p-2 custom-scrollbar snap-x snap-mandatory pb-6">
+        <div data-tour="projects-list" className="flex gap-6 overflow-x-auto p-2 custom-scrollbar snap-x snap-mandatory pb-6">
           {projects.map((project) => {
             const concluded = isProjectConcluded(project.name);
             return (
@@ -397,7 +397,7 @@ export default function ProjectsPage() {
     <div className="container mx-auto py-8 px-4">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-black flex items-center gap-3">
+          <h1 data-tour="projects-title" className="text-3xl font-black flex items-center gap-3">
             <FolderOpen className="w-8 h-8" />
             Projetos
           </h1>
@@ -407,7 +407,7 @@ export default function ProjectsPage() {
         </div>
         
         <div className="flex items-center gap-3">
-          <div className="flex items-center border border-zinc-200 dark:border-zinc-800 rounded-lg overflow-hidden">
+          <div data-tour="projects-view-toggle" className="flex items-center border border-zinc-200 dark:border-zinc-800 rounded-lg overflow-hidden">
             <Button
               variant="ghost"
               size="sm"
@@ -427,7 +427,7 @@ export default function ProjectsPage() {
           </div>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
           <DialogTrigger asChild>
-            <Button>
+            <Button data-tour="projects-create">
               <Plus className="w-4 h-4 mr-2" />
               Novo Projeto
             </Button>

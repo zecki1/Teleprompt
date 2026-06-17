@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useEffect, useState, use, Suspense, useRef, useMemo, useCallback } from "react";
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import { Scene, parseScript } from "@/lib/parser";
 import { sanitizeData } from "@/lib/firebase-utils";
 import { ScriptDoc } from "@/types/script";
-import { Comment } from "@/components/tp/CommentsPanel";
+import type { Comment } from "@/components/tp/CommentsPanel";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
@@ -77,11 +78,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast as sonnerToast } from "sonner";
-import { exportToWord } from "@/lib/export-word";
-import { exportToPPT } from "@/lib/export-ppt";
-import { CommentsPanel } from "@/components/tp/CommentsPanel";
-import { VersionHistory } from "@/components/tp/VersionHistory";
 import { SpellCheckWord } from "@/components/tp/SpellCheckPopover";
+
+const CommentsPanel = dynamic(
+  () => import("@/components/tp/CommentsPanel").then((m) => ({ default: m.CommentsPanel })),
+  { ssr: false }
+);
+
+const VersionHistory = dynamic(
+  () => import("@/components/tp/VersionHistory").then((m) => ({ default: m.VersionHistory })),
+  { ssr: false }
+);
 import { checkText, onSpellCheckReady, SpellCheckResult } from "@/lib/spellcheck";
 import { getScriptPath } from "@/lib/pathUtils";
 import { 
@@ -845,6 +852,7 @@ function EditorContent({ id }: { id: string }) {
 
   const handleDownloadWord = async () => {
     try {
+      const { exportToWord } = await import("@/lib/export-word");
       await exportToWord({ 
         title, 
         projectName: project,
@@ -863,6 +871,7 @@ function EditorContent({ id }: { id: string }) {
 
   const handleDownloadPPT = async () => {
     try {
+      const { exportToPPT } = await import("@/lib/export-ppt");
       await exportToPPT({ 
         title, 
         projectName: project,
@@ -934,6 +943,7 @@ function EditorContent({ id }: { id: string }) {
               <Button variant="ghost" size="icon" asChild className="h-8 w-8 shrink-0">
                 <Link href="/dashboard"><ChevronLeft size={16} /></Link></Button>
               <Input 
+                data-tour="editor-title"
                 value={title} 
                 onChange={(e) => setTitle(e.target.value)} 
                 className="h-9 w-full font-black bg-transparent border-none focus-visible:ring-0 px-4 text-lg md:text-xl truncate" 
@@ -1117,6 +1127,7 @@ function EditorContent({ id }: { id: string }) {
                   variant="outline" 
                   size="sm" 
                   asChild
+                  data-tour="editor-tp"
                   className="h-9 px-4 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 border-blue-200 dark:border-blue-900 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20"
                 >
                   <Link href={`/tp/${id}`} target="_blank">
@@ -1130,6 +1141,7 @@ function EditorContent({ id }: { id: string }) {
                   variant="outline" 
                   size="sm" 
                   onClick={() => setShowVersionHistory(true)}
+                  data-tour="editor-versions"
                   className="h-9 px-4 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
                 >
                   <Clock size={16} /> Versões
@@ -1140,6 +1152,7 @@ function EditorContent({ id }: { id: string }) {
                 variant="outline" 
                 size="sm" 
                 onClick={() => setShowComments(true)}
+                data-tour="editor-comments"
                 className="h-9 px-4 text-[10px] font-black uppercase tracking-widest gap-2 rounded border-2 border-amber-200 dark:border-amber-900 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20"
               >
                 <MessageSquare size={16} /> {comments.length}
@@ -1147,6 +1160,7 @@ function EditorContent({ id }: { id: string }) {
 
               <Button 
                 onClick={handleSaveClick} 
+                data-tour="editor-save"
                 className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] tracking-widest px-6 rounded shadow-lg"
                 disabled={isSaving}
               >
@@ -1177,7 +1191,7 @@ function EditorContent({ id }: { id: string }) {
                     {isEditingMode && <Input placeholder="Tempo" value={scene.time || ""} onChange={(e) => updateScene(index, { time: e.target.value })} className="h-7 w-20 text-[10px] border-zinc-300 py-0" />}
 
                     {isEditingMode && (
-                      <div className="flex items-center gap-1 border-l pl-4 ml-2 border-zinc-200 dark:border-zinc-800">
+                      <div data-tour="editor-toolbar" className="flex items-center gap-1 border-l pl-4 ml-2 border-zinc-200 dark:border-zinc-800">
                         <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'spokenText')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-blue-500 transition-colors">
                            <MessageSquare size={14} className="text-blue-500" /> Loc
                         </Button>
@@ -1400,7 +1414,7 @@ function EditorContent({ id }: { id: string }) {
         )}
 
         {isEditingMode && (
-          <Button variant="outline" className="w-full border-dashed border-2 py-12 text-zinc-400 dark:border-zinc-800 hover:text-blue-500 hover:border-blue-500 transition-all rounded gap-4 text-[13px] font-black bg-white/30" onClick={() => addEmptyScene()}>
+          <Button variant="outline" data-tour="editor-add-scene" className="w-full border-dashed border-2 py-12 text-zinc-400 dark:border-zinc-800 hover:text-blue-500 hover:border-blue-500 transition-all rounded gap-4 text-[13px] font-black bg-white/30" onClick={() => addEmptyScene()}>
             <PlusSquare size={32} /> ADICIONAR NOVA CENA AO FINAL
           </Button>
         )}

@@ -71,7 +71,7 @@ const statusConfig: Record<ScriptStatus, { label: string; color: string; icon: R
   rascunho: { label: "Rascunho", color: "bg-orange-500", icon: FileText },
   em_revisao: { label: "Em Revisão", color: "bg-yellow-500", icon: Clock },
   revisao_realizada: { label: "Revisado", color: "bg-emerald-500", icon: CheckCircle2 },
-  aguardando_gravacao: { label: "Revisado", color: "bg-green-500", icon: CheckCircle2 },
+  aguardando_gravacao: { label: "Aguardando Gravação", color: "bg-green-500", icon: CheckCircle2 },
   gravado: { label: "Gravado", color: "bg-blue-600", icon: Send },
   rejeitado: { label: "Rejeitado", color: "bg-red-500", icon: X },
 };
@@ -796,16 +796,18 @@ function DashboardContent() {
       <div className="flex justify-between items-center mb-8">
         
         <div className="flex gap-3">
-          <Button 
-            variant="outline" 
-            asChild
-            className="rounded border-zinc-200 dark:border-zinc-800 flex gap-2 hover:bg-zinc-50 dark:hover:bg-zinc-900"
-          >
-            <Link href="/activities">
-              <Clock className="w-4 h-4 text-blue-500" />
-              Atividades
-            </Link>
-          </Button>
+          {user?.canViewActivityHistory && (
+            <Button 
+              variant="outline" 
+              asChild
+              className="rounded border-zinc-200 dark:border-zinc-800 flex gap-2 hover:bg-zinc-50 dark:hover:bg-zinc-900"
+            >
+              <Link href="/activities">
+                <Clock className="w-4 h-4 text-blue-500" />
+                Atividades
+              </Link>
+            </Button>
+          )}
           <Button 
             variant="outline" 
             onClick={handleCopyInvite}
@@ -828,6 +830,7 @@ function DashboardContent() {
           )}
           <Button 
             variant="outline"
+            data-tour="dashboard-new-project"
             onClick={() => setIsCreateProjectOpen(true)}
             className="rounded border-zinc-200 dark:border-zinc-800 flex gap-2 hover:bg-zinc-50 dark:hover:bg-zinc-900"
           >
@@ -835,6 +838,7 @@ function DashboardContent() {
             Novo Projeto
           </Button>
           <Button 
+            data-tour="dashboard-new-script"
             onClick={() => {
               const url = selectedProject 
                 ? `/editor/new?project=${encodeURIComponent(selectedProject.name)}&projectId=${selectedProject.id}`
@@ -891,7 +895,7 @@ function DashboardContent() {
         </div>
         
         {viewMode === 'scroll' ? (
-        <div className="flex gap-4 overflow-x-auto p-5 custom-scrollbar pb-8">
+        <div data-tour="dashboard-projects" className="flex gap-4 overflow-x-auto p-5 custom-scrollbar pb-8">
           {loadingProjects ? (
             Array(3).fill(0).map((_, i) => (
               <div key={i} className="min-w-[200px] h-24 bg-zinc-100 dark:bg-zinc-900 animate-pulse rounded border border-zinc-200 dark:border-zinc-800" />
@@ -999,7 +1003,7 @@ function DashboardContent() {
       )}
       </div>
 
-      <div className="flex gap-2 mb-8 overflow-x-auto pb-2 no-scrollbar">
+      <div data-tour="dashboard-status-filter" className="flex gap-2 mb-8 overflow-x-auto pb-2 no-scrollbar">
         <Button
           variant={statusFilter === "all" ? "default" : "outline"}
           size="sm"
@@ -1111,7 +1115,7 @@ function DashboardContent() {
           </p>
         </div>
       ) : (
-        <div className="space-y-16">
+        <div data-tour="dashboard-script-list" className="space-y-16">
           {Object.entries(visibleProjects)
             .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: "base" }))
             .map(([projectName, projectScripts]) => {
@@ -1500,7 +1504,7 @@ function DashboardContent() {
                                       <FolderInput className="w-3 h-3 mr-1" /> Mover
                                     </Button>
                                     {(user?.role === "SuperAdmin" || user?.isSuperAdmin || user?.canAssign) && (
-                                      <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-blue-500 uppercase tracking-widest" onClick={() => setAssigningScript(script)}>
+                                      <Button variant="ghost" size="sm" data-tour="dashboard-team-btn" className="h-7 text-[9px] font-black text-blue-500 uppercase tracking-widest" onClick={() => setAssigningScript(script)}>
                                         <UserPlus className="w-3 h-3 mr-1" /> Equipe
                                       </Button>
                                     )}

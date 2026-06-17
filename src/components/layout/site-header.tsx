@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { Terminal, Menu, Maximize, LogOut, User, LayoutDashboard, FolderOpen, Users, BarChart3, Repeat, Plus, Briefcase } from "lucide-react";
 import { SettingsMenu } from "@/components/settings-menu";
+import { TourGuide } from "@/components/tour-guide";
 import { CreateOrJoinWorkspaceModal } from "@/components/auth/CreateOrJoinWorkspaceModal";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -45,6 +46,14 @@ export function SiteHeader() {
   const router = useRouter();
   const pathname = usePathname();
   const [showNewWs, setShowNewWs] = useState(false);
+  const [hasProject, setHasProject] = useState(false);
+
+  useEffect(() => {
+    setHasProject(!!localStorage.getItem("teleprompt_last_project_id"));
+    const handler = () => setHasProject(!!localStorage.getItem("teleprompt_last_project_id"));
+    window.addEventListener("storage", handler);
+    return () => window.removeEventListener("storage", handler);
+  }, []);
 
   if (pathname === "/login") return null;
 
@@ -106,7 +115,7 @@ export function SiteHeader() {
               Relatórios
             </Link>
           )}
-          {user && (
+          {user && hasProject && (
             <Button variant="default" size="sm" asChild className="ml-2">
               <Link href="/editor/new">
                 Novo Roteiro
@@ -117,6 +126,7 @@ export function SiteHeader() {
 
         {/* Ações & Menu Mobile */}
         <div className="flex items-center gap-6">
+          <TourGuide />
           <Button variant="ghost" size="icon" className="hidden sm:flex" onClick={() => {
             if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
             else if (document.exitFullscreen) document.exitFullscreen();
@@ -263,7 +273,7 @@ export function SiteHeader() {
                       Relatórios
                     </Link>
                   )}
-                  {user && (
+                  {user && hasProject && (
                     <Link href="/editor/new" className="text-lg font-medium hover:text-primary transition-colors">
                       Novo Roteiro
                     </Link>
