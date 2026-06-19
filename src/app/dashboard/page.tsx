@@ -391,8 +391,7 @@ function DashboardContent() {
   const loadProjects = useCallback(async () => {
     try {
       const workspaceId = user?.workspaceId || "";
-      if (!workspaceId) { setLoadingProjects(false); return; }
-      const projectsData = await fetchProjects(workspaceId, false);
+      const projectsData = await fetchProjects(workspaceId, !!user?.isSuperAdmin);
       setProjects(projectsData);
     } catch (error) {
       console.error("Erro ao carregar projetos:", error);
@@ -409,7 +408,7 @@ function DashboardContent() {
 
     const activeWorkspaceId = user.workspaceId || "";
     
-    if (!activeWorkspaceId) {
+    if (!activeWorkspaceId && !user.isSuperAdmin) {
       setScripts([]);
       setLoading(false);
       return;
@@ -418,7 +417,9 @@ function DashboardContent() {
     loadProjects();
 
     const scriptsRef = collection(db, "scripts");
-    const q = query(scriptsRef, where("workspaceId", "==", activeWorkspaceId));
+    const q = user.isSuperAdmin
+      ? query(scriptsRef)
+      : query(scriptsRef, where("workspaceId", "==", activeWorkspaceId));
 
     const unsub = onSnapshot(q, (snapshot) => {
       const fetched = snapshot.docs.map(doc => {
@@ -594,10 +595,6 @@ function DashboardContent() {
   };
 
   const deleteScript = async (id: string) => {
-    if (user?.role === "Estagiário") {
-      toast.error("Acesso negado: Estagiários não possuem permissão para excluir roteiros.");
-      return;
-    }
     setDeleteConfirmScript(id);
   };
 
@@ -633,10 +630,6 @@ function DashboardContent() {
   };
 
   const deleteFolder = async (folderScripts: ScriptDoc[]) => {
-    if (user?.role === "Estagiário") {
-      toast.error("Acesso negado: Estagiários não possuem permissão para excluir pastas.");
-      return;
-    }
     setDeleteConfirmFolder(folderScripts);
   };
 
