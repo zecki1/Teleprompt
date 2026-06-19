@@ -1,0 +1,170 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuth() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userDoc().isSuperAdmin == true;
+    }
+
+    function canManage() {
+      return isAuth() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && (userDoc().isSuperAdmin == true || userDoc().canAssign == true);
+    }
+
+    function belongsToMyWorkspace(workspaceId) {
+      return isAuth()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && workspaceId in userDoc().workspaces;
+    }
+
+    function isString(v) { return v is string; }
+    function isNumber(v) { return v is number; }
+    function isBool(v)  { return v is bool; }
+    function isList(v)  { return v is list; }
+    function isMap(v)   { return v is map; }
+
+    function isTimestamp(v) {
+      return v is timestamp;
+    }
+
+    function validStatus(status) {
+      return status in ["rascunho", "em_revisao", "revisao_realizada",
+                        "aguardando_gravacao", "gravado", "arquivado"];
+    }
+
+    function validUserCreate(data) {
+      return data.keys().hasAll(["uid", "email", "name"])
+        && isString(data.uid) && data.uid == request.auth.uid
+        && isString(data.email)
+        && isString(data.name);
+    }
+
+    function validUserUpdate(data) {
+      return data.keys().hasAll([]);
+    }
+
+    function validWorkspace(data) {
+      return data.keys().hasAll(["name"])
+        && isString(data.name)
+        && (!data.keys().hasAny(["members"]) || isList(data.members));
+    }
+
+    function validScriptCreate(data) {
+      return data.keys().hasAll(["title", "workspaceId", "status", "createdBy"])
+        && isString(data.title) && data.title.size() > 0
+        && isString(data.workspaceId)
+        && validStatus(data.status)
+        && isString(data.createdBy) && data.createdBy == request.auth.uid;
+    }
+
+    function validScriptUpdate(data) {
+      return (!data.keys().hasAny(["createdBy"]) || data.createdBy == resource.data.createdBy)
+        && (!data.keys().hasAny(["status"]) || validStatus(data.status))
+        && (!data.keys().hasAny(["title"]) || (isString(data.title) && data.title.size() > 0));
+    }
+
+    function validProject(data) {
+      return data.keys().hasAll(["name", "workspaceId"])
+        && isString(data.name) && data.name.size() > 0
+        && isString(data.workspaceId);
+    }
+
+    function validActivity(data) {
+      return data.keys().hasAll(["userId", "action", "workspaceId"])
+        && isString(data.userId)
+        && isString(data.action)
+        && isString(data.workspaceId);
+    }
+
+    function validTeam(data) {
+      return data.keys().hasAll(["name"])
+        && isString(data.name) && data.name.size() > 0;
+    }
+
+    match /users/{userId} {
+      allow read: if isAuth();
+      allow create: if isAuth()
+        && request.auth.uid == userId
+        && validUserCreate(request.resource.data);
+      allow update: if isAuth()
+        && (request.auth.uid == userId || canManage());
+      allow delete: if isAdmin();
+    }
+
+    match /workspaces/{workspaceId} {
+      allow read: if isAuth() && (belongsToMyWorkspace(workspaceId) || isAdmin());
+      allow create: if isAuth() && validWorkspace(request.resource.data);
+      allow update: if isAuth() && isAdmin() && validWorkspace(request.resource.data);
+      allow delete: if isAuth() && isAdmin();
+    }
+
+    match /scripts/{scriptId} {
+      allow read: if isAuth();
+      allow create: if isAuth() && validScriptCreate(request.resource.data);
+      allow update: if isAuth() && validScriptUpdate(request.resource.data);
+      allow delete: if isAuth() && (resource.data.createdBy == request.auth.uid || canManage());
+
+      match /versions/{versionId} {
+        allow read: if isAuth();
+        allow create: if isAuth();
+      }
+
+      match /comments/{commentId} {
+        allow read: if isAuth();
+        allow create: if isAuth()
+          && request.resource.data.keys().hasAll(["text", "userId", "userName"])
+          && isString(request.resource.data.text)
+          && request.resource.data.text.size() > 0
+          && request.resource.data.userId == request.auth.uid
+          && isString(request.resource.data.userName);
+        allow delete: if isAuth()
+          && (resource.data.userId == request.auth.uid || isAdmin());
+      }
+    }
+
+    match /projects/{projectId} {
+      allow read: if isAuth()
+        && (belongsToMyWorkspace(resource.data.workspaceId) || isAdmin());
+      allow create: if isAuth() && validProject(request.resource.data);
+      allow update: if isAuth()
+        && (belongsToMyWorkspace(resource.data.workspaceId) || isAdmin())
+        && validProject(request.resource.data);
+      allow delete: if isAuth() && canManage();
+    }
+
+    match /activities/{activityId} {
+      allow read: if isAuth()
+        && (belongsToMyWorkspace(resource.data.workspaceId) || isAdmin());
+      allow create: if isAuth() && validActivity(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /teams/{teamId} {
+      allow read: if isAuth()
+        && (belongsToMyWorkspace(resource.data.workspaceId) || isAdmin());
+      allow create: if isAuth() && validTeam(request.resource.data);
+      allow update: if isAuth() && validTeam(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /presenters/{presenterId} {
+      allow read: if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.keys().hasAll(["name", "workspaceId"])
+        && isString(request.resource.data.name)
+        && request.resource.data.name.size() > 0
+        && isString(request.resource.data.workspaceId);
+      allow delete: if isAuth();
+    }
+
+  }
+}
