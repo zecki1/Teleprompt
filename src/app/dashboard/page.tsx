@@ -1612,6 +1612,8 @@ function DashboardContent() {
                     createdAt: serverTimestamp(),
                     updatedAt: serverTimestamp(),
                     workspaceId: user?.workspaceId || user?.workspaceId || "",
+                    createdBy: user?.uid,
+                    createdByName: user?.displayName || user?.email || "Unknown",
                     isPlaceholder: true,
                   });
                   
