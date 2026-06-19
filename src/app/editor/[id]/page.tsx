@@ -301,7 +301,7 @@ function EditorContent({ id }: { id: string }) {
 
   const { user, hasPermission } = useAuth();
   const isSuper = user?.isSuperAdmin;
-  const canEdit = isSuper || (hasPermission(["Docente", "Especialista", "Coordenador", "Diretor", "Orientador", "Assistente", "Analista", "editor", "validador"]) && (!lockedForEditing || scriptStatus === "rascunho"));
+  const canEdit = isSuper || (hasPermission(["Docente", "Especialista", "Coordenador", "Diretor", "Orientador", "Assistente", "Analista", "Tutor", "Monitor", "Técnico", "Estagiário", "editor", "validador"]) && (!lockedForEditing || scriptStatus === "rascunho"));
 
   const [isEditingMode, setIsEditingMode] = useState(true);
   const [showSaveModal, setShowSaveModal] = useState(false);

@@ -213,12 +213,14 @@ export default function ProjectsPage() {
   const loadProjects = useCallback(async () => {
     try {
       const workspaceId = user?.workspaceId || "";
-      if (!workspaceId) return;
-      const projectsData = await fetchProjects(workspaceId, false);
+      if (!workspaceId && !user?.isSuperAdmin) return;
+      const projectsData = await fetchProjects(workspaceId, !!user?.isSuperAdmin);
       setProjects(projectsData);
 
       const scriptsRef = collection(db, "scripts");
-      const q = query(scriptsRef, where("workspaceId", "==", workspaceId));
+      const q = user?.isSuperAdmin
+        ? query(scriptsRef)
+        : query(scriptsRef, where("workspaceId", "==", workspaceId));
       const snapshot = await getDocs(q);
       const allScripts = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -237,7 +239,7 @@ export default function ProjectsPage() {
     } finally {
       setLoading(false);
     }
-  }, [user?.workspaceId]);
+  }, [user?.workspaceId, user?.isSuperAdmin]);
 
   useEffect(() => {
     if (!user) {
