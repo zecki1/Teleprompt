@@ -12,22 +12,25 @@ const Joyride = dynamic(
   { ssr: false }
 );
 
+const HIDDEN_KEY = "teleprompt_tourguide_hidden";
+
 export function TourGuide() {
   const pathname = usePathname();
   const [run, setRun] = useState(false);
-  const [hasSeen, setHasSeen] = useState(true);
+  const [hidden, setHidden] = useState(true);
 
   const tourConfig = getTourByPath(pathname);
 
   useEffect(() => {
     if (!tourConfig) return;
+    const h = localStorage.getItem(HIDDEN_KEY) === "1";
+    setHidden(h);
+    if (h) return;
     const seen = localStorage.getItem(tourConfig.tourKey);
     if (!seen) {
-      setHasSeen(false);
       const timer = setTimeout(() => setRun(true), 1500);
       return () => clearTimeout(timer);
     }
-    setHasSeen(true);
   }, [tourConfig?.tourKey]);
 
   const handleJoyrideCallback = useCallback((data: any) => {
@@ -40,10 +43,11 @@ export function TourGuide() {
       action === "complete"
     ) {
       setRun(false);
-      setHasSeen(true);
       if (tourConfig) {
         localStorage.setItem(tourConfig.tourKey, "1");
       }
+      localStorage.setItem(HIDDEN_KEY, "1");
+      setHidden(true);
     }
   }, [tourConfig]);
 
@@ -54,19 +58,31 @@ export function TourGuide() {
     setRun(true);
   };
 
+  useEffect(() => {
+    const handler = () => {
+      localStorage.removeItem(HIDDEN_KEY);
+      setHidden(false);
+      setTimeout(() => startTour(), 100);
+    };
+    window.addEventListener("tour-guide-show", handler);
+    return () => window.removeEventListener("tour-guide-show", handler);
+  }, []);
+
   if (!tourConfig) return null;
 
   return (
     <>
-      <Button
-        variant="outline"
-        size="icon"
-        onClick={startTour}
-        className="rounded-full w-8 h-8"
-        title="Tour guiado"
-      >
-        <HelpCircle className="w-4 h-4 text-blue-500" />
-      </Button>
+      {!hidden && (
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={startTour}
+          className="rounded-full w-8 h-8"
+          title="Tour guiado"
+        >
+          <HelpCircle className="w-4 h-4 text-blue-500" />
+        </Button>
+      )}
       <Joyride
         steps={tourConfig.steps}
         run={run}

@@ -149,6 +149,14 @@ function TeleprompterContent({ id }: { id: string }) {
   };
 
   const pauseTimer = () => {
+    // Timer continua rodando mesmo pausado para medir tempo real da sessão
+    if (sessionStartRef.current !== null) {
+      accumulatedTimeRef.current += Date.now() - sessionStartRef.current;
+      sessionStartRef.current = Date.now();
+    }
+  };
+
+  const resetTimer = () => {
     if (sessionStartRef.current !== null) {
       accumulatedTimeRef.current += Date.now() - sessionStartRef.current;
       sessionStartRef.current = null;
@@ -157,23 +165,17 @@ function TeleprompterContent({ id }: { id: string }) {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
-  };
-
-  const resetTimer = () => {
-    pauseTimer();
     accumulatedTimeRef.current = 0;
     setRealTime(0);
   };
 
   useEffect(() => {
     if (!isMirrorWindow) {
-      if (isPlaying) {
+      if (isPlaying && sessionStartRef.current === null) {
         startTimer();
-      } else {
-        pauseTimer();
       }
     }
-    return () => pauseTimer();
+    return () => {};
   }, [isPlaying, isMirrorWindow]);
 
   // Appearance States
