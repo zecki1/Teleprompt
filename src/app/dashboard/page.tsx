@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Hourglass, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check, List, LayoutGrid, ArrowLeftRight, Minimize2 } from "lucide-react";
+import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Hourglass, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check, List, LayoutGrid, ArrowLeftRight, Minimize2, Mic } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
@@ -97,6 +97,8 @@ function DashboardContent() {
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const [quickEditScript, setQuickEditScript] = useState<ScriptDoc | null>(null);
+  const [quickEditTitle, setQuickEditTitle] = useState("");
   const [statusFilter, setStatusFilter] = useState<ScriptStatus | "all">("all");
   const [reviewingScript, setReviewingScript] = useState<ScriptDoc | null>(null);
   const [completingReview, setCompletingReview] = useState(false);
@@ -679,6 +681,20 @@ function DashboardContent() {
       await updateDoc(doc(db, "scripts", id), { title: editTitle });
       setScripts(scripts.map(s => s.id === id ? { ...s, title: editTitle } : s));
       setEditingId(null);
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao renomear.");
+    }
+  };
+
+  const quickSaveTitle = async () => {
+    const script = quickEditScript;
+    if (!script || !quickEditTitle.trim()) return;
+    try {
+      await updateDoc(doc(db, "scripts", script.id), { title: quickEditTitle });
+      setScripts(scripts.map(s => s.id === script.id ? { ...s, title: quickEditTitle } : s));
+      setQuickEditScript(null);
+      toast.success("Nome atualizado!");
     } catch (e) {
       console.error(e);
       toast.error("Erro ao renomear.");
@@ -1320,6 +1336,9 @@ function DashboardContent() {
                                     }>
                                       {statusConfig[script.status]?.label || script.status}
                                     </Badge>
+                                    <span className="flex items-center gap-1.5 text-zinc-400 shrink-0">
+                                      {script.category === "podcast" ? <span title="Podcast"><Mic className="w-3.5 h-3.5" /></span> : <span title="Vídeo"><Video className="w-3.5 h-3.5" /></span>}
+                                    </span>
                                     <span className="text-sm font-bold flex-1 truncate text-zinc-800 dark:text-zinc-200">
                                       {script.title}
                                     </span>
@@ -1328,7 +1347,7 @@ function DashboardContent() {
                                       {script.createdAt ? format(new Date(script.createdAt), "dd/MM", { locale: ptBR }) : ""}
                                     </span>
                                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); router.push(`/editor/${script.id}`); }} title="Editar">
+                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setQuickEditScript(script); setQuickEditTitle(script.title); }} title="Editar">
                                         <Edit2 className="w-3.5 h-3.5" />
                                       </Button>
                                       <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={(e) => { e.stopPropagation(); deleteScript(script.id); }} title="Excluir">
@@ -1383,7 +1402,12 @@ function DashboardContent() {
                                       </div>
                                     ) : (
                                       <div className="flex items-start justify-between group/title">
-                                        <CardTitle className="text-base leading-tight font-black break-all whitespace-normal" title={script.title}>{script.title}</CardTitle>
+                                        <CardTitle className="text-base leading-tight font-black break-all whitespace-normal" title={script.title}>
+                                          <span className="inline-flex items-center gap-2">
+                                            {script.category === "podcast" ? <span title="Podcast"><Mic className="w-4 h-4 text-zinc-400 shrink-0" /></span> : <span title="Vídeo"><Video className="w-4 h-4 text-zinc-400 shrink-0" /></span>}
+                                            {script.title}
+                                          </span>
+                                        </CardTitle>
                                         <Button size="icon" variant="ghost" className="h-7 w-7 opacity-0 group-hover/title:opacity-100 transition-opacity flex-shrink-0" onClick={() => { setEditingId(script.id); setEditTitle(script.title); }}>
                                           <Edit2 className="w-3 h-3 text-muted-foreground" />
                                         </Button>
@@ -1945,6 +1969,34 @@ function DashboardContent() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Quick Edit Dialog */}
+      <Dialog open={!!quickEditScript} onOpenChange={(open) => { if (!open) setQuickEditScript(null); }}>
+        <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 rounded-2xl p-6">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-black uppercase tracking-widest">Editar Roteiro</DialogTitle>
+            <DialogDescription className="text-zinc-500 text-sm">
+              Altere o nome do roteiro rapidamente.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Label className="text-[10px] font-black uppercase tracking-widest text-zinc-400 ml-1 mb-2 block">Nome</Label>
+            <Input
+              value={quickEditTitle}
+              onChange={e => setQuickEditTitle(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") quickSaveTitle(); }}
+              autoFocus
+              className="h-12 rounded-xl border-zinc-200 dark:border-zinc-800 font-bold text-base"
+            />
+          </div>
+          <DialogFooter className="flex gap-3">
+            <Button variant="ghost" onClick={() => setQuickEditScript(null)} className="flex-1 h-11 rounded-xl font-bold text-sm">Cancelar</Button>
+            <Button onClick={quickSaveTitle} disabled={!quickEditTitle.trim()} className="flex-[2] h-11 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px]">
+              <Check className="w-4 h-4 mr-2" /> Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Comments Panel Overlay */}
       {openCommentsScriptId && (

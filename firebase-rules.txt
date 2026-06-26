@@ -116,6 +116,8 @@ service cloud.firestore {
       match /versions/{versionId} {
         allow read: if isAuth();
         allow create: if isAuth();
+        allow update: if isAuth();
+        allow delete: if isAuth() && canManage();
       }
 
       match /comments/{commentId} {
@@ -128,6 +130,13 @@ service cloud.firestore {
           && isString(request.resource.data.userName);
         allow delete: if isAuth()
           && (resource.data.userId == request.auth.uid || isAdmin());
+      }
+
+      match /checklist_confirmations/{confirmationId} {
+        allow read: if isAuth();
+        allow create: if isAuth()
+          && request.resource.data.keys().hasAll(["userId", "scriptId"])
+          && request.resource.data.userId == request.auth.uid;
       }
     }
 

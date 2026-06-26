@@ -44,6 +44,16 @@ function splitParagraphs(text: string): string[] {
  * em um array de objetos Scene estruturados.
  */
 export function parseScript(text: string, options?: ParseScriptOptions): Scene[] {
+  // Normalizar texto vindo do Word:
+  // 1. \r\n → \n e \r solo → \n (Word usa \r\n no Windows, \r no Mac antigo)
+  // 2. \u00A0 (non-breaking space) → espaço normal (Word usa em textos justificados)
+  // 3. Outros Unicode whitespace → espaço normal
+  const normalized = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/g, ' ');
+
   const scenes: Scene[] = [];
   
   // Extrai o primeiro match de um padrão (ou null)
@@ -93,7 +103,8 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
   
   // Divide o texto pelo delimitador "Cena" (apenas no início da linha)
   // Nota: (?:^|\n) evita falsos positivos como "cena" no meio do texto
-  const parts = text.split(/(?:^|\n)\s*Cena\b\s*(?:\[)?([0-9]+(?:-[a-zA-Z0-9]+)*)(?:\])?\s*/i);
+  // Agora também aceita "CENA", "Cena:" (com dois-pontos opcional) e "Cena1" (sem espaço)
+  const parts = normalized.split(/(?:^|\n)\s*Cena\b\s*:?\s*(?:\[)?([0-9]+(?:-[a-zA-Z0-9]+)*)(?:\])?\s*/i);
   
   for (let i = 1; i < parts.length; i += 2) {
     const sceneNumber = parts[i] ? parts[i].trim() : String(Math.floor(i / 2) + 1);
@@ -121,10 +132,10 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
   }
   
   // Caso de segurança: se houver texto mas nenhuma tag "Cena", assume cena 1
-  if (scenes.length === 0 && text.trim().length > 0) {
+  if (scenes.length === 0 && normalized.trim().length > 0) {
     const ppScene = options?.paragraphsPerScene ?? 0;
 
-    const paragraphs = splitParagraphs(text);
+    const paragraphs = splitParagraphs(normalized);
     const autoSplit = ppScene === 0 && paragraphs.length >= 4;
     if (ppScene > 0 || autoSplit) {
       const n = autoSplit ? 2 : ppScene;
@@ -152,7 +163,7 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
         });
       }
     } else {
-      const { images, sources, lettering, opening, closing, spokenText, time } = extractSceneData(text);
+      const { images, sources, lettering, opening, closing, spokenText, time } = extractSceneData(normalized);
       const sceneObj: Scene = { 
         id: crypto.randomUUID(), 
         sceneNumber: "1", 
