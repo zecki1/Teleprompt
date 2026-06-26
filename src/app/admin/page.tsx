@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { 
   Table, 
   TableBody, 
@@ -52,6 +53,9 @@ import {
   CheckCircle2,
   Edit2,
   LogOut,
+  Hourglass,
+  Check,
+  X,
 } from "lucide-react";
 import { 
   Select, 
@@ -66,6 +70,7 @@ import { updateDoc, doc, deleteDoc, serverTimestamp, collection, getDocs, query,
 import { db } from "@/lib/firebase";
 import { toDate } from "@/lib/firebase-utils";
 import { backfillActivitiesWorkspaceId, BackfillResult } from "@/lib/migrate-activities";
+import { Presenter, getPresenters, addPresenter, deletePresenter, updatePresenter as updatePresenterService } from "@/services/presenters";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -143,6 +148,12 @@ export default function AdminPage() {
   const [revertConfirmId, setRevertConfirmId] = useState<string | null>(null);
   const [actionFilter, setActionFilter] = useState<string>("all");
   const [backfilling, setBackfilling] = useState(false);
+  const [presenters, setPresenters] = useState<Presenter[]>([]);
+  const [loadingPresenters, setLoadingPresenters] = useState(true);
+  const [newPresenterName, setNewPresenterName] = useState("");
+  const [editingPresenter, setEditingPresenter] = useState<Presenter | null>(null);
+  const [editPresenterName, setEditPresenterName] = useState("");
+  const [savingPresenter, setSavingPresenter] = useState(false);
   
   const handleCopyInvite = () => {
     if (!user?.workspaceId) {
@@ -165,6 +176,7 @@ export default function AdminPage() {
     if (user) {
       loadUsers();
       loadActivities();
+      loadPresenters();
     }
   }, [user, router]);
 
@@ -261,6 +273,58 @@ export default function AdminPage() {
       toast.error("Erro ao carregar usuários.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadPresenters = async () => {
+    if (!user?.workspaceId) return;
+    try {
+      const data = await getPresenters(user.workspaceId);
+      setPresenters(data);
+    } catch {
+      toast.error("Erro ao carregar apresentadores.");
+    } finally {
+      setLoadingPresenters(false);
+    }
+  };
+
+  const handleAddPresenter = async () => {
+    if (!newPresenterName.trim() || !user?.workspaceId) return;
+    setSavingPresenter(true);
+    try {
+      const id = await addPresenter(newPresenterName.trim(), user.workspaceId, user.uid);
+      setPresenters([...presenters, { id, name: newPresenterName.trim(), workspaceId: user.workspaceId, createdBy: user.uid }]);
+      setNewPresenterName("");
+      toast.success("Apresentador cadastrado!");
+    } catch {
+      toast.error("Erro ao cadastrar apresentador.");
+    } finally {
+      setSavingPresenter(false);
+    }
+  };
+
+  const handleSaveEditPresenter = async () => {
+    if (!editingPresenter || !editPresenterName.trim()) return;
+    setSavingPresenter(true);
+    try {
+      await updatePresenterService(editingPresenter.id, { name: editPresenterName.trim() });
+      setPresenters(presenters.map(p => p.id === editingPresenter.id ? { ...p, name: editPresenterName.trim() } : p));
+      setEditingPresenter(null);
+      toast.success("Apresentador atualizado!");
+    } catch {
+      toast.error("Erro ao atualizar apresentador.");
+    } finally {
+      setSavingPresenter(false);
+    }
+  };
+
+  const handleDeletePresenter = async (presenterId: string) => {
+    try {
+      await deletePresenter(presenterId);
+      setPresenters(presenters.filter(p => p.id !== presenterId));
+      toast.success("Apresentador excluído!");
+    } catch {
+      toast.error("Erro ao excluir apresentador.");
     }
   };
 
@@ -376,6 +440,9 @@ export default function AdminPage() {
               <Activity className="w-4 h-4" /> Histórico de Atividades
             </TabsTrigger>
           )}
+          <TabsTrigger value="apresentadores" className="rounded-xl px-8 h-full data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-800 data-[state=active]:shadow-lg font-bold flex gap-2">
+            <UserPlus className="w-4 h-4" /> Apresentadores
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="usuarios">
@@ -772,6 +839,117 @@ export default function AdminPage() {
           </Card>
         </TabsContent>
 
+
+        <TabsContent value="apresentadores">
+          <Card className="border-none shadow-2xl bg-white dark:bg-zinc-950 overflow-hidden rounded-[32px]">
+            <CardHeader className="bg-zinc-50/50 dark:bg-zinc-900/50 border-b border-zinc-100 dark:border-zinc-900 p-8">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-2xl font-bold">Apresentadores</CardTitle>
+                  <CardDescription className="text-base">
+                    Gerencie os nomes dos professores/apresentadores que aparecerão nos roteiros.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-6">
+              <div className="flex items-center gap-3 mb-6">
+                <Input
+                  placeholder="Nome do apresentador..."
+                  value={newPresenterName}
+                  onChange={(e) => setNewPresenterName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleAddPresenter(); }}
+                  className="h-11 rounded-xl border-zinc-200 dark:border-zinc-800 font-bold flex-1"
+                />
+                <Button
+                  onClick={handleAddPresenter}
+                  disabled={savingPresenter || !newPresenterName.trim()}
+                  className="h-11 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] px-6"
+                >
+                  {savingPresenter ? <Hourglass className="w-4 h-4 animate-spin" style={{ animationDuration: "2s" }} /> : <UserPlus className="w-4 h-4 mr-2" />}
+                  Adicionar
+                </Button>
+              </div>
+
+              {loadingPresenters ? (
+                <div className="py-12 text-center">
+                  <LoadingScreen fullScreen={false} className="py-8" />
+                </div>
+              ) : presenters.length === 0 ? (
+                <div className="py-12 text-center text-zinc-400">
+                  <UserPlus className="w-8 h-8 mx-auto mb-3 opacity-50" />
+                  <p className="font-medium">Nenhum apresentador cadastrado</p>
+                  <p className="text-sm mt-1">Adicione o primeiro acima.</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader className="bg-zinc-50/30 dark:bg-zinc-900/30">
+                    <TableRow className="hover:bg-transparent border-zinc-100 dark:border-zinc-900">
+                      <TableHead className="h-14 px-6 font-bold text-zinc-900 dark:text-zinc-100">Nome</TableHead>
+                      <TableHead className="w-[80px] text-center font-bold text-zinc-900 dark:text-zinc-100">Ações</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {presenters.map((presenter) => (
+                      <TableRow key={presenter.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 border-zinc-100 dark:border-zinc-900 transition-colors group">
+                        <TableCell className="px-6 py-4">
+                          {editingPresenter?.id === presenter.id ? (
+                            <div className="flex items-center gap-2">
+                              <Input
+                                value={editPresenterName}
+                                onChange={(e) => setEditPresenterName(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") handleSaveEditPresenter(); if (e.key === "Escape") setEditingPresenter(null); }}
+                                autoFocus
+                                className="h-9 rounded-lg text-sm font-bold"
+                              />
+                              <Button size="icon" variant="ghost" className="h-8 w-8 text-green-500" onClick={handleSaveEditPresenter} disabled={savingPresenter}>
+                                <Check className="w-4 h-4" />
+                              </Button>
+                              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditingPresenter(null)}>
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-9 w-9">
+                                <AvatarFallback className="text-xs bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 font-black">
+                                  {presenter.name.slice(0, 2).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="font-bold text-zinc-800 dark:text-zinc-200">{presenter.name}</span>
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8"
+                              onClick={() => { setEditingPresenter(presenter); setEditPresenterName(presenter.name); }}
+                              title="Editar"
+                            >
+                              <Edit2 className="w-3.5 h-3.5 text-zinc-400" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20"
+                              onClick={() => handleDeletePresenter(presenter.id)}
+                              title="Excluir"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
       </Tabs>
 

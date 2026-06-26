@@ -38,7 +38,8 @@ service cloud.firestore {
 
     function validStatus(status) {
       return status in ["rascunho", "em_revisao", "revisao_realizada",
-                        "aguardando_gravacao", "gravado", "arquivado"];
+                        "aguardando_gravacao", "gravado", "arquivado",
+                        "rejeitado", "nao_gravado"];
     }
 
     function validUserCreate(data) {
@@ -172,6 +173,7 @@ service cloud.firestore {
         && isString(request.resource.data.name)
         && request.resource.data.name.size() > 0
         && isString(request.resource.data.workspaceId);
+      allow update: if isAuth();
       allow delete: if isAuth();
     }
 

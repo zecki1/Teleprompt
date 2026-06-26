@@ -131,19 +131,26 @@ export function isValidPath(path: string[]): boolean {
   return path.length <= MAX_PATH_DEPTH && path.every(p => p.trim().length > 0);
 }
 
-/** Moves a script to a new path by updating Firestore */
+/** Moves a script to a new path (and optionally a different project) by updating Firestore */
 export async function moveScript(
   scriptId: string,
-  newPath: string[]
+  newPath: string[],
+  targetProject?: { projectId: string; projectName: string }
 ): Promise<void> {
   const ref = doc(db, "scripts", scriptId);
-  await updateDoc(ref, {
+  const data: Record<string, unknown> = {
     path: newPath,
     // clear legacy fields when path is set
     folder: newPath[0] ?? null,
     subfolder: newPath[1] ?? null,
     lesson: newPath[2] ?? null,
-  });
+  };
+  if (targetProject) {
+    data.projectId = targetProject.projectId;
+    data.projectName = targetProject.projectName;
+    data.project = targetProject.projectName;
+  }
+  await updateDoc(ref, data);
 }
 
 /** Renames a folder in a script path (updates all scripts that have that segment) */
@@ -170,11 +177,13 @@ export async function renameFolder(
 
 /** 
  * Moves an entire folder (and subfolders) into a new parent path 
+ * (optionally to a different project)
  */
 export async function moveFolder(
   scripts: ScriptDoc[],
   sourcePath: string[],
-  destinationParentPath: string[]
+  destinationParentPath: string[],
+  targetProject?: { projectId: string; projectName: string }
 ): Promise<void> {
   const updates = scripts
     .filter(s => {
@@ -192,7 +201,7 @@ export async function moveFolder(
         throw new Error("Caminho resultante excede o limite de pastas.");
       }
       
-      return moveScript(s.id, newPath);
+      return moveScript(s.id, newPath, targetProject);
     });
 
   await Promise.all(updates);

@@ -3,7 +3,8 @@
 import React, { useEffect, useState, use, Suspense, useRef, useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
-import { Scene, parseScript } from "@/lib/parser";
+import { Scene, parseScript, stripHtml } from "@/lib/parser";
+import DOMPurify from "dompurify";
 import { sanitizeData } from "@/lib/firebase-utils";
 import { ScriptDoc } from "@/types/script";
 import type { Comment } from "@/components/tp/CommentsPanel";
@@ -148,19 +149,24 @@ function HighlightedSpokenText({
   isEditing,
   placeholder = "Escreva o que será dito...",
   commentCounts = {},
-  onSpellCheckApply
+  onSpellCheckApply,
+  contentEditableRef,
 }: { 
   text: string; 
-  onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  onChange: (value: string) => void;
   textareaRef: (el: HTMLTextAreaElement | null) => void;
   disabled?: boolean;
   isEditing: boolean;
   placeholder?: string;
   commentCounts?: Record<number, number>;
   onSpellCheckApply?: (word: string, replacement: string) => void;
+  contentEditableRef?: (el: HTMLDivElement | null) => void;
 }) {
   const [typoReady, setTypoReady] = useState(false);
   const [debouncedText, setDebouncedText] = useState(text);
+  const ceRef = useRef<HTMLDivElement | null>(null);
+
+  const plainText = useMemo(() => stripHtml(text), [text]);
 
   useEffect(() => {
     return onSpellCheckReady(() => setTypoReady(true));
@@ -179,14 +185,15 @@ function HighlightedSpokenText({
 
   const highlights = useMemo(() => {
     if (!text || isEditing) return null;
+    const stripped = stripHtml(text);
     const regex = /(\[(?:let|img)\d+\]|\[(\d+)\])/g;
     const parts: React.ReactNode[] = [];
     let lastIndex = 0;
     let execResult: RegExpExecArray | null;
-    while ((execResult = regex.exec(text)) !== null) {
+    while ((execResult = regex.exec(stripped)) !== null) {
       const m = execResult;
       if (m.index > lastIndex) {
-        const plainPortion = text.slice(lastIndex, m.index);
+        const plainPortion = stripped.slice(lastIndex, m.index);
         if (spellErrors && onSpellCheckApply) {
           const portionErrors = spellErrors.filter(
             e => e.start >= lastIndex && e.end <= m.index
@@ -225,8 +232,8 @@ function HighlightedSpokenText({
       );
       lastIndex = m.index + fullMatch.length;
     }
-    if (lastIndex < text.length) {
-      const plainPortion = text.slice(lastIndex);
+    if (lastIndex < stripped.length) {
+      const plainPortion = stripped.slice(lastIndex);
       if (spellErrors && onSpellCheckApply) {
         const portionErrors = spellErrors.filter(
           e => e.start >= lastIndex
@@ -246,6 +253,46 @@ function HighlightedSpokenText({
     return parts;
   }, [text, isEditing, commentCounts, spellErrors, onSpellCheckApply]);
 
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const html = e.clipboardData.getData("text/html");
+    const textPlain = e.clipboardData.getData("text/plain");
+    if (html) {
+      const sanitized = DOMPurify.sanitize(html, {
+        ALLOWED_TAGS: ["b", "i", "u", "em", "strong", "br", "p", "span"],
+        ALLOWED_ATTR: [],
+      });
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        range.deleteContents();
+        const fragment = range.createContextualFragment(sanitized);
+        range.insertNode(fragment);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    } else {
+      document.execCommand("insertText", false, textPlain);
+    }
+    if (ceRef.current) {
+      onChange(ceRef.current.innerHTML);
+    }
+  }, [onChange]);
+
+  const handleInput = useCallback(() => {
+    if (ceRef.current) {
+      onChange(ceRef.current.innerHTML);
+    }
+  }, [onChange]);
+
+  // Sync contentEditable when text prop changes externally
+  useEffect(() => {
+    if (isEditing && ceRef.current && ceRef.current.innerHTML !== text) {
+      ceRef.current.innerHTML = text;
+    }
+  }, [text, isEditing]);
+
   return (
     <div className="relative w-full group/textarea">
       {!isEditing && (
@@ -255,16 +302,35 @@ function HighlightedSpokenText({
           )}
         </div>
       )}
-      <Textarea
-        ref={textareaRef}
-        value={text}
-        onChange={onChange}
-        disabled={disabled || !isEditing}
-        placeholder={placeholder}
-        lang="pt-BR"
-        spellCheck="true"
-        className={`text-[14px] font-medium leading-relaxed min-h-[120px] p-4 resize-none w-full rounded focus-visible:ring-blue-500 bg-zinc-50/50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 ${!isEditing ? 'opacity-0' : 'opacity-100 placeholder:opacity-40'}`}
-      />
+      {isEditing ? (
+        <div
+          ref={el => {
+            ceRef.current = el;
+            if (contentEditableRef) contentEditableRef(el);
+            if (textareaRef) textareaRef(null);
+          }}
+          contentEditable={!disabled}
+          suppressContentEditableWarning={true}
+          onPaste={handlePaste}
+          onInput={handleInput}
+          onBlur={handleInput}
+          data-placeholder={placeholder}
+          className="text-[14px] font-medium leading-relaxed min-h-[120px] p-4 resize-none w-full rounded focus-visible:ring-2 focus-visible:ring-blue-500 bg-zinc-50/50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 outline-none whitespace-pre-wrap break-words empty:before:content-[attr(data-placeholder)] empty:before:text-zinc-400 empty:before:opacity-40"
+          dangerouslySetInnerHTML={{ __html: text || "" }}
+        />
+      ) : (
+        <Textarea
+          ref={textareaRef}
+          value={plainText}
+          readOnly
+          disabled={disabled}
+          placeholder={placeholder}
+          lang="pt-BR"
+          spellCheck="false"
+          tabIndex={-1}
+          className="text-[14px] font-medium leading-relaxed min-h-[120px] p-4 resize-none w-full rounded focus-visible:ring-blue-500 bg-zinc-50/50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 opacity-0"
+        />
+      )}
     </div>
   );
 }
@@ -326,6 +392,7 @@ function EditorContent({ id }: { id: string }) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [focusedField, setFocusedField] = useState<Record<string, 'spokenText' | 'opening' | 'closing'>>({});
   const textareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const contentEditableRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
     if (isNew || !id) return;
@@ -774,21 +841,25 @@ function EditorContent({ id }: { id: string }) {
     const scene = scenes[sceneIndex];
     const field = focusedField[scene.id] || 'spokenText';
     const refId = `${scene.id}-${field}`;
-    const textarea = textareaRefs.current[refId];
-    if (!textarea) return;
-    
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const currentText = (scene[field] as string) || "";
-    const newText = currentText.substring(0, start) + `[${tag}]` + currentText.substring(end);
-    
-    updateScene(sceneIndex, { [field]: newText });
-    
-    setTimeout(() => { 
-      textarea.focus(); 
-      const newPos = start + tag.length + 2; 
-      textarea.setSelectionRange(newPos, newPos); 
-    }, 0);
+    const ce = contentEditableRefs.current[refId];
+    if (ce && document.activeElement === ce) {
+      document.execCommand('insertText', false, `[${tag}]`);
+      const currentText = (scene[field] as string) || "";
+      updateScene(sceneIndex, { [field]: currentText + `[${tag}]` });
+    } else {
+      const textarea = textareaRefs.current[refId];
+      if (!textarea) return;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const currentText = (scene[field] as string) || "";
+      const newText = currentText.substring(0, start) + `[${tag}]` + currentText.substring(end);
+      updateScene(sceneIndex, { [field]: newText });
+      setTimeout(() => { 
+        textarea.focus(); 
+        const newPos = start + tag.length + 2; 
+        textarea.setSelectionRange(newPos, newPos); 
+      }, 0);
+    }
   };
 
   const handleImport = () => {
@@ -826,10 +897,23 @@ function EditorContent({ id }: { id: string }) {
 
   const splitScene = (index: number) => {
     const scene = scenes[index];
-    const textarea = textareaRefs.current[scene.id];
-    if (!textarea) return;
-    const cursor = textarea.selectionStart;
-    const fullText = scene.spokenText || "";
+    const ce = contentEditableRefs.current[scene.id];
+    let cursor = 0;
+    if (ce) {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        const preRange = document.createRange();
+        preRange.selectNodeContents(ce);
+        preRange.setEnd(range.startContainer, range.startOffset);
+        cursor = preRange.toString().length;
+      }
+    } else {
+      const textarea = textareaRefs.current[scene.id];
+      if (!textarea) return;
+      cursor = textarea.selectionStart;
+    }
+    const fullText = stripHtml(scene.spokenText || "");
     const ns = [...scenes];
     ns[index] = { ...scene, spokenText: fullText.substring(0, cursor) };
     ns.splice(index + 1, 0, { id: crypto.randomUUID(), sceneNumber: "", spokenText: fullText.substring(cursor), lettering: null, imageUrl: null, observation: "" });
@@ -1229,8 +1313,9 @@ function EditorContent({ id }: { id: string }) {
                       </div>
                       <HighlightedSpokenText 
                         text={scene.spokenText || ""} 
-                        onChange={(e) => updateScene(index, { spokenText: e.target.value })} 
+                        onChange={(value) => updateScene(index, { spokenText: value })} 
                         textareaRef={(el) => { if (el) { textareaRefs.current[`${scene.id}-spokenText`] = el; el.onfocus = () => setFocusedField(prev => ({...prev, [scene.id]: 'spokenText'})); } }} 
+                        contentEditableRef={(el) => { contentEditableRefs.current[scene.id] = el; }}
                         disabled={!canEdit} 
                         isEditing={isEditingMode} 
                         commentCounts={commentCounts}
@@ -1251,8 +1336,9 @@ function EditorContent({ id }: { id: string }) {
                       </div>
                       <HighlightedSpokenText 
                         text={scene.opening || ""} 
-                        onChange={(e) => updateScene(index, { opening: e.target.value })} 
+                        onChange={(value) => updateScene(index, { opening: value })} 
                         textareaRef={(el) => { if (el) { textareaRefs.current[`${scene.id}-opening`] = el; el.onfocus = () => setFocusedField(prev => ({...prev, [scene.id]: 'opening'})); } }} 
+                        contentEditableRef={(el) => { contentEditableRefs.current[`${scene.id}-opening`] = el; }}
                         disabled={!canEdit} 
                         isEditing={isEditingMode} 
                         commentCounts={commentCounts}
@@ -1274,8 +1360,9 @@ function EditorContent({ id }: { id: string }) {
                       </div>
                       <HighlightedSpokenText 
                         text={scene.closing || ""} 
-                        onChange={(e) => updateScene(index, { closing: e.target.value })} 
+                        onChange={(value) => updateScene(index, { closing: value })} 
                         textareaRef={(el) => { if (el) { textareaRefs.current[`${scene.id}-closing`] = el; el.onfocus = () => setFocusedField(prev => ({...prev, [scene.id]: 'closing'})); } }} 
+                        contentEditableRef={(el) => { contentEditableRefs.current[`${scene.id}-closing`] = el; }}
                         disabled={!canEdit} 
                         isEditing={isEditingMode} 
                         commentCounts={commentCounts}

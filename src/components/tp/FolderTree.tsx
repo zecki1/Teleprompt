@@ -15,6 +15,7 @@ import {
   Download,
   FileText,
   Video,
+  Link2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -380,6 +381,19 @@ function FolderNodeItem({
             title="Criar roteiro aqui"
           >
             <Plus className="w-3 h-3 mr-0.5" /> Roteiro
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 text-[9px] font-black uppercase tracking-widest text-zinc-400 hover:text-sky-500 px-2"
+            onClick={() => {
+              const url = `${window.location.origin}/dashboard?projectId=${projectId}&folderPath=${encodeURIComponent(node.fullPath.join("/"))}`;
+              navigator.clipboard.writeText(url);
+              toast.success("Link da pasta copiado!");
+            }}
+            title="Copiar link da pasta"
+          >
+            <Link2 className="w-3 h-3 mr-0.5" /> Link
           </Button>
           <Button
             variant="ghost"

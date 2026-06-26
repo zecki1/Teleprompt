@@ -10,16 +10,29 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FolderNode, ScriptDoc } from "@/types/script";
 import { moveScript, buildTree } from "@/lib/pathUtils";
+import { Project } from "@/services/projects";
 import { toast } from "sonner";
 
 interface MoveScriptModalProps {
   open: boolean;
   script: ScriptDoc | null;
-  /** All scripts in the same project (to build the tree) */
-  projectScripts: ScriptDoc[];
+  /** All scripts to build folder trees for different projects */
+  allScripts: ScriptDoc[];
+  /** All available projects */
+  projects: Project[];
+  /** Current project identifiers */
+  currentProjectId: string;
+  currentProjectName: string;
   onClose: () => void;
   onMoved: () => void;
 }
@@ -36,26 +49,44 @@ const DEPTH_COLORS = [
 export function MoveScriptModal({
   open,
   script,
-  projectScripts,
+  allScripts,
+  projects,
+  currentProjectId,
+  currentProjectName,
   onClose,
   onMoved,
 }: MoveScriptModalProps) {
+  const [selectedProjectId, setSelectedProjectId] = useState(currentProjectId);
   const [selectedPath, setSelectedPath] = useState<string[]>([]);
   const [moving, setMoving] = useState(false);
 
   if (!script) return null;
 
-  const tree = buildTree(projectScripts);
+  const selectedProjectScripts = allScripts.filter(s => {
+    const sp = s.projectId || projects.find(p => p.name === (s.projectName || s.project))?.id || "";
+    return sp === selectedProjectId;
+  });
+  const tree = buildTree(selectedProjectScripts);
+
+  const selectedProjectName = projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId;
 
   const handleMove = async () => {
     if (!script) return;
     setMoving(true);
     try {
-      await moveScript(script.id, selectedPath);
+      const targetProject = selectedProjectId !== currentProjectId
+        ? { projectId: selectedProjectId, projectName: selectedProjectName }
+        : undefined;
+
+      await moveScript(script.id, selectedPath, targetProject);
+
+      const projectSuffix = targetProject
+        ? ` no projeto "${selectedProjectName}"`
+        : "";
       toast.success(
         selectedPath.length > 0
-          ? `Roteiro movido para "${selectedPath.join(" › ")}"`
-          : "Roteiro movido para a raiz do projeto"
+          ? `Roteiro movido para "${selectedPath.join(" › ")}"${projectSuffix}`
+          : `Roteiro movido para a raiz do projeto${projectSuffix}`
       );
       onMoved();
       onClose();
@@ -74,18 +105,37 @@ export function MoveScriptModal({
             Mover Roteiro
           </DialogTitle>
           <DialogDescription className="text-center text-zinc-500 text-sm">
-            Selecione a pasta de destino para{" "}
+            Selecione a pasta de destino no projeto atual para{" "}
             <span className="font-bold text-zinc-700 dark:text-zinc-300">
               &ldquo;{script.title}&rdquo;
             </span>
           </DialogDescription>
         </DialogHeader>
 
-        <div className="mt-4 space-y-1 max-h-72 overflow-y-auto border border-zinc-100 dark:border-zinc-800 rounded-xl p-3">
+        {/* Project selector */}
+        <div className="mt-4">
+          <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1.5 block">
+            Projeto destino
+          </label>
+          <Select value={selectedProjectId} onValueChange={val => { setSelectedProjectId(val); setSelectedPath([]); }}>
+            <SelectTrigger className="w-full h-9 rounded-lg border-zinc-200 dark:border-zinc-800 text-[12px] font-bold">
+              <SelectValue placeholder="Selecione um projeto" />
+            </SelectTrigger>
+            <SelectContent className="rounded-xl border-zinc-200 dark:border-zinc-800">
+              {projects.map(p => (
+                <SelectItem key={p.id} value={p.id} className="text-[12px] font-bold">
+                  {p.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="mt-3 space-y-1 max-h-64 overflow-y-auto border border-zinc-100 dark:border-zinc-800 rounded-xl p-3">
           {/* Root option */}
           <FolderOption
             path={[]}
-            label="⟨ Raiz do projeto ⟩"
+            label={`⟨ Raiz — ${selectedProjectName} ⟩`}
             selected={selectedPath.length === 0}
             onClick={() => setSelectedPath([])}
             depth={0}
@@ -106,9 +156,10 @@ export function MoveScriptModal({
             <>
               Destino:{" "}
               <span className="text-blue-500">{selectedPath.join(" › ")}</span>
+              <span className="text-zinc-500"> — {selectedProjectName}</span>
             </>
           ) : (
-            "Destino: Raiz do projeto"
+            `Destino: Raiz — ${selectedProjectName}`
           )}
         </p>
 

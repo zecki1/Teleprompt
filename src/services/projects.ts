@@ -4,10 +4,17 @@ import { collection, query, where, getDocs, orderBy, addDoc, updateDoc, deleteDo
 import { db } from "@/lib/firebase";
 import { ScriptDoc } from "@/types/script";
 
+export interface ProjectLink {
+  label: string;
+  url: string;
+}
+
 export interface Project {
   id: string;
   name: string;
   code?: string;
+  externalLink?: string;
+  links?: ProjectLink[];
   workspaceId?: string;
   status?: string;
   createdAt?: string;

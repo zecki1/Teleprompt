@@ -6,7 +6,8 @@ export type ScriptStatus =
   | "revisao_realizada"
   | "aguardando_gravacao"
   | "gravado"
-  | "rejeitado";
+  | "rejeitado"
+  | "nao_gravado";
 
 export type ScriptCategory = "video" | "podcast";
 
