@@ -118,6 +118,11 @@ function TeleprompterContent({ id }: { id: string }) {
   const mirrorIdRef = useRef<string>(isMirrorWindow ? Math.random().toString(36).substring(2, 9) : "");
   const activeMirrorsRef = useRef<Set<string>>(new Set());
   const countdownJustFinishedRef = useRef(false);
+  const initialSyncDoneRef = useRef(false);
+  const checklistDoneRef = useRef(false);
+  const checklistLoadingRef = useRef(true);
+  const navigatingAwayRef = useRef(false);
+  const playRequestedRef = useRef(false);
 
   // Appearance States
   const [fontSize, setFontSize] = useState("text-7xl");
@@ -133,12 +138,12 @@ function TeleprompterContent({ id }: { id: string }) {
   const [referenceInches, setReferenceInches] = useState(11);
   const [operatorInches, setOperatorInches] = useState(27);
 
-  // Carregar preferências salvas do usuário
+  // Carregar preferências salvas do usuário (APENAS como fallback inicial)
+  // O onSnapshot do script doc é a fonte da verdade e sempre sobrescreve
   useEffect(() => {
     if (!user?.uid || isMirrorWindow) return;
-    const userRef = doc(db, "users", user.uid);
-    getDoc(userRef).then((snap) => {
-      if (!snap.exists()) return;
+    getDoc(doc(db, "users", user.uid)).then((snap) => {
+      if (!snap.exists() || initialSyncDoneRef.current) return;
       const prefs = snap.data()?.tpPreferences;
       if (!prefs) return;
       if (prefs.fontSize) setFontSize(prefs.fontSize);
@@ -241,6 +246,7 @@ function TeleprompterContent({ id }: { id: string }) {
 
   const startCountdown = () => {
     if (countdownActiveRef.current || isPlayingRef.current) return;
+    playRequestedRef.current = true;
     if (mirrorCountRef.current > 0) {
       runLocalCountdown(true);
       // Sem countdownStartedAt no Firestore: apenas BroadcastChannel sincroniza
@@ -414,10 +420,14 @@ function TeleprompterContent({ id }: { id: string }) {
     if (!user?.uid || isMirrorWindow) {
       setChecklistDone(true);
       setChecklistLoading(false);
+      checklistDoneRef.current = true;
+      checklistLoadingRef.current = false;
       return;
     }
     setChecklistDone(false);
     setChecklistLoading(true);
+    checklistDoneRef.current = false;
+    checklistLoadingRef.current = true;
     const checkDone = async () => {
       try {
         const snap = await getDocs(
@@ -426,9 +436,10 @@ function TeleprompterContent({ id }: { id: string }) {
             where("userId", "==", user.uid)
           )
         );
-        if (!snap.empty) setChecklistDone(true);
+        if (!snap.empty) { setChecklistDone(true); checklistDoneRef.current = true; }
       } catch { /* ignore */ }
       setChecklistLoading(false);
+      checklistLoadingRef.current = false;
     };
     checkDone();
   }, [id, user?.uid, isMirrorWindow]);
@@ -439,21 +450,35 @@ function TeleprompterContent({ id }: { id: string }) {
   }, [scriptStatus]);
 
   useEffect(() => {
+    if (!user?.uid) return;
     const unsub = onSnapshot(doc(db, "scripts", id), (docObj) => {
       if (docObj.exists()) {
         const d = docObj.data();
-        const userNeedsChecklist = user?.requiresChecklist !== false;
+        const isFirstSnapshot = !initialSyncDoneRef.current;
+        initialSyncDoneRef.current = true;
 
-        if (d.isPlaying && !isPlayingRef.current && !checklistDone && !checklistLoading && !isMirrorWindow && userNeedsChecklist) {
-          setIsPlaying(false);
-          isPlayingRef.current = false;
-          setShowChecklist(true);
-          updateDoc(doc(db, "scripts", id), { isPlaying: false });
-        } else if (typeof d.isPlaying === "boolean") {
-          if (!d.isPlaying && countdownJustFinishedRef.current) {
+        // Sincronizar isPlaying
+        if (typeof d.isPlaying === "boolean") {
+          if (isFirstSnapshot) {
+            // Primeiro snapshot: sempre começar pausado (evita leftover do Firestore)
+            setIsPlaying(false);
+            isPlayingRef.current = false;
+            playRequestedRef.current = false;
+            if (d.isPlaying && !isMirrorWindow) {
+              updateDoc(doc(db, "scripts", id), { isPlaying: false });
+            }
+          } else if (d.isPlaying && !isPlayingRef.current && !playRequestedRef.current && !checklistDoneRef.current && !checklistLoadingRef.current && !isMirrorWindow) {
+            // Firestore mandou play sem permissão (checklist pendente)
+            setIsPlaying(false);
+            isPlayingRef.current = false;
+            setShowChecklist(true);
+            updateDoc(doc(db, "scripts", id), { isPlaying: false });
+          } else if (!d.isPlaying && countdownJustFinishedRef.current) {
+            // Ignorar falso isPlaying:false logo após countdown
           } else {
             setIsPlaying(d.isPlaying);
             isPlayingRef.current = d.isPlaying;
+            if (d.isPlaying) playRequestedRef.current = false;
           }
         }
         if (typeof d.speed === "number") {
@@ -487,13 +512,10 @@ function TeleprompterContent({ id }: { id: string }) {
           if (containerRef.current) containerRef.current.scrollTop = 0;
           lastProcessedReset.current = d.resetRequest;
         }
-
-        // Sincronizar contagem regressiva via Firestore (mirror usa BC, nenhuma ação necessária)
-        // O BroadcastChannel já sincroniza os ticks em tempo real - Firestore não é mais usado para countdown
       }
     });
     return () => unsub();
-  }, [id, user?.requiresChecklist, checklistDone, checklistLoading, isMirrorWindow]);
+  }, [id, user?.uid, isMirrorWindow]);
 
   // --- 3. ATALHOS DE TECLADO (POWERPOINT / CONTROLE) ---
 
@@ -559,7 +581,7 @@ function TeleprompterContent({ id }: { id: string }) {
                 }
               }
             } else {
-              const needsChecklist = user?.requiresChecklist !== false;
+              const needsChecklist = user?.requiresChecklist === true;
               if (isPlayingRef.current) {
                 updateDoc(doc(db, "scripts", id), { isPlaying: false });
               } else if (!checklistDone && needsChecklist) {
@@ -656,7 +678,10 @@ function TeleprompterContent({ id }: { id: string }) {
           bc.postMessage({ type: 'mirror-connect', mirrorId: mirrorIdRef.current });
         }
         if (ev.data.type === 'syncScroll' && containerRef.current) {
-          containerRef.current.scrollTop = ev.data.scrollTop;
+          // Usar progress (0-1) em vez de scrollTop bruto para compensar
+          // diferenças de zoom CSS entre master e mirror
+          const maxScroll = containerRef.current.scrollHeight - containerRef.current.clientHeight;
+          containerRef.current.scrollTop = maxScroll > 0 ? ev.data.progress * maxScroll : 0;
           setLocalProgress(ev.data.progress);
         }
         if (ev.data.type === 'syncScenes') setScenes(ev.data.scenes);
@@ -707,6 +732,10 @@ function TeleprompterContent({ id }: { id: string }) {
             setShowCountdown(false);
           }
         }
+        // Master navegou para outro roteiro → fecha mirror automaticamente
+        if (ev.data.type === 'master-navigating') {
+          window.close();
+        }
       };
       return () => {
         window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -730,7 +759,12 @@ function TeleprompterContent({ id }: { id: string }) {
       // Envia ping para encontrar mirrors que já estejam abertos
       bc.postMessage({ type: 'ping-mirror' });
     }
-    return () => bc.close();
+    return () => {
+      if (!isMirrorWindow && navigatingAwayRef.current) {
+        try { bc.postMessage({ type: 'master-navigating' }); } catch {}
+      }
+      bc.close();
+    };
   }, [id, isMirrorWindow]);
 
   // Full sync na montagem (para quando der refresh na tela principal)
@@ -797,6 +831,7 @@ function TeleprompterContent({ id }: { id: string }) {
       
       const updateData: Record<string, unknown> = {
         status: 'gravado',
+        isPlaying: false,
         updatedAt: serverTimestamp(),
         duration: calculateDuration(scenes),
         recordedAt: serverTimestamp(),
@@ -842,6 +877,9 @@ function TeleprompterContent({ id }: { id: string }) {
         });
       }
 
+      setIsPlaying(false);
+      isPlayingRef.current = false;
+      playRequestedRef.current = false;
       setSaveStatus('saved');
       
       // Busca o próximo roteiro para sugerir
@@ -1239,7 +1277,7 @@ function TeleprompterContent({ id }: { id: string }) {
                             }
                             return;
                           }
-                          const needsChecklist = user?.requiresChecklist !== false;
+                          const needsChecklist = user?.requiresChecklist === true;
                           if (data.isPlaying === true && !checklistDone && needsChecklist) {
                             setShowChecklist(true);
                           } else if (data.isPlaying === true) {
@@ -1278,7 +1316,7 @@ function TeleprompterContent({ id }: { id: string }) {
                    <span className="text-xl font-black text-white">{speed}</span>
                    <span className="text-[10px] font-bold text-zinc-600 uppercase">x</span>
                  </div>
-                 <button onClick={() => updateGlobalStyle({speed: Math.min(speed + 0.5, 60)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronUp size={14}/></button>
+                 <button onClick={() => updateGlobalStyle({speed: Math.min(speed + 0.5, 30)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronUp size={14}/></button>
                </div>
              </div>
 
@@ -1296,7 +1334,7 @@ function TeleprompterContent({ id }: { id: string }) {
                          updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
                          return;
                        }
-                       const needsChecklist = user?.requiresChecklist !== false;
+                       const needsChecklist = user?.requiresChecklist === true;
                        if (isPlaying) {
                          updateGlobalStyle({ isPlaying: false });
                        }
@@ -1380,7 +1418,7 @@ function TeleprompterContent({ id }: { id: string }) {
           <div className="p-8 space-y-6">
             <div className="space-y-4">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Sugestão de Próximo</p>
-              <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-2xl group hover:border-blue-500/50 transition-all cursor-pointer" onClick={() => router.push(`/tp/${nextScript?.id}`)}>
+              <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-2xl group hover:border-blue-500/50 transition-all cursor-pointer" onClick={() => { navigatingAwayRef.current = true; router.push(`/tp/${nextScript?.id}`); }}>
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
                     <h4 className="text-lg font-black text-white group-hover:text-blue-400 transition-colors">{nextScript?.title}</h4>
@@ -1402,13 +1440,13 @@ function TeleprompterContent({ id }: { id: string }) {
             <div className="grid grid-cols-2 gap-4 pt-4">
               <Button 
                 variant="outline" 
-                onClick={() => router.push('/dashboard')}
+                onClick={() => { navigatingAwayRef.current = true; router.push('/dashboard'); }}
                 className="h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest border-zinc-800 text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all"
               >
                 <X size={16} className="mr-2" /> Sair
               </Button>
               <Button 
-                onClick={() => router.push(`/tp/${nextScript?.id}`)}
+                onClick={() => { navigatingAwayRef.current = true; router.push(`/tp/${nextScript?.id}`); }}
                 className="h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest bg-blue-600 hover:bg-blue-500 text-white shadow-xl shadow-blue-600/20 transition-all gap-2"
               >
                 Continuar <ChevronRight size={16} />
@@ -1496,6 +1534,7 @@ function TeleprompterContent({ id }: { id: string }) {
                   setIsSavingChecklist(false);
                 }
                 setChecklistDone(true);
+                checklistDoneRef.current = true;
                 setShowChecklist(false);
                 startCountdown();
               }}
