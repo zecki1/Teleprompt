@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { Terminal, Menu, Maximize, LogOut, User, LayoutDashboard, FolderOpen, Users, BarChart3, Repeat, Plus, Briefcase } from "lucide-react";
+import { Terminal, Menu, Maximize, LogOut, User, LayoutDashboard, FolderOpen, Users, BarChart3, Repeat, Plus, Briefcase, HelpCircle } from "lucide-react";
 import { SettingsMenu } from "@/components/settings-menu";
 import { TourGuide } from "@/components/tour-guide";
 import { CreateOrJoinWorkspaceModal } from "@/components/auth/CreateOrJoinWorkspaceModal";
@@ -115,53 +115,11 @@ export function SiteHeader() {
               Relatórios
             </Link>
           )}
-          {user && hasProject && (
-            <Button variant="default" size="sm" asChild className="ml-2">
-              <Link href="/editor/new">
-                Novo Roteiro
-              </Link>
-            </Button>
-          )}
         </nav>
 
         {/* Ações & Menu Mobile */}
         <div className="flex items-center gap-6">
           <TourGuide />
-          <Button variant="ghost" size="icon" className="hidden sm:flex" onClick={() => {
-            if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
-            else if (document.exitFullscreen) document.exitFullscreen();
-          }} title="Alternar Tela Cheia">
-             <Maximize className="h-5 w-5 text-muted-foreground" />
-          </Button>
-          <div className="hidden sm:flex items-center gap-2">
-            <SettingsMenu />
-          </div>
-          
-          {user && (
-            <>
-              <div className="hidden md:flex items-center gap-2">
-                <Select
-                  value={user.workspaceId}
-                  onValueChange={(val) => switchWorkspace(val)}
-                >
-                  <SelectTrigger className="w-[180px] h-8 bg-zinc-900/50 border-zinc-700 text-xs text-white">
-                    <Briefcase className="h-3 w-3 mr-2 text-primary" />
-                    <SelectValue placeholder="Workspace">
-                      {currentWorkspace?.name || "Workspace"}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent className="bg-zinc-950 border-zinc-800 text-white">
-                    {userWorkspacesDetailed && userWorkspacesDetailed.map((ws) => (
-                      <SelectItem key={ws.id} value={ws.id} className="text-xs">
-                        {ws.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Separator orientation="vertical" className="h-6 mx-2 hidden sm:block" />
-            </>
-          )}
           
           {user ? (
             <DropdownMenu>
@@ -177,7 +135,7 @@ export function SiteHeader() {
                   </Avatar>
                 </div>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuContent align="end" className="w-64">
                 <DropdownMenuLabel>
                   <div className="flex flex-col space-y-1">
                     <p className="text-sm font-medium">{user.displayName}</p>
@@ -185,6 +143,54 @@ export function SiteHeader() {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                {currentWorkspace && (
+                  <>
+                    <div className="px-2 py-1.5">
+                      <p className="text-[10px] font-bold uppercase text-zinc-500 tracking-widest mb-1.5 flex items-center gap-1.5">
+                        <Briefcase className="h-3 w-3" /> Workspace
+                      </p>
+                      <Select
+                        value={user.workspaceId}
+                        onValueChange={(val) => switchWorkspace(val)}
+                      >
+                        <SelectTrigger className="w-full h-8 bg-zinc-900/50 border-zinc-700 text-xs text-white">
+                          <SelectValue placeholder="Workspace" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-zinc-950 border-zinc-800 text-white">
+                          {userWorkspacesDetailed && userWorkspacesDetailed.map((ws) => (
+                            <SelectItem key={ws.id} value={ws.id} className="text-xs">
+                              {ws.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                <div className="px-2 py-1.5 border-t border-zinc-800 mt-1.5 pt-2">
+                  <p className="text-[10px] font-bold uppercase text-zinc-500 tracking-widest mb-1.5">Acessibilidade & Aparência</p>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <button
+                      onClick={() => {
+                        if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
+                        else if (document.exitFullscreen) document.exitFullscreen();
+                      }}
+                      className="flex items-center gap-1.5 text-[11px] text-zinc-400 hover:text-white hover:bg-zinc-800 rounded px-2 py-1.5 transition-colors"
+                    >
+                      <Maximize className="h-3.5 w-3.5" />
+                      Tela Cheia
+                    </button>
+                    <SettingsMenu />
+                    <button
+                      onClick={() => window.dispatchEvent(new Event("tour-guide-show"))}
+                      className="flex items-center gap-1.5 text-[11px] text-zinc-400 hover:text-white hover:bg-zinc-800 rounded px-2 py-1.5 transition-colors"
+                    >
+                      <HelpCircle className="h-3.5 w-3.5 text-blue-500" />
+                      Tour
+                    </button>
+                  </div>
+                </div>
                 <DropdownMenuItem onClick={() => router.push("/dashboard")}>
                   <LayoutDashboard className="mr-2 h-4 w-4" />
                   Dashboard
@@ -271,11 +277,6 @@ export function SiteHeader() {
                     <Link href="/relatorio" className="text-lg font-medium hover:text-primary transition-colors flex items-center gap-2">
                       <BarChart3 className="w-4 h-4" />
                       Relatórios
-                    </Link>
-                  )}
-                  {user && hasProject && (
-                    <Link href="/editor/new" className="text-lg font-medium hover:text-primary transition-colors">
-                      Novo Roteiro
                     </Link>
                   )}
                   <Separator className="my-2" />
