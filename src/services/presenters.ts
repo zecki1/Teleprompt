@@ -4,6 +4,7 @@ import {
   getDocs,
   deleteDoc,
   doc,
+  updateDoc,
   query,
   where,
   serverTimestamp,
@@ -42,4 +43,11 @@ export const getPresenters = async (workspaceId: string): Promise<Presenter[]> =
 
 export const deletePresenter = async (presenterId: string): Promise<void> => {
   await deleteDoc(doc(db, "presenters", presenterId));
+};
+
+export const updatePresenter = async (presenterId: string, data: Partial<Presenter>): Promise<void> => {
+  await updateDoc(doc(db, "presenters", presenterId), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  });
 };

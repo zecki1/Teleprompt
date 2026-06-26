@@ -5,9 +5,10 @@ import dynamic from "next/dynamic";
 import { doc, getDoc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, arrayUnion, where, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
-import { Scene } from "@/lib/parser";
+import { Scene, stripHtml } from "@/lib/parser";
 import { ScriptDoc } from "@/types/script";
 import { RemoteControlUI } from "@/components/tp/RemoteControlUI";
+import DOMPurify from "dompurify";
 import { useAuth } from "@/contexts/AuthContext";
 import { 
   Monitor, 
@@ -124,6 +125,57 @@ function TeleprompterContent({ id }: { id: string }) {
   const navigatingAwayRef = useRef(false);
   const playRequestedRef = useRef(false);
 
+  // Real-time recording timer
+  const sessionStartRef = useRef<number | null>(null);
+  const accumulatedTimeRef = useRef(0);
+  const [realTime, setRealTime] = useState(0);
+  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const formatTime = (ms: number) => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  };
+
+  const startTimer = () => {
+    if (sessionStartRef.current !== null) return;
+    sessionStartRef.current = Date.now();
+    timerIntervalRef.current = setInterval(() => {
+      if (sessionStartRef.current !== null) {
+        setRealTime(accumulatedTimeRef.current + (Date.now() - sessionStartRef.current));
+      }
+    }, 1000);
+  };
+
+  const pauseTimer = () => {
+    if (sessionStartRef.current !== null) {
+      accumulatedTimeRef.current += Date.now() - sessionStartRef.current;
+      sessionStartRef.current = null;
+    }
+    if (timerIntervalRef.current !== null) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+  };
+
+  const resetTimer = () => {
+    pauseTimer();
+    accumulatedTimeRef.current = 0;
+    setRealTime(0);
+  };
+
+  useEffect(() => {
+    if (!isMirrorWindow) {
+      if (isPlaying) {
+        startTimer();
+      } else {
+        pauseTimer();
+      }
+    }
+    return () => pauseTimer();
+  }, [isPlaying, isMirrorWindow]);
+
   // Appearance States
   const [fontSize, setFontSize] = useState("text-7xl");
   const [textAlign, setTextAlign] = useState("text-left");
@@ -134,6 +186,7 @@ function TeleprompterContent({ id }: { id: string }) {
   const [bgColor, setBgColor] = useState("#000000");
   const [textColor, setTextColor] = useState("#ffffff");
   const [showReadingStrip, setShowReadingStrip] = useState(true);
+  const [countdownEnabled, setCountdownEnabled] = useState(true);
   const [sceneGap, setSceneGap] = useState("mb-32");
   const [referenceInches, setReferenceInches] = useState(11);
   const [operatorInches, setOperatorInches] = useState(27);
@@ -155,6 +208,7 @@ function TeleprompterContent({ id }: { id: string }) {
       if (prefs.bgColor) setBgColor(prefs.bgColor);
       if (prefs.textColor) setTextColor(prefs.textColor);
       if (typeof prefs.showReadingStrip === "boolean") setShowReadingStrip(prefs.showReadingStrip);
+      if (typeof prefs.countdownEnabled === "boolean") setCountdownEnabled(prefs.countdownEnabled);
       if (prefs.sceneGap) setSceneGap(prefs.sceneGap);
       if (typeof prefs.referenceInches === "number") setReferenceInches(prefs.referenceInches);
       if (typeof prefs.operatorInches === "number") setOperatorInches(prefs.operatorInches);
@@ -247,9 +301,8 @@ function TeleprompterContent({ id }: { id: string }) {
   const startCountdown = () => {
     if (countdownActiveRef.current || isPlayingRef.current) return;
     playRequestedRef.current = true;
-    if (mirrorCountRef.current > 0) {
+    if (mirrorCountRef.current > 0 && countdownEnabled) {
       runLocalCountdown(true);
-      // Sem countdownStartedAt no Firestore: apenas BroadcastChannel sincroniza
     } else {
       setIsPlaying(true);
       isPlayingRef.current = true;
@@ -271,7 +324,7 @@ function TeleprompterContent({ id }: { id: string }) {
   };
 
   const calculateDuration = (scenesList: Scene[]) => {
-    const wordCount = scenesList.reduce((acc, s) => acc + (s.spokenText ? s.spokenText.split(/\s+/).length : 0), 0);
+    const wordCount = scenesList.reduce((acc, s) => acc + (s.spokenText ? stripHtml(s.spokenText).split(/\s+/).length : 0), 0);
     return Math.max(10, Math.floor((wordCount / 130) * 60));
   };
 
@@ -504,6 +557,7 @@ function TeleprompterContent({ id }: { id: string }) {
         if (d.workspaceId) setWorkspaceId(d.workspaceId);
         if (d.editorId) setEditorId(d.editorId);
         if (typeof d.showReadingStrip === "boolean") setShowReadingStrip(d.showReadingStrip);
+        if (typeof d.countdownEnabled === "boolean") setCountdownEnabled(d.countdownEnabled);
         if (d.sceneGap) setSceneGap(d.sceneGap);
         if (typeof d.referenceInches === "number") setReferenceInches(d.referenceInches);
         if (typeof d.operatorInches === "number") setOperatorInches(d.operatorInches);
@@ -594,7 +648,7 @@ function TeleprompterContent({ id }: { id: string }) {
           break;
         case 'PageUp':
           e.preventDefault();
-          updateDoc(doc(db, "scripts", id), { speed: Math.max(speedRef.current - 0.5, 0) });
+          updateDoc(doc(db, "scripts", id), { speed: Math.max(speedRef.current - 0.5, -20) });
           break;
         case 'PageDown':
           e.preventDefault();
@@ -608,7 +662,7 @@ function TeleprompterContent({ id }: { id: string }) {
         case 'ArrowLeft':
         case 'KeyA':
           e.preventDefault();
-          updateDoc(doc(db, "scripts", id), { speed: Math.max(speedRef.current - 0.5, 0) });
+          updateDoc(doc(db, "scripts", id), { speed: Math.max(speedRef.current - 0.5, -20) });
           break;
         case 'ArrowUp':
         case 'KeyW':
@@ -708,8 +762,9 @@ function TeleprompterContent({ id }: { id: string }) {
            if (ev.data.styles.sceneGap) setSceneGap(ev.data.styles.sceneGap);
            if (typeof ev.data.styles.referenceInches === 'number') setReferenceInches(ev.data.styles.referenceInches);
            if (typeof ev.data.styles.operatorInches === 'number') setOperatorInches(ev.data.styles.operatorInches);
-           if (typeof ev.data.styles.showReadingStrip === 'boolean') setShowReadingStrip(ev.data.styles.showReadingStrip);
-         }
+            if (typeof ev.data.styles.showReadingStrip === 'boolean') setShowReadingStrip(ev.data.styles.showReadingStrip);
+            if (typeof ev.data.styles.countdownEnabled === 'boolean') setCountdownEnabled(ev.data.styles.countdownEnabled);
+          }
         if (ev.data.type === 'syncPlayState') {
           if (typeof ev.data.isPlaying === 'boolean') {
             setIsPlaying(ev.data.isPlaying);
@@ -776,7 +831,7 @@ function TeleprompterContent({ id }: { id: string }) {
           bcRef.current.postMessage({ type: 'syncAll', scenes, isPlaying, speed });
           bcRef.current.postMessage({
             type: 'syncStyles',
-            styles: { fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap, referenceInches, operatorInches, showReadingStrip }
+            styles: { fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap, referenceInches, operatorInches, showReadingStrip, countdownEnabled }
           });
         } catch {}
       }
@@ -803,10 +858,10 @@ function TeleprompterContent({ id }: { id: string }) {
     if (!isMirrorWindow && bcRef.current) {
       bcRef.current.postMessage({ 
         type: 'syncStyles', 
-        styles: { fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap, referenceInches, operatorInches, showReadingStrip } 
+        styles: { fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap, referenceInches, operatorInches, showReadingStrip, countdownEnabled } 
       });
     }
-  }, [fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap, referenceInches, operatorInches, showReadingStrip, isMirrorWindow]);
+  }, [fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap, referenceInches, operatorInches, showReadingStrip, countdownEnabled, isMirrorWindow]);
   
   if (loading) return <LoadingScreen />;
 
@@ -829,11 +884,15 @@ function TeleprompterContent({ id }: { id: string }) {
       const rawContent = reconstructRawText(scenes);
       await updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes, content: rawContent });
       
+      pauseTimer();
+      const recordedDuration = accumulatedTimeRef.current;
+
       const updateData: Record<string, unknown> = {
         status: 'gravado',
         isPlaying: false,
         updatedAt: serverTimestamp(),
         duration: calculateDuration(scenes),
+        recordedDuration,
         recordedAt: serverTimestamp(),
         videomakerId: user?.uid || null,
         videomakerName: user?.displayName || user?.name || "Videomaker"
@@ -990,10 +1049,10 @@ function TeleprompterContent({ id }: { id: string }) {
         </div>
       )}
       {showCountdown && !isMirrorWindow && (
-        <div className="fixed top-6 right-6 z-[200] flex items-center justify-center w-16 h-16 rounded-2xl bg-black/80 backdrop-blur-sm border border-zinc-800 shadow-2xl">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm">
           <span 
             key={countdownValue}
-            className="text-2xl font-black text-white select-none animate-in zoom-in-50 duration-300"
+            className="text-[20vw] font-black text-white select-none animate-in zoom-in-50 duration-300 drop-shadow-[0_0_60px_rgba(255,255,255,0.3)]"
           >
             {countdownValue}
           </span>
@@ -1034,12 +1093,13 @@ function TeleprompterContent({ id }: { id: string }) {
               ref={el => { 
                 sceneRefs.current[idx] = el; 
                 if (el && focusedId !== s.id) {
-                  const html = getTPDisplay(
+                  const raw = getTPDisplay(
                     (s.opening ? `[abe] ${s.opening}\n` : '') + 
                     (s.spokenText || '') + 
                     (s.closing ? `\n[enc] ${s.closing}` : '')
                   );
-                  if (el.innerHTML !== html) el.innerHTML = html;
+                  const sanitized = DOMPurify.sanitize(raw);
+                  if (el.innerHTML !== sanitized) el.innerHTML = sanitized;
                 }
               }}
               className={`${sceneGap} break-words outline-none whitespace-pre-wrap transition-all duration-700 ${textAlign} ${fontWeight} ${fontSize} ${lineHeight}`} 
@@ -1190,6 +1250,23 @@ function TeleprompterContent({ id }: { id: string }) {
                     </div>
                   </div>
 
+                  <div className="space-y-3">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><span className="text-amber-400">⏱</span> Contagem Regressiva</p>
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[11px] text-zinc-400">Ativar ao pausar</span>
+                      <button
+                        onClick={() => { setCountdownEnabled(!countdownEnabled); updateGlobalStyle({ countdownEnabled: !countdownEnabled }); }}
+                        className={`relative w-11 h-6 rounded-full transition-all ${
+                          countdownEnabled ? 'bg-amber-600' : 'bg-zinc-700'
+                        }`}
+                      >
+                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                          countdownEnabled ? 'translate-x-5' : 'translate-x-0'
+                        }`} />
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="space-y-3 pt-4 border-t border-zinc-900">
                     <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><Monitor size={14}/> Compensação de Polegadas</p>
                     <p className="text-[9px] text-zinc-600 leading-relaxed">Ajusta o texto no monitor principal para ficar proporcional ao da tela de retorno.</p>
@@ -1197,7 +1274,7 @@ function TeleprompterContent({ id }: { id: string }) {
                       <div className="space-y-1.5">
                         <p className="text-[9px] text-zinc-600 uppercase font-bold">Tela Retorno</p>
                         <div className="flex items-center gap-2">
-                          <input type="number" min={1} max={100} value={referenceInches}
+                          <input type="number" min={1} max={100} step={0.5} value={referenceInches}
                             onChange={(e) => { const v = Number(e.target.value); if (v > 0) { setReferenceInches(v); updateGlobalStyle({ referenceInches: v }); } }}
                             className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs font-bold text-white text-center" />
                           <span className="text-[10px] text-zinc-600 font-bold">"</span>
@@ -1206,7 +1283,7 @@ function TeleprompterContent({ id }: { id: string }) {
                       <div className="space-y-1.5">
                         <p className="text-[9px] text-zinc-600 uppercase font-bold">Monitor Principal</p>
                         <div className="flex items-center gap-2">
-                          <input type="number" min={1} max={100} value={operatorInches}
+                          <input type="number" min={1} max={100} step={0.5} value={operatorInches}
                             onChange={(e) => { const v = Number(e.target.value); if (v > 0) { setOperatorInches(v); updateGlobalStyle({ operatorInches: v }); } }}
                             className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs font-bold text-white text-center" />
                           <span className="text-[10px] text-zinc-600 font-bold">"</span>
@@ -1301,6 +1378,8 @@ function TeleprompterContent({ id }: { id: string }) {
              <span className="text-[9px] font-black uppercase text-zinc-600 tracking-[0.3em]">
                 {isPlaying ? 'EXECUTANDO' : 'PAUSADO'} | VEL {speed}X
              </span>
+             <span className="h-4 w-px bg-zinc-800" />
+             <span className="text-[10px] font-bold text-amber-400 font-mono">{formatTime(realTime)}</span>
           </div>
         </div>
       )}
@@ -1311,7 +1390,7 @@ function TeleprompterContent({ id }: { id: string }) {
              <div data-tour="tp-speed" className="flex flex-col">
                 <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">Velocidade</span>
                <div className="flex items-center gap-2">
-                 <button onClick={() => updateGlobalStyle({speed: Math.max(speed - 0.5, 0)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronDown size={14}/></button>
+                  <button onClick={() => updateGlobalStyle({speed: Math.max(speed - 0.5, -20)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronDown size={14}/></button>
                  <div className="flex items-baseline gap-1">
                    <span className="text-xl font-black text-white">{speed}</span>
                    <span className="text-[10px] font-bold text-zinc-600 uppercase">x</span>
@@ -1349,6 +1428,10 @@ function TeleprompterContent({ id }: { id: string }) {
                   <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">{isPlaying ? 'Executando' : 'Pausado'}</span>
                   <span className="text-[10px] font-bold text-white uppercase font-mono">{Math.floor(localProgress * 100)}%</span>
                 </div>
+                <div className="flex flex-col items-center px-2">
+                  <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">Timer</span>
+                  <span className="text-[10px] font-bold text-amber-400 font-mono">{formatTime(realTime)}</span>
+                </div>
              </div>
 
              <div className="h-8 w-px bg-zinc-800" />
@@ -1356,7 +1439,7 @@ function TeleprompterContent({ id }: { id: string }) {
              {/* REINICIAR */}
              <button
                data-tour="tp-restart"
-               onClick={() => updateGlobalStyle({ resetRequest: Date.now(), isPlaying: false, progress: 0 })}
+               onClick={() => { resetTimer(); updateGlobalStyle({ resetRequest: Date.now(), isPlaying: false, progress: 0 }); }}
                className="flex flex-col items-center justify-center hover:text-white text-zinc-500 transition-colors"
                title="Reiniciar roteiro"
              >

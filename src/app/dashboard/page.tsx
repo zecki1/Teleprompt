@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Hourglass, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check, List, LayoutGrid, ArrowLeftRight, Minimize2, Mic } from "lucide-react";
+import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Hourglass, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check, List, LayoutGrid, ArrowLeftRight, Minimize2, Mic, Settings } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
@@ -74,6 +74,7 @@ const statusConfig: Record<ScriptStatus, { label: string; color: string; icon: R
   aguardando_gravacao: { label: "Aguardando Gravação", color: "bg-green-500", icon: CheckCircle2 },
   gravado: { label: "Gravado", color: "bg-blue-600", icon: Send },
   rejeitado: { label: "Rejeitado", color: "bg-red-500", icon: X },
+  nao_gravado: { label: "Não Gravado", color: "bg-red-600", icon: X },
 };
 export type { ScriptStatus };
 
@@ -115,7 +116,11 @@ function DashboardContent() {
   const [viewMode, setViewMode] = useState<'list' | 'scroll'>('scroll');
   const [treeCollapseVersions, setTreeCollapseVersions] = useState<Record<string, number>>({});
   const [presenters, setPresenters] = useState<Presenter[]>([]);
-  const [newPresenterName, setNewPresenterName] = useState("");
+  const [presenterSearch, setPresenterSearch] = useState("");
+  const [changingStatusScript, setChangingStatusScript] = useState<ScriptDoc | null>(null);
+  const [changingStatusValue, setChangingStatusValue] = useState<ScriptStatus>("rascunho");
+  const [changingStatusPersonId, setChangingStatusPersonId] = useState("");
+  const [changingStatusPersonName, setChangingStatusPersonName] = useState("");
 
   useEffect(() => {
     if (user?.workspaceId) {
@@ -556,16 +561,37 @@ function DashboardContent() {
     }
   };
 
-  const handleCreatePresenter = async () => {
-    if (!newPresenterName.trim() || !user?.workspaceId) return;
+  const handleQuickStatusChange = async () => {
+    if (!changingStatusScript) return;
+    const script = changingStatusScript;
+    const newStatus = changingStatusValue;
+    if (newStatus === script.status && !changingStatusPersonId) {
+      setChangingStatusScript(null);
+      return;
+    }
     try {
-      const id = await addPresenter(newPresenterName.trim(), user.workspaceId, user.uid);
-      setPresenters([...presenters, { id, name: newPresenterName.trim(), workspaceId: user.workspaceId, createdBy: user.uid }]);
-      setNewPresenterName("");
-      toast.success("Apresentador cadastrado!");
-    } catch (error) {
-      console.error("Erro ao cadastrar apresentador:", error);
-      toast.error("Erro ao cadastrar apresentador.");
+      const updateData: Record<string, unknown> = {
+        status: newStatus,
+        updatedAt: new Date().toISOString(),
+      };
+      if (changingStatusPersonId && changingStatusPersonName) {
+        if (newStatus === "rascunho") {
+          updateData.editorId = changingStatusPersonId;
+          updateData.editorName = changingStatusPersonName;
+        } else if (newStatus === "em_revisao" || newStatus === "revisao_realizada") {
+          updateData.reviewerId = changingStatusPersonId;
+          updateData.reviewerName = changingStatusPersonName;
+        } else if (newStatus === "gravado" || newStatus === "aguardando_gravacao") {
+          updateData.videomakerId = changingStatusPersonId;
+          updateData.videomakerName = changingStatusPersonName;
+        }
+      }
+      await updateDoc(doc(db, "scripts", script.id), updateData);
+      setScripts(scripts.map(s => s.id === script.id ? { ...s, ...updateData } : s));
+      toast.success(`Status alterado para "${statusConfig[newStatus]?.label || newStatus}"`);
+      setChangingStatusScript(null);
+    } catch {
+      toast.error("Erro ao alterar status.");
     }
   };
 
@@ -1332,6 +1358,7 @@ function DashboardContent() {
                                       script.status === "em_revisao" ? "bg-yellow-500 text-white text-[9px] font-black uppercase px-2 h-5 shrink-0" :
                                       (script.status === "aguardando_gravacao" || script.status === "revisao_realizada") ? "bg-emerald-500 text-white text-[9px] font-black uppercase px-2 h-5 shrink-0" :
                                       script.status === "gravado" ? "bg-blue-600 text-white text-[9px] font-black uppercase px-2 h-5 shrink-0" :
+                                     script.status === "nao_gravado" ? "bg-red-600 text-white text-[9px] font-black uppercase px-2 h-5 shrink-0" :
                                       "bg-zinc-500 text-white text-[9px] font-black uppercase px-2 h-5 shrink-0"
                                     }>
                                       {statusConfig[script.status]?.label || script.status}
@@ -1383,6 +1410,16 @@ function DashboardContent() {
                                     <Send className="w-3 h-3" /> Gravado
                                   </div>
                                 )}
+                                {script.status === "nao_gravado" && (
+                                  <div className="absolute -top-1 -right-1 z-20 bg-red-600 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
+                                    <X className="w-3 h-3" /> Não Gravado
+                                  </div>
+                                )}
+                                {script.status === "rejeitado" && (
+                                  <div className="absolute -top-1 -right-1 z-20 bg-red-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
+                                    <X className="w-3 h-3" /> Rejeitado
+                                  </div>
+                                )}
                                 {(script.commentCount || 0) > 0 && (
                                   <div className="absolute -top-1 -left-1 z-20 bg-blue-500 text-white px-3 py-1 rounded flex items-center gap-1 shadow-lg text-[10px] font-bold uppercase tracking-wider">
                                     <MessageSquare className="w-3 h-3" /> {script.commentCount}
@@ -1393,6 +1430,7 @@ function DashboardContent() {
                                   ${(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") ? "ring-2 ring-emerald-500/30 border-emerald-500/50" : ""}
                                   ${script.status === "em_revisao" ? "ring-2 ring-yellow-500/30 border-yellow-500/50" : ""}
                                   ${script.status === "gravado" ? "ring-2 ring-blue-600/30 border-blue-600/50" : ""}
+                                  ${script.status === "nao_gravado" ? "ring-2 ring-red-600/30 border-red-600/50" : ""}
                                 `}>
                                   <CardHeader className="p-5 pb-2">
                                     {editingId === script.id ? (
@@ -1418,6 +1456,8 @@ function DashboardContent() {
                                       {(script.status === "revisao_realizada" || script.status === "aguardando_gravacao") && <Badge className="bg-emerald-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.3)]">Aguardando Gravação</Badge>}
                                       {script.status === "gravado" && <Badge className="bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5 animate-pulse shadow-[0_0_10px_rgba(37,99,235,0.3)]">Aguardando Edição</Badge>}
                                       {script.status === "em_revisao" && <Badge className="bg-yellow-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5">Em Revisão</Badge>}
+                                      {script.status === "nao_gravado" && <Badge className="bg-red-600 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5">Não Gravado</Badge>}
+                                      {script.status === "rejeitado" && <Badge className="bg-red-500 text-white text-[9px] font-black uppercase tracking-widest px-2 h-5">Rejeitado</Badge>}
                                     </div>
                                   </CardHeader>
 
@@ -1498,6 +1538,12 @@ function DashboardContent() {
                                   </CardContent>
 
                                   <CardFooter className="bg-zinc-50/50 dark:bg-zinc-900/50 border-t border-zinc-100 dark:border-zinc-800/50 p-2 flex flex-wrap gap-0.5">
+                                    {(user?.role === "SuperAdmin" || user?.isSuperAdmin || user?.canAssign) && (
+                                      <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
+                                        onClick={(e) => { e.stopPropagation(); setChangingStatusScript(script); setChangingStatusValue(script.status); setChangingStatusPersonId(""); setChangingStatusPersonName(""); }}>
+                                        <Settings className="w-3 h-3 mr-1" /> Status
+                                      </Button>
+                                    )}
                                     <Button variant="ghost" size="sm" className="h-7 text-[9px] font-black text-zinc-400 uppercase tracking-widest"
                                       onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/tp/${script.id}`); toast.success("Link copiado!"); }}>
                                       <LinkIcon className="w-3 h-3 mr-1" /> Link
@@ -1548,10 +1594,12 @@ function DashboardContent() {
       <MoveScriptModal
         open={!!movingScript}
         script={movingScript}
-        projectScripts={movingScript ? (scriptsByProject[movingScript.projectName || movingScript.project || "Geral"] ?? []) : []}
+        allScripts={scripts}
+        projects={projects}
+        currentProjectId={movingScript?.projectId || projects.find(p => p.name === (movingScript?.projectName || movingScript?.project))?.id || ""}
+        currentProjectName={movingScript?.projectName || movingScript?.project || "Geral"}
         onClose={() => setMovingScript(null)}
         onMoved={() => {
-          // Refresh by re-fetching from Firestore
           setMovingScript(null);
           window.location.reload();
         }}
@@ -1561,7 +1609,10 @@ function DashboardContent() {
       <MoveFolderModal
         open={!!movingFolder}
         folderPath={movingFolder?.path || null}
-        projectScripts={movingFolder ? scripts.filter(s => s.projectId === movingFolder.projectId || s.project === movingFolder.projectName) : []}
+        allScripts={scripts}
+        projects={projects}
+        currentProjectId={movingFolder?.projectId || ""}
+        currentProjectName={movingFolder?.projectName || "Geral"}
         onClose={() => setMovingFolder(null)}
         onMoved={() => {
           setMovingFolder(null);
@@ -1771,37 +1822,61 @@ function DashboardContent() {
               <h4 className="text-[10px] font-black uppercase tracking-widest text-amber-500 flex items-center gap-2">
                 <Users className="w-4 h-4" /> Apresentador(es)
               </h4>
-              <div className="flex gap-2">
-                <Input
-                  value={newPresenterName}
-                  onChange={e => setNewPresenterName(e.target.value)}
-                  placeholder="Nome do apresentador"
-                  className="h-10 text-sm rounded bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800"
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCreatePresenter(); } }}
-                />
-                <Button onClick={handleCreatePresenter} disabled={!newPresenterName.trim()} size="sm" className="h-10 rounded font-black text-[10px] uppercase tracking-widest">
-                  <Plus className="w-3.5 h-3.5 mr-1" /> Add
-                </Button>
-              </div>
+              <Input
+                value={presenterSearch}
+                onChange={e => setPresenterSearch(e.target.value)}
+                placeholder="Pesquisar apresentador..."
+                className="h-10 text-sm rounded bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800"
+              />
               <div className="grid gap-2 max-h-40 overflow-y-auto">
-                {presenters.length > 0 ? (
-                  presenters.map(p => {
-                    const assigned = assigningScript?.presenterIds?.includes(p.id) || false;
+                {(() => {
+                  const filtered = presenterSearch.trim()
+                    ? presenters.filter(p => p.name.toLowerCase().includes(presenterSearch.toLowerCase()))
+                    : presenters;
+                  if (filtered.length > 0) {
+                    return filtered.map(p => {
+                      const assigned = assigningScript?.presenterIds?.includes(p.id) || false;
+                      return (
+                        <Button 
+                          key={p.id} 
+                          variant={assigned ? "secondary" : "outline"}
+                          className={`justify-between h-10 rounded font-bold transition-all ${assigned ? 'border-amber-500 ring-2 ring-amber-500/20 bg-amber-500/5' : ''}`}
+                          onClick={() => handleTogglePresenter(assigningScript!.id, p.id)}
+                        >
+                          <span>{p.name}</span>
+                          {assigned && <Check className="w-4 h-4 text-amber-500" />}
+                        </Button>
+                      );
+                    });
+                  }
+                  if (presenterSearch.trim()) {
                     return (
-                      <Button 
-                        key={p.id} 
-                        variant={assigned ? "secondary" : "outline"}
-                        className={`justify-between h-10 rounded font-bold transition-all ${assigned ? 'border-amber-500 ring-2 ring-amber-500/20 bg-amber-500/5' : ''}`}
-                        onClick={() => handleTogglePresenter(assigningScript!.id, p.id)}
+                      <Button
+                        variant="outline"
+                        className="h-10 rounded font-bold text-emerald-600 border-emerald-300 dark:border-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-all"
+                        onClick={async () => {
+                          const name = presenterSearch.trim();
+                          if (!name || !user?.workspaceId) return;
+                          try {
+                            const id = await addPresenter(name, user.workspaceId, user.uid);
+                            setPresenters([...presenters, { id, name, workspaceId: user.workspaceId, createdBy: user.uid }]);
+                            setPresenterSearch("");
+                            if (assigningScript) {
+                              handleTogglePresenter(assigningScript.id, id);
+                            }
+                            toast.success(`Apresentador "${name}" cadastrado!`);
+                          } catch {
+                            toast.error("Erro ao cadastrar apresentador.");
+                          }
+                        }}
                       >
-                        <span>{p.name}</span>
-                        {assigned && <Check className="w-4 h-4 text-amber-500" />}
+                        <Plus className="w-3.5 h-3.5 mr-1.5 text-emerald-500" />
+                        Cadastrar "{presenterSearch.trim()}"
                       </Button>
                     );
-                  })
-                ) : (
-                  <p className="text-xs text-zinc-400 italic">Nenhum apresentador cadastrado.</p>
-                )}
+                  }
+                  return <p className="text-xs text-zinc-400 italic text-center py-4">Nenhum apresentador cadastrado.</p>;
+                })()}
               </div>
             </div>
 
@@ -1860,7 +1935,10 @@ function DashboardContent() {
       <MoveScriptModal
         open={!!movingScript}
         script={movingScript}
-        projectScripts={scripts.filter(s => (s.projectName || s.project || "Geral") === (movingScript?.projectName || movingScript?.project || "Geral"))}
+        allScripts={scripts}
+        projects={projects}
+        currentProjectId={movingScript?.projectId || projects.find(p => p.name === (movingScript?.projectName || movingScript?.project))?.id || ""}
+        currentProjectName={movingScript?.projectName || movingScript?.project || "Geral"}
         onClose={() => setMovingScript(null)}
         onMoved={() => { setScripts([...scripts]); }}
       />
@@ -1868,7 +1946,10 @@ function DashboardContent() {
       <MoveFolderModal
         open={isMoveFolderOpen}
         folderPath={movingFolder?.path || null}
-        projectScripts={scripts.filter(s => (s.projectName || s.project || "Geral") === (movingFolder?.projectName || "Geral"))}
+        allScripts={scripts}
+        projects={projects}
+        currentProjectId={movingFolder?.projectId || ""}
+        currentProjectName={movingFolder?.projectName || "Geral"}
         onClose={() => setIsMoveFolderOpen(false)}
         onMoved={() => { setScripts([...scripts]); }}
       />      {/* DIALOG CRIAR PROJETO */}
@@ -1993,6 +2074,109 @@ function DashboardContent() {
             <Button variant="ghost" onClick={() => setQuickEditScript(null)} className="flex-1 h-11 rounded-xl font-bold text-sm">Cancelar</Button>
             <Button onClick={quickSaveTitle} disabled={!quickEditTitle.trim()} className="flex-[2] h-11 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px]">
               <Check className="w-4 h-4 mr-2" /> Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick Status Change Dialog */}
+      <Dialog open={!!changingStatusScript} onOpenChange={(open) => { if (!open) setChangingStatusScript(null); }}>
+        <DialogContent className="sm:max-w-sm bg-white dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 rounded-2xl p-6">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-black uppercase tracking-widest">Alterar Status</DialogTitle>
+            <DialogDescription className="text-zinc-500 text-sm">
+              {changingStatusScript?.title || ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-2">
+            {(["rascunho", "em_revisao", "revisao_realizada", "aguardando_gravacao", "gravado", "rejeitado", "nao_gravado"] as ScriptStatus[]).map(status => {
+              const cfg = statusConfig[status];
+              const isActive = changingStatusValue === status;
+              const isCurrent = changingStatusScript?.status === status;
+              return (
+                <button
+                  key={status}
+                  onClick={() => setChangingStatusValue(status)}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all border-2 ${
+                    isActive
+                      ? "border-blue-500 bg-blue-50 dark:bg-blue-950/20"
+                      : "border-transparent hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                  } ${status === "nao_gravado" && !isActive ? "border-red-200 dark:border-red-900" : ""}`}
+                >
+                  <div className={`w-3 h-3 rounded-full shrink-0 ${cfg.color}`} />
+                  <div className="flex-1">
+                    <span className={`text-sm font-bold ${isCurrent ? "text-blue-600" : "text-zinc-800 dark:text-zinc-200"}`}>
+                      {cfg.label}
+                    </span>
+                    {isCurrent && (
+                      <span className="ml-2 text-[9px] font-black uppercase text-zinc-400">(atual)</span>
+                    )}
+                    {status === "nao_gravado" && (
+                      <div className="text-[10px] text-red-500 font-medium mt-0.5 flex items-center gap-1">
+                        <X className="w-3 h-3" /> Solicitado para não gravar
+                      </div>
+                    )}
+                  </div>
+                  {isActive && <Check className="w-4 h-4 text-blue-500 shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Person selector */}
+          {changingStatusScript && (() => {
+            const status = changingStatusValue;
+            const statusLabel = statusConfig[status]?.label || status;
+            if (allUsers.length === 0) return null;
+            return (
+              <div className="border-t border-zinc-100 dark:border-zinc-800 pt-4 space-y-3">
+                <h4 className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2 text-zinc-500">
+                  <UserPlus className="w-3.5 h-3.5" /> {statusLabel} por:
+                </h4>
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                  {allUsers.map(u => {
+                    const isSelected = changingStatusPersonId === u.uid;
+                    return (
+                      <button
+                        key={u.uid}
+                        onClick={() => {
+                          setChangingStatusPersonId(isSelected ? "" : u.uid);
+                          setChangingStatusPersonName(isSelected ? "" : (u.displayName || u.name || "Usuário"));
+                        }}
+                        className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-all ${
+                          isSelected
+                            ? "bg-blue-50 dark:bg-blue-950/20 ring-1 ring-blue-500"
+                            : "hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                        }`}
+                      >
+                        <Avatar className="h-6 w-6">
+                          <AvatarImage src={u.photoURL || undefined} />
+                          <AvatarFallback className="text-[9px]">
+                            {(u.displayName || u.name || "U").slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="text-sm font-bold flex-1 truncate text-zinc-800 dark:text-zinc-200">
+                          {u.displayName || u.name}
+                        </span>
+                        {isSelected && <Check className="w-3.5 h-3.5 text-blue-500 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          <DialogFooter className="flex gap-3 pt-2">
+            <Button variant="ghost" onClick={() => setChangingStatusScript(null)} className="flex-1 h-11 rounded-xl font-bold text-sm">
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleQuickStatusChange}
+              disabled={changingStatusValue === changingStatusScript?.status && !changingStatusPersonId}
+              className="flex-[2] h-11 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px]"
+            >
+              <Settings className="w-4 h-4 mr-2" /> Alterar
             </Button>
           </DialogFooter>
         </DialogContent>

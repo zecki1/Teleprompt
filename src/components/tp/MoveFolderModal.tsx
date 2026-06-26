@@ -10,16 +10,29 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FolderNode, ScriptDoc } from "@/types/script";
 import { moveFolder, buildTree } from "@/lib/pathUtils";
+import { Project } from "@/services/projects";
 import { toast } from "sonner";
 
 interface MoveFolderModalProps {
   open: boolean;
   folderPath: string[] | null;
-  /** All scripts in the same project (to build the tree) */
-  projectScripts: ScriptDoc[];
+  /** All scripts to build folder trees for different projects */
+  allScripts: ScriptDoc[];
+  /** All available projects */
+  projects: Project[];
+  /** Current project identifiers */
+  currentProjectId: string;
+  currentProjectName: string;
   onClose: () => void;
   onMoved: () => void;
 }
@@ -36,16 +49,26 @@ const DEPTH_COLORS = [
 export function MoveFolderModal({
   open,
   folderPath,
-  projectScripts,
+  allScripts,
+  projects,
+  currentProjectId,
+  currentProjectName,
   onClose,
   onMoved,
 }: MoveFolderModalProps) {
+  const [selectedProjectId, setSelectedProjectId] = useState(currentProjectId);
   const [selectedDestPath, setSelectedDestPath] = useState<string[]>([]);
   const [moving, setMoving] = useState(false);
 
   if (!folderPath) return null;
 
-  const tree = buildTree(projectScripts);
+  const selectedProjectScripts = allScripts.filter(s => {
+    const sp = s.projectId || projects.find(p => p.name === (s.projectName || s.project))?.id || "";
+    return sp === selectedProjectId;
+  });
+  const tree = buildTree(selectedProjectScripts);
+
+  const selectedProjectName = projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId;
 
   const handleMove = async () => {
     if (!folderPath) return;
@@ -61,11 +84,19 @@ export function MoveFolderModal({
 
     setMoving(true);
     try {
-      await moveFolder(projectScripts, folderPath, selectedDestPath);
+      const targetProject = selectedProjectId !== currentProjectId
+        ? { projectId: selectedProjectId, projectName: selectedProjectName }
+        : undefined;
+
+      await moveFolder(allScripts, folderPath, selectedDestPath, targetProject);
+
+      const projectSuffix = targetProject
+        ? ` no projeto "${selectedProjectName}"`
+        : "";
       toast.success(
         selectedDestPath.length > 0
-          ? `Pasta movida para "${selectedDestPath.join(" › ")}"`
-          : "Pasta movida para a raiz do projeto"
+          ? `Pasta movida para "${selectedDestPath.join(" › ")}"${projectSuffix}`
+          : `Pasta movida para a raiz do projeto${projectSuffix}`
       );
       onMoved();
       onClose();
@@ -85,18 +116,37 @@ export function MoveFolderModal({
             Mover Pasta
           </DialogTitle>
           <DialogDescription className="text-center text-zinc-500 text-sm">
-            Selecione a pasta de destino para{" "}
+            Selecione a pasta de destino no projeto atual para{" "}
             <span className="font-bold text-zinc-700 dark:text-zinc-300">
               &ldquo;{folderPath[folderPath.length - 1]}&rdquo;
             </span>
           </DialogDescription>
         </DialogHeader>
 
-        <div className="mt-4 space-y-1 max-h-72 overflow-y-auto border border-zinc-100 dark:border-zinc-800 rounded-xl p-3">
+        {/* Project selector */}
+        <div className="mt-4">
+          <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1.5 block">
+            Projeto destino
+          </label>
+          <Select value={selectedProjectId} onValueChange={val => { setSelectedProjectId(val); setSelectedDestPath([]); }}>
+            <SelectTrigger className="w-full h-9 rounded-lg border-zinc-200 dark:border-zinc-800 text-[12px] font-bold">
+              <SelectValue placeholder="Selecione um projeto" />
+            </SelectTrigger>
+            <SelectContent className="rounded-xl border-zinc-200 dark:border-zinc-800">
+              {projects.map(p => (
+                <SelectItem key={p.id} value={p.id} className="text-[12px] font-bold">
+                  {p.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="mt-3 space-y-1 max-h-64 overflow-y-auto border border-zinc-100 dark:border-zinc-800 rounded-xl p-3">
           {/* Root option */}
           <FolderOption
             path={[]}
-            label="⟨ Raiz do projeto ⟩"
+            label={`⟨ Raiz — ${selectedProjectName} ⟩`}
             selected={selectedDestPath.length === 0}
             onClick={() => setSelectedDestPath([])}
             depth={0}
@@ -118,9 +168,10 @@ export function MoveFolderModal({
             <>
               Destino:{" "}
               <span className="text-blue-500">{selectedDestPath.join(" › ")}</span>
+              <span className="text-zinc-500"> — {selectedProjectName}</span>
             </>
           ) : (
-            "Destino: Raiz do projeto"
+            `Destino: Raiz — ${selectedProjectName}`
           )}
         </p>
 
