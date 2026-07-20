@@ -408,14 +408,15 @@ function DashboardContent() {
   }, [user?.workspaceId, user?.isSuperAdmin]);
 
     useEffect(() => {
-    if (!user) {
+    const activeWorkspaceId = user?.workspaceId || "";
+    const isSuper = user?.isSuperAdmin;
+    
+    if (!user?.uid) {
       router.push("/login");
       return;
     }
-
-    const activeWorkspaceId = user.workspaceId || "";
     
-    if (!activeWorkspaceId && !user.isSuperAdmin) {
+    if (!activeWorkspaceId && !isSuper) {
       setScripts([]);
       setLoading(false);
       return;
@@ -424,7 +425,7 @@ function DashboardContent() {
     loadProjects();
 
     const scriptsRef = collection(db, "scripts");
-    const q = user.isSuperAdmin
+    const q = isSuper
       ? query(scriptsRef)
       : query(scriptsRef, where("workspaceId", "==", activeWorkspaceId));
 
@@ -465,7 +466,7 @@ function DashboardContent() {
     });
 
     return () => unsub();
-  }, [user?.workspaceId, router, user, loadProjects]);
+  }, [user?.workspaceId, user?.isSuperAdmin, router, loadProjects]);
 
   const filteredScripts = scripts.filter(s => {
     const matchesStatus = statusFilter === "all" || s.status === statusFilter;

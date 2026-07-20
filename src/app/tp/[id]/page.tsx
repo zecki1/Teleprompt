@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, use, Suspense } from "react";
 import dynamic from "next/dynamic";
-import { doc, getDoc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, arrayUnion, where, setDoc } from "firebase/firestore";
+import { doc, getDoc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, where, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
 import { Scene, stripHtml } from "@/lib/parser";
@@ -904,13 +904,6 @@ function TeleprompterContent({ id }: { id: string }) {
         const scriptRef = doc(db, "scripts", id);
         const prevSnap = await getDoc(scriptRef);
         const previousScriptData = prevSnap.exists() ? prevSnap.data() : undefined;
-
-        updateData.collaborators = arrayUnion({
-          uid: user.uid,
-          name: user.displayName || user.name || user.email || "Usuário",
-          role: "Videomaker",
-          timestamp: new Date().toISOString()
-        });
 
         if (!editorId) {
           updateData.editorId = user.uid;

@@ -63,8 +63,6 @@ import {
   updateDoc,
   serverTimestamp,
   where,
-  arrayUnion,
-  onSnapshot,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
@@ -165,6 +163,8 @@ function HighlightedSpokenText({
   const [typoReady, setTypoReady] = useState(false);
   const [debouncedText, setDebouncedText] = useState(text);
   const ceRef = useRef<HTMLDivElement | null>(null);
+  const isUserEditing = useRef(false);
+  const lastExternalText = useRef(text);
 
   const plainText = useMemo(() => stripHtml(text), [text]);
 
@@ -275,23 +275,52 @@ function HighlightedSpokenText({
     } else {
       document.execCommand("insertText", false, textPlain);
     }
+    isUserEditing.current = true;
     if (ceRef.current) {
       onChange(ceRef.current.innerHTML);
     }
   }, [onChange]);
 
   const handleInput = useCallback(() => {
+    isUserEditing.current = true;
     if (ceRef.current) {
       onChange(ceRef.current.innerHTML);
     }
   }, [onChange]);
 
-  // Sync contentEditable when text prop changes externally
+  const handleFocus = useCallback(() => {
+    isUserEditing.current = true;
+  }, []);
+
+  const handleBlur = useCallback(() => {
+    isUserEditing.current = false;
+    if (ceRef.current) {
+      const currentHtml = ceRef.current.innerHTML;
+      if (currentHtml !== text) {
+        onChange(currentHtml);
+      }
+    }
+  }, [onChange, text]);
+
+  // Sync contentEditable when text prop changes externally (not from user typing)
+  useEffect(() => {
+    if (isEditing && ceRef.current) {
+      if (!isUserEditing.current && ceRef.current.innerHTML !== text) {
+        ceRef.current.innerHTML = text;
+        lastExternalText.current = text;
+      } else if (isUserEditing.current) {
+        lastExternalText.current = text;
+      }
+    }
+  }, [text, isEditing]);
+
+  // Initialize contentEditable innerHTML on mount / mode switch
   useEffect(() => {
     if (isEditing && ceRef.current && ceRef.current.innerHTML !== text) {
       ceRef.current.innerHTML = text;
+      lastExternalText.current = text;
     }
-  }, [text, isEditing]);
+  }, [isEditing]);
 
   return (
     <div className="relative w-full group/textarea">
@@ -313,10 +342,10 @@ function HighlightedSpokenText({
           suppressContentEditableWarning={true}
           onPaste={handlePaste}
           onInput={handleInput}
-          onBlur={handleInput}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
           data-placeholder={placeholder}
           className="text-[14px] font-medium leading-relaxed min-h-[120px] p-4 resize-none w-full rounded focus-visible:ring-2 focus-visible:ring-blue-500 bg-zinc-50/50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 outline-none whitespace-pre-wrap break-words empty:before:content-[attr(data-placeholder)] empty:before:text-zinc-400 empty:before:opacity-40"
-          dangerouslySetInnerHTML={{ __html: text || "" }}
         />
       ) : (
         <Textarea
@@ -396,28 +425,36 @@ function EditorContent({ id }: { id: string }) {
 
   useEffect(() => {
     if (isNew || !id) return;
-    const q = query(collection(db, "scripts", id, "comments"));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const counts: Record<number, number> = {};
-      const allComments: Comment[] = [];
-      snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        allComments.push({ 
-          id: doc.id, 
-          text: data.text || "", 
-          userId: data.userId || "", 
-          userName: data.userName || "", 
-          marker: data.marker,
-          createdAt: data.createdAt || null 
+    let cancelled = false;
+    async function loadComments() {
+      try {
+        const q = query(collection(db, "scripts", id, "comments"));
+        const snapshot = await getDocs(q);
+        if (cancelled) return;
+        const counts: Record<number, number> = {};
+        const allComments: Comment[] = [];
+        snapshot.docs.forEach(d => {
+          const data = d.data();
+          allComments.push({ 
+            id: d.id, 
+            text: data.text || "", 
+            userId: data.userId || "", 
+            userName: data.userName || "", 
+            marker: data.marker,
+            createdAt: data.createdAt || null 
+          });
+          if (data.marker) {
+            counts[data.marker] = (counts[data.marker] || 0) + 1;
+          }
         });
-        if (data.marker) {
-          counts[data.marker] = (counts[data.marker] || 0) + 1;
-        }
-      });
-      setCommentCounts(counts);
-      setComments(allComments);
-    });
-    return () => unsub();
+        setCommentCounts(counts);
+        setComments(allComments);
+      } catch {
+        // Silently fail - comments are non-critical
+      }
+    }
+    loadComments();
+    return () => { cancelled = true; };
   }, [id, isNew]);
 
   const renumberScenes = useCallback((sceneList: Scene[]) => {
@@ -585,26 +622,34 @@ function EditorContent({ id }: { id: string }) {
       return;
     }
 
-    const q = query(
-      collection(db, "scripts"),
-      ...(user?.isSuperAdmin ? [] : [where("workspaceId", "==", workspaceId || user?.workspaceId || "senai")]),
-      where("projectName", "==", project)
-    );
+    let cancelled = false;
 
-    const unsub = onSnapshot(q, (snap) => {
-      const folders = new Set<string>();
-      snap.docs.forEach(doc => {
-        const d = doc.data();
-        if (d.folder) folders.add(d.folder);
-        if (d.path && Array.isArray(d.path)) {
-          d.path.forEach(p => { if (p) folders.add(p); });
-        }
-      });
-      setExistingFolders(Array.from(folders).sort());
-    });
+    async function fetchFolders() {
+      try {
+        const q = query(
+          collection(db, "scripts"),
+          ...(user?.isSuperAdmin ? [] : [where("workspaceId", "==", workspaceId || user?.workspaceId || "senai")]),
+          where("projectName", "==", project)
+        );
+        const snap = await getDocs(q);
+        if (cancelled) return;
+        const folders = new Set<string>();
+        snap.docs.forEach(d => {
+          const data = d.data();
+          if (data.folder) folders.add(data.folder);
+          if (data.path && Array.isArray(data.path)) {
+            data.path.forEach(p => { if (p) folders.add(p); });
+          }
+        });
+        setExistingFolders(Array.from(folders).sort());
+      } catch {
+        // Silently fail - folder list is non-critical
+      }
+    }
 
-    return () => unsub();
-  }, [project, workspaceId, user?.workspaceId]);
+    fetchFolders();
+    return () => { cancelled = true; };
+  }, [project, workspaceId, user?.workspaceId, user?.isSuperAdmin]);
 
   useEffect(() => {
     if (!projectId && project !== "Geral" && projects.length > 0) {
@@ -654,8 +699,8 @@ function EditorContent({ id }: { id: string }) {
     setIsSaving(true);
     const safetyTimer = setTimeout(() => {
       setIsSaving(false);
-      sonnerToast.error("O salvamento demorou demais.");
-    }, 30000);
+      sonnerToast.error("O salvamento demorou demais. Verifique sua conexão.");
+    }, 45000);
 
     try {
       const finalWorkspaceId = workspaceId || user?.workspaceId || "senai";
@@ -699,15 +744,7 @@ function EditorContent({ id }: { id: string }) {
         videomakerId: finalVideomakerId,
         videomakerName: finalVideomakerName,
         isMirrored,
-        collaborators: arrayUnion({
-          uid: user?.uid,
-          name: user?.displayName || user?.name || user?.email || "Usuário",
-          role: "Editor",
-          timestamp: new Date().toISOString()
-        })
       });
-
-      let previousScriptData: Record<string, unknown> | undefined;
 
       if (isNew) {
         const docRef = await addDoc(collection(db, "scripts"), {
@@ -719,8 +756,6 @@ function EditorContent({ id }: { id: string }) {
         });
         currentScriptId = docRef.id;
       } else {
-        const prevSnap = await getDoc(doc(db, "scripts", currentScriptId));
-        previousScriptData = prevSnap.data() as Record<string, unknown> | undefined;
         await updateDoc(doc(db, "scripts", currentScriptId), saveData);
       }
 
@@ -737,7 +772,7 @@ function EditorContent({ id }: { id: string }) {
         versionPayload
       );
 
-      await logActivity({
+      logActivity({
         userId: user?.uid || "",
         userName: user?.displayName || user?.name || user?.email || "Usuário",
         userAvatar: user?.photoURL || null,
@@ -750,9 +785,9 @@ function EditorContent({ id }: { id: string }) {
         subfolder: subfolder || null,
         lesson: lesson || null,
         path: path || null,
-        snapshot: previousScriptData,
+        snapshot: null,
         workspaceId: finalWorkspaceId
-      });
+      }).catch(() => {});
 
       showToast("Roteiro salvo!");
       setIsEditingMode(false);
@@ -763,8 +798,11 @@ function EditorContent({ id }: { id: string }) {
       setTimeout(() => {
         router.push("/dashboard");
       }, 1000);
-    } catch {
-      sonnerToast.error("Falha ao salvar roteiro.");
+    } catch (err) {
+      const msg = err instanceof Error && err.message.includes("quota")
+        ? "Cota do Firestore excedida. Aguarde alguns minutos e tente novamente."
+        : "Falha ao salvar roteiro.";
+      sonnerToast.error(msg);
     } finally {
       clearTimeout(safetyTimer);
       setIsSaving(false);

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, increment, doc, updateDoc, arrayUnion, deleteDoc, arrayRemove } from "firebase/firestore";
+import { collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, increment, doc, updateDoc, arrayUnion, deleteDoc, arrayRemove } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -42,7 +42,8 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
   useEffect(() => {
     const q = query(
       collection(db, "scripts", scriptId, "comments"),
-      orderBy("createdAt", "desc")
+      orderBy("createdAt", "desc"),
+      limit(100)
     );
 
     const unsub = onSnapshot(q, (snapshot) => {

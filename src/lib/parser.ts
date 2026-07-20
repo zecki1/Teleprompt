@@ -1,6 +1,15 @@
 export function stripHtml(html: string): string {
   if (!html) return "";
-  return html.replace(/<[^>]*>/g, "");
+  return html
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export interface Scene {
@@ -88,20 +97,27 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
     }
     for (const m of content.matchAll(/^\s*\[let(\d+)\]\s*[:\-]\s*(.+)/img)) {
       const idx = parseInt(m[1]) - 1;
-      if (lettering[idx] === undefined) lettering[idx] = m[2].trim();
+      const val = m[2].trim();
+      if (lettering[idx] === undefined) lettering[idx] = val.includes('<') ? stripHtml(val) : val;
     }
     opening = extractFirst(content, /^\s*\[abe\]\s*[:\-]\s*(.+)/im);
     closing = extractFirst(content, /^\s*\[enc\]\s*[:\-]\s*(.+)/im);
     time = extractFirst(content, /^\s*(?:Tempo|Duração)\s*[:\-]\s*(.+)/im);
 
+    // Strip HTML from metadata fields if they contain tags
+    if (opening && opening.includes('<')) opening = stripHtml(opening);
+    if (closing && closing.includes('<')) closing = stripHtml(closing);
+
     // Remove todas as linhas de metadados estruturados para obter o spoken text
-    const spokenText = content
+    const spokenTextRaw = content
       .replace(/^\s*\[(?:img|url|let)\d+\]\s*[:\-]\s*.+/img, '')
       .replace(/^\s*\[(?:abe|enc)\]\s*[:\-]\s*.+/img, '')
       .replace(/^\s*(?:Tempo|Duração)\s*[:\-]\s*.+/img, '')
       .replace(/^\s*\[?(?:Locução|Legenda)\]?\s*[:\-]\s*/img, '')
       .replace(/^\s*[\r\n]/gm, '')
       .trim();
+    // Strip HTML tags if content contains them (e.g. pasted from Word)
+    const spokenText = spokenTextRaw.includes('<') ? stripHtml(spokenTextRaw) : spokenTextRaw;
 
     return { images, sources, lettering, opening, closing, spokenText, time };
   }

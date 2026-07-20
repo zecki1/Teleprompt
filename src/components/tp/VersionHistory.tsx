@@ -82,8 +82,13 @@ export function VersionHistory({ scriptId, isOpen, onClose }: VersionHistoryProp
         orderBy("createdAt", "desc"),
         limit(50)
       ),
-      () => {
-        loadVersions();
+      (snapshot) => {
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as VersionData[];
+        setVersions(data);
+        setLoading(false);
       }
     );
     return () => unsub();

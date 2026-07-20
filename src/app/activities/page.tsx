@@ -68,14 +68,17 @@ export default function ActivitiesPage() {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    if (!user) {
+    const isSuper = user?.isSuperAdmin;
+    const wsId = user?.workspaceId || "senai";
+
+    if (!user?.uid) {
       router.push("/login");
       return;
     }
 
-    const activitiesConstraints = user.isSuperAdmin
+    const activitiesConstraints = isSuper
       ? [orderBy("timestamp", "desc"), limit(200)]
-      : [where("workspaceId", "==", user.workspaceId || "senai"), orderBy("timestamp", "desc"), limit(200)];
+      : [where("workspaceId", "==", wsId), orderBy("timestamp", "desc"), limit(200)];
     const q = query(
       collection(db, "activities"),
       ...activitiesConstraints
@@ -91,7 +94,7 @@ export default function ActivitiesPage() {
     });
 
     return () => unsub();
-  }, [user, router]);
+  }, [user?.uid, user?.workspaceId, user?.isSuperAdmin, router]);
 
   const filtered = useMemo(() => {
     let result = activities;
