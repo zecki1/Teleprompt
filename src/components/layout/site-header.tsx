@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { Terminal, Menu, Maximize, LogOut, User, LayoutDashboard, FolderOpen, Users, BarChart3, Repeat, Plus, Briefcase, HelpCircle } from "lucide-react";
+import { Terminal, Menu, Maximize, LogOut, User, LayoutDashboard, FolderOpen, Users, BarChart3, Repeat, Plus, Briefcase, HelpCircle, Sun, Moon } from "lucide-react";
+import { useTheme } from "next-themes";
 import { SettingsMenu } from "@/components/settings-menu";
 import { TourGuide } from "@/components/tour-guide";
 import { CreateOrJoinWorkspaceModal } from "@/components/auth/CreateOrJoinWorkspaceModal";
@@ -43,6 +44,7 @@ const navItems = [
 
 export function SiteHeader() {
   const { user, currentWorkspace, userWorkspacesDetailed, switchWorkspace, leaveWorkspace, logOut } = useAuth();
+  const { theme, setTheme } = useTheme();
   const router = useRouter();
   const pathname = usePathname();
   const [showNewWs, setShowNewWs] = useState(false);
@@ -120,6 +122,14 @@ export function SiteHeader() {
         {/* Ações & Menu Mobile */}
         <div className="flex items-center gap-6">
           <TourGuide />
+
+          <button
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+            title={theme === "dark" ? "Modo claro" : "Modo escuro"}
+          >
+            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
           
           {user ? (
             <DropdownMenu>

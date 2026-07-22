@@ -392,56 +392,68 @@ export default function RelatorioPage() {
       let scriptsWithRecording = 0;
 
       projectScripts.forEach((s) => {
-        const scriptActivities = allActivities.filter((a) => a.scriptId === s.id);
-
-        // Atividades ordenadas com timestamp válido
-        const sortedActs = scriptActivities
-          .filter((a) => a.action)
-          .map((a) => ({
-            action: a.action.toLowerCase(),
-            time: parseDate(a.timestamp)?.getTime() || 0,
-          }))
-          .filter((a) => a.time > 0)
-          .sort((a, b) => a.time - b.time);
-
-        if (sortedActs.length < 2) return;
-
-        // Agrupar em sessões (gap > 2h = nova sessão)
-        const sessions: { duration: number; hasRecording: boolean }[] = [];
-        let sessStart = sortedActs[0].time;
-        let sessEnd = sortedActs[0].time;
-        let hasRecording = sortedActs[0].action.includes("grav");
-
-        for (let i = 1; i < sortedActs.length; i++) {
-          const gap = sortedActs[i].time - sortedActs[i - 1].time;
-          if (gap > SESSION_GAP_MS) {
-            sessions.push({ duration: sessEnd - sessStart, hasRecording });
-            sessStart = sortedActs[i].time;
-            sessEnd = sortedActs[i].time;
-            hasRecording = sortedActs[i].action.includes("grav");
-          } else {
-            sessEnd = sortedActs[i].time;
-            if (sortedActs[i].action.includes("grav")) hasRecording = true;
-          }
-        }
-        sessions.push({ duration: sessEnd - sessStart, hasRecording });
-
-        // Separar por tipo
-        let scriptWritingMs = 0;
-        let scriptRecordingMs = 0;
-        for (const s of sessions) {
-          if (s.duration <= 0) continue;
-          if (s.hasRecording) scriptRecordingMs += s.duration;
-          else scriptWritingMs += s.duration;
-        }
-
-        if (scriptWritingMs > 0) {
-          projectWritingMs += scriptWritingMs;
+        // Usar editingDuration real quando disponível (medido pelo editor)
+        if (s.editingDuration && s.editingDuration > 0) {
+          projectWritingMs += s.editingDuration;
           scriptsWithWriting++;
         }
-        if (scriptRecordingMs > 0) {
-          projectRecordingMs += scriptRecordingMs;
+
+        // Usar recordedDuration real quando disponível (medido pelo TP)
+        if (s.recordedDuration && s.recordedDuration > 0) {
+          projectRecordingMs += s.recordedDuration;
           scriptsWithRecording++;
+        }
+
+        // Fallback: calcular por sessões de atividade quando não há dados reais
+        if ((!s.editingDuration || s.editingDuration <= 0) && (!s.recordedDuration || s.recordedDuration <= 0)) {
+          const scriptActivities = allActivities.filter((a) => a.scriptId === s.id);
+
+          const sortedActs = scriptActivities
+            .filter((a) => a.action)
+            .map((a) => ({
+              action: a.action.toLowerCase(),
+              time: parseDate(a.timestamp)?.getTime() || 0,
+            }))
+            .filter((a) => a.time > 0)
+            .sort((a, b) => a.time - b.time);
+
+          if (sortedActs.length < 2) return;
+
+          const sessions: { duration: number; hasRecording: boolean }[] = [];
+          let sessStart = sortedActs[0].time;
+          let sessEnd = sortedActs[0].time;
+          let hasRecording = sortedActs[0].action.includes("grav");
+
+          for (let i = 1; i < sortedActs.length; i++) {
+            const gap = sortedActs[i].time - sortedActs[i - 1].time;
+            if (gap > SESSION_GAP_MS) {
+              sessions.push({ duration: sessEnd - sessStart, hasRecording });
+              sessStart = sortedActs[i].time;
+              sessEnd = sortedActs[i].time;
+              hasRecording = sortedActs[i].action.includes("grav");
+            } else {
+              sessEnd = sortedActs[i].time;
+              if (sortedActs[i].action.includes("grav")) hasRecording = true;
+            }
+          }
+          sessions.push({ duration: sessEnd - sessStart, hasRecording });
+
+          let scriptWritingMs = 0;
+          let scriptRecordingMs = 0;
+          for (const sess of sessions) {
+            if (sess.duration <= 0) continue;
+            if (sess.hasRecording) scriptRecordingMs += sess.duration;
+            else scriptWritingMs += sess.duration;
+          }
+
+          if (scriptWritingMs > 0) {
+            projectWritingMs += scriptWritingMs;
+            scriptsWithWriting++;
+          }
+          if (scriptRecordingMs > 0) {
+            projectRecordingMs += scriptRecordingMs;
+            scriptsWithRecording++;
+          }
         }
       });
 
@@ -1727,9 +1739,15 @@ export default function RelatorioPage() {
                   .sort((a, b) => a - b);
 
                 const creationTimeMinutes = createdTime ? Math.round((updatedTime || createdTime) - createdTime) / (1000 * 60) : 0;
-                const editingTimeMinutes = editingActs.length > 1 ? Math.round((editingActs[editingActs.length - 1] - editingActs[0]) / (1000 * 60)) : 0;
+                // Usar editingDuration real quando disponível, senão calcular por atividades
+                const editingTimeMinutes = (script.editingDuration && script.editingDuration > 0)
+                  ? Math.round(script.editingDuration / (1000 * 60))
+                  : (editingActs.length > 1 ? Math.round((editingActs[editingActs.length - 1] - editingActs[0]) / (1000 * 60)) : 0);
                 const reviewingTimeMinutes = reviewingActs.length > 1 ? Math.round((reviewingActs[reviewingActs.length - 1] - reviewingActs[0]) / (1000 * 60)) : 0;
-                const recordingTimeMinutes = recordingActs.length > 1 ? Math.round((recordingActs[recordingActs.length - 1] - recordingActs[0]) / (1000 * 60)) : 0;
+                // Usar recordedDuration real quando disponível, senão calcular por atividades
+                const recordingTimeMinutes = (script.recordedDuration && script.recordedDuration > 0)
+                  ? Math.round(script.recordedDuration / (1000 * 60))
+                  : (recordingActs.length > 1 ? Math.round((recordingActs[recordingActs.length - 1] - recordingActs[0]) / (1000 * 60)) : 0);
 
                 const hasRecording = recordingActs.length > 0;
                 const hasEditing = editingActs.length > 0;

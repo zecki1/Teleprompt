@@ -30,53 +30,53 @@
 
 :root {
   --radius: 1rem;
-  --color1: #FFA500;
-  --color2: #FFA500;
-  --color3: #FFA500;
+  --color1: #F48F68;
+  --color2: #8BDFDD;
+  --color3: #FFE394;
   --background: 0 0% 100%;
-  --foreground: 191 100% 5%;
+  --foreground: 0 0% 10%;
   --card: 0 0% 100%;
-  --card-foreground: 240 10% 10%;
-  --popover: 0 0% 95%;
-  --popover-foreground: 0 0% 0%;
-  --primary: 39 100% 50%;
+  --card-foreground: 0 0% 15%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 15%;
+  --primary: 198 68% 51%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 0 0% 94%;
-  --secondary-foreground: 0 0% 0%;
-  --muted: 345 10% 85%;
-  --muted-foreground: 0 0% 35%;
-  --accent: 0 0% 7%;
-  --accent-foreground: 240 5.9% 10%;
+  --secondary: 44 100% 79%;
+  --secondary-foreground: 0 0% 15%;
+  --muted: 44 60% 90%;
+  --muted-foreground: 0 0% 40%;
+  --accent: 17 86% 68%;
+  --accent-foreground: 0 0% 100%;
   --destructive: 0 50% 30%;
   --destructive-foreground: 0 0% 90%;
-  --border: 0 0% 0%;
-  --input: 0 0% 30%;
-  --ring: 39 100% 50%;
+  --border: 44 40% 85%;
+  --input: 44 40% 80%;
+  --ring: 198 68% 51%;
 }
 
 .dark {
-  --color1: #001aff;
-  --color2: #001aff;
-  --color3: #001aff;
-  --background: 191 50% 5%;
+  --color1: #B13BFF;
+  --color2: #471396;
+  --color3: #FFCC00;
+  --background: 0 0% 5%;
   --foreground: 0 0% 100%;
-  --card: 191 50% 5%;
+  --card: 0 0% 9%;
   --card-foreground: 0 0% 100%;
-  --popover: 191 50% 5%;
+  --popover: 0 0% 9%;
   --popover-foreground: 0 0% 100%;
-  --primary: 234 100% 50% ;
+  --primary: 276 100% 62%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 188 45% 9%;
+  --secondary: 264 78% 33%;
   --secondary-foreground: 0 0% 100%;
-  --muted: 188 45% 9%;
-  --muted-foreground: 184 100% 50%;
-  --accent: 188 45% 9%;
-  --accent-foreground: 0 0% 100%;
+  --muted: 0 0% 14%;
+  --muted-foreground: 0 0% 60%;
+  --accent: 48 100% 50%;
+  --accent-foreground: 0 0% 10%;
   --destructive: 0 100% 30%;
   --destructive-foreground: 0 0% 100%;
-  --border: 215 25% 17%;
-  --input: 0 0% 10%;
-  --ring: 184 100% 50%;
+  --border: 0 0% 18%;
+  --input: 0 0% 14%;
+  --ring: 276 100% 62%;
 }
 
 @layer base {
@@ -141,15 +141,15 @@ html[data-font-size="24"] { font-size: 24px; }
      background: transparent;
    }
    .custom-scrollbar::-webkit-scrollbar-thumb {
-     background: #3b82f6;
-     border-radius: 10px;
-   }
-   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-     background: #2563eb;
-   }
+      background: #B13BFF;
+      border-radius: 10px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: #9000E6;
+    }
         
         ::selection {
-          background-color: #3b82f6 !important;
+          background-color: #B13BFF !important;
           color: white !important;
         }
 

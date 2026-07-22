@@ -64,6 +64,7 @@ import { Scene, parseScript } from "@/lib/parser";
 import { exportAllToWord } from "@/lib/export-all-word";
 import { exportAllToPPT } from "@/lib/export-all-ppt";
 import { Presenter, addPresenter, getPresenters, deletePresenter } from "@/services/presenters";
+import { BulkAssignDialog } from "@/components/dashboard/BulkAssignDialog";
 
 type ScriptCategory = "video" | "podcast";
 
@@ -121,6 +122,8 @@ function DashboardContent() {
   const [changingStatusValue, setChangingStatusValue] = useState<ScriptStatus>("rascunho");
   const [changingStatusPersonId, setChangingStatusPersonId] = useState("");
   const [changingStatusPersonName, setChangingStatusPersonName] = useState("");
+  const [selectedScripts, setSelectedScripts] = useState<Set<string>>(new Set());
+  const [bulkAssignScripts, setBulkAssignScripts] = useState<ScriptDoc[] | null>(null);
 
   useEffect(() => {
     if (user?.workspaceId) {
@@ -560,6 +563,24 @@ function DashboardContent() {
       console.error("Erro ao atribuir apresentador:", error);
       toast.error("Erro ao atribuir apresentador.");
     }
+  };
+
+  const toggleScriptSelection = (scriptId: string) => {
+    setSelectedScripts(prev => {
+      const next = new Set(prev);
+      if (next.has(scriptId)) next.delete(scriptId);
+      else next.add(scriptId);
+      return next;
+    });
+  };
+
+  const handleBulkAssigned = (updatedScripts: ScriptDoc[]) => {
+    setScripts(prev => prev.map(s => {
+      const update = updatedScripts.find(u => u.id === s.id);
+      return update ? { ...s, ...update } : s;
+    }));
+    setSelectedScripts(new Set());
+    setBulkAssignScripts(null);
   };
 
   const handleQuickStatusChange = async () => {
@@ -1334,6 +1355,7 @@ function DashboardContent() {
                         }}
                         onMoveFolder={(folderPath) => { setMovingFolder({ path: folderPath, projectId: pid, projectName: projectName }); setIsMoveFolderOpen(true); }}
                         onDeleteFolder={deleteFolder}
+                        onAssignFolder={(folderScripts) => setBulkAssignScripts(folderScripts)}
                         onBackupFolder={(folderPath, folderScripts, format) => {
                           const scripts = folderScripts.filter(s => !s.isPlaceholder);
                           const folderLabel = `${projectName} > ${folderPath.join(" > ")}`;
@@ -1351,9 +1373,16 @@ function DashboardContent() {
                             return (
                               <div className="w-full space-y-1">
                                 {scripts.filter(s => !s.isPlaceholder).map(script => (
-                                  <div key={script.id} className="flex items-center gap-3 px-4 py-2.5 rounded border border-transparent hover:border-zinc-200 dark:hover:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 transition-all cursor-pointer group"
+                                  <div key={script.id} className={`flex items-center gap-3 px-4 py-2.5 rounded border transition-all cursor-pointer group ${selectedScripts.has(script.id) ? 'border-blue-500 bg-blue-500/5 dark:bg-blue-500/10' : 'border-transparent hover:border-zinc-200 dark:hover:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-900/50'}`}
                                     onClick={() => router.push(`/editor/${script.id}`)}
                                   >
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedScripts.has(script.id)}
+                                      onChange={() => toggleScriptSelection(script.id)}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-600 accent-blue-500 cursor-pointer shrink-0"
+                                    />
                                     <Badge className={
                                       script.status === "rascunho" ? "bg-orange-500 text-white text-[9px] font-black uppercase px-2 h-5 shrink-0" :
                                       script.status === "em_revisao" ? "bg-yellow-500 text-white text-[9px] font-black uppercase px-2 h-5 shrink-0" :
@@ -1432,6 +1461,7 @@ function DashboardContent() {
                                   ${script.status === "em_revisao" ? "ring-2 ring-yellow-500/30 border-yellow-500/50" : ""}
                                   ${script.status === "gravado" ? "ring-2 ring-blue-600/30 border-blue-600/50" : ""}
                                   ${script.status === "nao_gravado" ? "ring-2 ring-red-600/30 border-red-600/50" : ""}
+                                  ${selectedScripts.has(script.id) ? "ring-2 ring-blue-500 border-blue-500" : ""}
                                 `}>
                                   <CardHeader className="p-5 pb-2">
                                     {editingId === script.id ? (
@@ -1441,12 +1471,21 @@ function DashboardContent() {
                                       </div>
                                     ) : (
                                       <div className="flex items-start justify-between group/title">
-                                        <CardTitle className="text-base leading-tight font-black break-all whitespace-normal" title={script.title}>
-                                          <span className="inline-flex items-center gap-2">
-                                            {script.category === "podcast" ? <span title="Podcast"><Mic className="w-4 h-4 text-zinc-400 shrink-0" /></span> : <span title="Vídeo"><Video className="w-4 h-4 text-zinc-400 shrink-0" /></span>}
-                                            {script.title}
-                                          </span>
-                                        </CardTitle>
+                                        <div className="flex items-start gap-2 flex-1 min-w-0">
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedScripts.has(script.id)}
+                                            onChange={() => toggleScriptSelection(script.id)}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-600 accent-blue-500 cursor-pointer mt-1 shrink-0"
+                                          />
+                                          <CardTitle className="text-base leading-tight font-black break-all whitespace-normal" title={script.title}>
+                                            <span className="inline-flex items-center gap-2">
+                                              {script.category === "podcast" ? <span title="Podcast"><Mic className="w-4 h-4 text-zinc-400 shrink-0" /></span> : <span title="Vídeo"><Video className="w-4 h-4 text-zinc-400 shrink-0" /></span>}
+                                              {script.title}
+                                            </span>
+                                          </CardTitle>
+                                        </div>
                                         <Button size="icon" variant="ghost" className="h-7 w-7 opacity-0 group-hover/title:opacity-100 transition-opacity flex-shrink-0" onClick={() => { setEditingId(script.id); setEditTitle(script.title); }}>
                                           <Edit2 className="w-3 h-3 text-muted-foreground" />
                                         </Button>
@@ -2192,6 +2231,42 @@ function DashboardContent() {
               onClose={() => setOpenCommentsScriptId(null)} 
             />
           </div>
+        </div>
+      )}
+
+      {/* Bulk Assign Dialog */}
+      <BulkAssignDialog
+        open={!!bulkAssignScripts}
+        onOpenChange={(open) => { if (!open) setBulkAssignScripts(null); }}
+        scripts={bulkAssignScripts || []}
+        allUsers={allUsers}
+        presenters={presenters}
+        onAssigned={handleBulkAssigned}
+      />
+
+      {/* Floating Selection Bar */}
+      {selectedScripts.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] bg-zinc-900 dark:bg-zinc-800 border border-zinc-700 rounded-2xl px-6 py-3 shadow-2xl flex items-center gap-4 animate-in slide-in-from-bottom-4 duration-300">
+          <span className="text-sm font-bold text-white">{selectedScripts.size} selecionado{selectedScripts.size > 1 ? "s" : ""}</span>
+          <div className="h-6 w-px bg-zinc-700" />
+          <Button
+            size="sm"
+            className="h-9 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-black text-[10px] uppercase tracking-widest gap-2"
+            onClick={() => {
+              const selected = scripts.filter(s => selectedScripts.has(s.id));
+              setBulkAssignScripts(selected);
+            }}
+          >
+            <Users className="w-3.5 h-3.5" /> Atribuir
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-9 text-zinc-400 hover:text-white font-bold text-[10px]"
+            onClick={() => setSelectedScripts(new Set())}
+          >
+            Limpar
+          </Button>
         </div>
       )}
     </div>

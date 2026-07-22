@@ -58,6 +58,10 @@ export interface ScriptDoc {
   textColor?: string;
   isPlaceholder?: boolean;
 
+  // Duração real (ms)
+  editingDuration?: number;
+  recordedDuration?: number;
+
   /** Workspace a que este script pertence */
   workspaceId?: string;
 }

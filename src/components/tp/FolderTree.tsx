@@ -16,6 +16,7 @@ import {
   FileText,
   Video,
   Link2,
+  Users,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -72,6 +73,8 @@ interface FolderTreeProps {
   onDeleteFolder: (scripts: ScriptDoc[]) => void;
   /** Called when user wants to backup a folder */
   onBackupFolder?: (folderPath: string[], scripts: ScriptDoc[], format: 'json' | 'word' | 'ppt') => void;
+  /** Called when user wants to assign roles to all scripts in a folder */
+  onAssignFolder?: (scripts: ScriptDoc[]) => void;
   /** Initial depth (used internally for recursion) */
   depth?: number;
   /** View mode for script cards */
@@ -90,6 +93,7 @@ export function FolderTree({
   renderScripts,
   onDeleteFolder,
   onBackupFolder,
+  onAssignFolder,
   depth = 0,
   viewMode = 'scroll',
 }: FolderTreeProps) {
@@ -112,6 +116,7 @@ export function FolderTree({
           onMoveFolder={onMoveFolder}
           renderScripts={renderScripts}
           onDeleteFolder={onDeleteFolder}
+          onAssignFolder={onAssignFolder}
           onBackupFolder={onBackupFolder}
           depth={depth}
           viewMode={viewMode}
@@ -132,6 +137,7 @@ interface FolderNodeItemProps {
   onMoveFolder: (folderPath: string[]) => void;
   renderScripts: (scripts: ScriptDoc[], path: string[]) => React.ReactNode;
   onDeleteFolder: (scripts: ScriptDoc[]) => void;
+  onAssignFolder?: (scripts: ScriptDoc[]) => void;
   onBackupFolder?: (folderPath: string[], scripts: ScriptDoc[], format: 'json' | 'word' | 'ppt') => void;
   depth: number;
   viewMode?: ScriptViewMode;
@@ -148,6 +154,7 @@ function FolderNodeItem({
   onMoveFolder,
   renderScripts,
   onDeleteFolder,
+  onAssignFolder,
   onBackupFolder,
   depth,
   viewMode = 'scroll',
@@ -373,6 +380,17 @@ function FolderNodeItem({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {onAssignFolder && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-[9px] font-black uppercase tracking-widest text-zinc-400 hover:text-amber-500 px-2"
+              onClick={() => onAssignFolder(node.allScriptsRecursive.filter(s => !s.isPlaceholder))}
+              title="Atribuir colaboradores a esta pasta"
+            >
+              <Users className="w-3 h-3 mr-0.5" /> Atribuir
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -436,6 +454,7 @@ function FolderNodeItem({
               onMoveFolder={onMoveFolder}
               renderScripts={renderScripts}
               onDeleteFolder={onDeleteFolder}
+              onAssignFolder={onAssignFolder}
               onBackupFolder={onBackupFolder}
               depth={depth + 1}
               viewMode={viewMode}

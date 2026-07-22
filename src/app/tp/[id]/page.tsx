@@ -193,12 +193,12 @@ function TeleprompterContent({ id }: { id: string }) {
   const [referenceInches, setReferenceInches] = useState(11);
   const [operatorInches, setOperatorInches] = useState(27);
 
-  // Carregar preferências salvas do usuário (APENAS como fallback inicial)
-  // O onSnapshot do script doc é a fonte da verdade e sempre sobrescreve
+  // Carregar preferências salvas do usuário — fonte da verdade para o master
+  // No mirror, o onSnapshot do script doc aplica os estilos
   useEffect(() => {
     if (!user?.uid || isMirrorWindow) return;
     getDoc(doc(db, "users", user.uid)).then((snap) => {
-      if (!snap.exists() || initialSyncDoneRef.current) return;
+      if (!snap.exists()) return;
       const prefs = snap.data()?.tpPreferences;
       if (!prefs) return;
       if (prefs.fontSize) setFontSize(prefs.fontSize);
@@ -427,6 +427,22 @@ function TeleprompterContent({ id }: { id: string }) {
 
   const updateGlobalStyle = async (data: Record<string, string | number | boolean>) => {
     if (isMirrorWindow) return;
+    // Atualizar state local imediatamente
+    if (data.fontSize !== undefined) setFontSize(data.fontSize as string);
+    if (data.textAlign !== undefined) setTextAlign(data.textAlign as string);
+    if (data.fontFamily !== undefined) setFontFamily(data.fontFamily as string);
+    if (data.fontWeight !== undefined) setFontWeight(data.fontWeight as string);
+    if (data.lineHeight !== undefined) setLineHeight(data.lineHeight as string);
+    if (data.maxWidth !== undefined) setMaxWidth(data.maxWidth as string);
+    if (data.bgColor !== undefined) setBgColor(data.bgColor as string);
+    if (data.textColor !== undefined) setTextColor(data.textColor as string);
+    if (typeof data.showReadingStrip === "boolean") setShowReadingStrip(data.showReadingStrip);
+    if (typeof data.countdownEnabled === "boolean") setCountdownEnabled(data.countdownEnabled);
+    if (data.sceneGap !== undefined) setSceneGap(data.sceneGap as string);
+    if (typeof data.referenceInches === "number") setReferenceInches(data.referenceInches);
+    if (typeof data.operatorInches === "number") setOperatorInches(data.operatorInches);
+    if (typeof data.speed === "number") { setSpeed(data.speed); speedRef.current = data.speed; }
+    // Salvar no Firestore (para mirror sync) e nas preferências do usuário
     try {
       await updateDoc(doc(db, "scripts", id), data);
       saveUserPreferences(data);
@@ -536,18 +552,6 @@ function TeleprompterContent({ id }: { id: string }) {
             if (d.isPlaying) playRequestedRef.current = false;
           }
         }
-        if (typeof d.speed === "number") {
-          setSpeed(d.speed);
-          speedRef.current = d.speed;
-        }
-        if (d.fontSize) setFontSize(d.fontSize);
-        if (d.textAlign) setTextAlign(d.textAlign);
-        if (d.bgColor) setBgColor(d.bgColor);
-        if (d.textColor) setTextColor(d.textColor);
-        if (d.maxWidth) setMaxWidth(d.maxWidth);
-        if (d.fontFamily) setFontFamily(d.fontFamily);
-        if (d.fontWeight) setFontWeight(d.fontWeight);
-        if (d.lineHeight) setLineHeight(d.lineHeight);
         if (d.title) setScriptTitle(d.title);
         if (d.status) setScriptStatus(d.status);
         if (d.recordingTaskId) setRecordingTaskId(d.recordingTaskId);
@@ -558,11 +562,28 @@ function TeleprompterContent({ id }: { id: string }) {
         setPath(scriptPath);
         if (d.workspaceId) setWorkspaceId(d.workspaceId);
         if (d.editorId) setEditorId(d.editorId);
-        if (typeof d.showReadingStrip === "boolean") setShowReadingStrip(d.showReadingStrip);
-        if (typeof d.countdownEnabled === "boolean") setCountdownEnabled(d.countdownEnabled);
-        if (d.sceneGap) setSceneGap(d.sceneGap);
-        if (typeof d.referenceInches === "number") setReferenceInches(d.referenceInches);
-        if (typeof d.operatorInches === "number") setOperatorInches(d.operatorInches);
+
+        // Estilos e velocidade vêm exclusivamente do tpPreferences do usuário no master.
+        // No mirror, aplicar do documento do roteiro (sync via Firestore).
+        if (isMirrorWindow) {
+          if (typeof d.speed === "number") {
+            setSpeed(d.speed);
+            speedRef.current = d.speed;
+          }
+          if (d.fontSize) setFontSize(d.fontSize);
+          if (d.textAlign) setTextAlign(d.textAlign);
+          if (d.bgColor) setBgColor(d.bgColor);
+          if (d.textColor) setTextColor(d.textColor);
+          if (d.maxWidth) setMaxWidth(d.maxWidth);
+          if (d.fontFamily) setFontFamily(d.fontFamily);
+          if (d.fontWeight) setFontWeight(d.fontWeight);
+          if (d.lineHeight) setLineHeight(d.lineHeight);
+          if (typeof d.showReadingStrip === "boolean") setShowReadingStrip(d.showReadingStrip);
+          if (typeof d.countdownEnabled === "boolean") setCountdownEnabled(d.countdownEnabled);
+          if (d.sceneGap) setSceneGap(d.sceneGap);
+          if (typeof d.referenceInches === "number") setReferenceInches(d.referenceInches);
+          if (typeof d.operatorInches === "number") setOperatorInches(d.operatorInches);
+        }
 
         if (d.resetRequest && d.resetRequest !== lastProcessedReset.current) {
           if (containerRef.current) containerRef.current.scrollTop = 0;
@@ -650,21 +671,21 @@ function TeleprompterContent({ id }: { id: string }) {
           break;
         case 'PageUp':
           e.preventDefault();
-          updateDoc(doc(db, "scripts", id), { speed: Math.max(speedRef.current - 0.5, -20) });
+          { const newSpeed = Math.max(speedRef.current - 0.5, -20); updateDoc(doc(db, "scripts", id), { speed: newSpeed }); saveUserPreferences({ speed: newSpeed }); }
           break;
         case 'PageDown':
           e.preventDefault();
-          updateDoc(doc(db, "scripts", id), { speed: Math.min(speedRef.current + 0.5, 30) });
+          { const newSpeed = Math.min(speedRef.current + 0.5, 30); updateDoc(doc(db, "scripts", id), { speed: newSpeed }); saveUserPreferences({ speed: newSpeed }); }
           break;
         case 'ArrowRight':
         case 'KeyD':
           e.preventDefault();
-          updateDoc(doc(db, "scripts", id), { speed: Math.min(speedRef.current + 0.5, 30) });
+          { const newSpeed = Math.min(speedRef.current + 0.5, 30); updateDoc(doc(db, "scripts", id), { speed: newSpeed }); saveUserPreferences({ speed: newSpeed }); }
           break;
         case 'ArrowLeft':
         case 'KeyA':
           e.preventDefault();
-          updateDoc(doc(db, "scripts", id), { speed: Math.max(speedRef.current - 0.5, -20) });
+          { const newSpeed = Math.max(speedRef.current - 0.5, -20); updateDoc(doc(db, "scripts", id), { speed: newSpeed }); saveUserPreferences({ speed: newSpeed }); }
           break;
         case 'ArrowUp':
         case 'KeyW':
@@ -951,50 +972,41 @@ function TeleprompterContent({ id }: { id: string }) {
       const scriptsRef = collection(db, "scripts");
       
       const scriptsConstraints = user?.isSuperAdmin ? [] : [where("workspaceId", "==", activeWorkspaceId)];
-      const q = query(
-        scriptsRef, 
-        ...scriptsConstraints
-      );
-      
-      const snapshot = await getDocs(q);
-      const allScripts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as ScriptDoc[];
-      
-      
+      const snapshot = await getDocs(query(scriptsRef, ...scriptsConstraints));
+      const allScripts = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as ScriptDoc[];
+
       if (allScripts.length === 0) {
+        setNextScript(null);
+        setShowNextModal(true);
         return;
       }
 
-      // Ordenação: Projeto -> Pasta -> Título (mesma lógica do Dashboard)
-      allScripts.sort((a, b) => {
-        const projA = a.projectName || a.project || "Geral";
-        const projB = b.projectName || b.project || "Geral";
-        if (projA !== projB) return projA.localeCompare(projB, undefined, { numeric: true, sensitivity: 'base' });
+      // Filtra: mesmo projeto + mesma pasta
+      const currentPath = getScriptPath({ path, folder, subfolder: undefined, lesson: undefined } as ScriptDoc);
+      const currentProjectId = projectId || projectName || "Geral";
 
-        const folderA = a.folder || "Sem Pasta";
-        const folderB = b.folder || "Sem Pasta";
-        if (folderA !== folderB) return folderA.localeCompare(folderB, undefined, { numeric: true, sensitivity: 'base' });
-
-        const titleA = a.title || "";
-        const titleB = b.title || "";
-        return titleA.localeCompare(titleB, undefined, { numeric: true, sensitivity: 'base' });
+      const sameFolder = allScripts.filter(s => {
+        const sProjectId = s.projectId || s.projectName || s.project || "Geral";
+        if (sProjectId !== currentProjectId) return false;
+        const sPath = getScriptPath(s);
+        if (sPath.length !== currentPath.length) return false;
+        return sPath.every((seg, i) => seg === currentPath[i]);
       });
 
-      // Encontra o índice do roteiro atual
-      const currentIndex = allScripts.findIndex(s => s.id === id);
-      
-      if (currentIndex !== -1) {
-        // Procura o próximo roteiro que esteja revisado/aguardando gravação
-        const next = allScripts.slice(currentIndex + 1).find(s => 
-          s.status === "revisao_realizada" || s.status === "aguardando_gravacao"
-        );
+      // Ordena por título dentro da mesma pasta
+      sameFolder.sort((a, b) =>
+        (a.title || "").localeCompare(b.title || "", undefined, { numeric: true, sensitivity: 'base' })
+      );
 
-        if (next) {
-          setNextScript(next);
-          setShowNextModal(true);
-        } else {
-        }
-      } else {
-      }
+      const currentIndex = sameFolder.findIndex(s => s.id === id);
+      const next = currentIndex !== -1
+        ? sameFolder.slice(currentIndex + 1).find(s =>
+            s.status === "revisao_realizada" || s.status === "aguardando_gravacao"
+          )
+        : null;
+
+      setNextScript(next ?? null);
+      setShowNextModal(true);
     } catch (err) {
       console.error("Erro ao buscar próximo roteiro:", err);
     }
@@ -1138,7 +1150,10 @@ function TeleprompterContent({ id }: { id: string }) {
         <div data-tour="tp-sidebar" className="w-[400px] shrink-0 h-full bg-zinc-950 border-l border-zinc-800 flex flex-col z-20 shadow-2xl overflow-hidden animate-in slide-in-from-left-4 duration-300">
           <div className="p-4 border-b border-zinc-900 flex items-center justify-between">
             <Link href={`/editor/${id}`} className="p-2 text-zinc-500 hover:text-white transition"><ChevronLeft size={20}/></Link>
-            <span className="text-[10px] font-black tracking-[0.2em] text-zinc-400 uppercase font-mono">Master Control</span>
+            <div className="flex flex-col items-center min-w-0 flex-1 mx-2">
+              <span className="text-[10px] font-black tracking-[0.2em] text-zinc-400 uppercase font-mono">Master Control</span>
+              {scriptTitle && <span className="text-[11px] font-bold text-white truncate max-w-full">{scriptTitle}</span>}
+            </div>
             <button onClick={() => setIsSidebarVisible(false)} className="p-2 text-zinc-700 hover:text-white transition"><X size={18} /></button>
           </div>
 
@@ -1207,9 +1222,18 @@ function TeleprompterContent({ id }: { id: string }) {
 
                   <div className="space-y-3">
                     <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-2 tracking-widest"><AlignJustify size={14}/> Largura do Bloco</p>
-                    <div className="grid grid-cols-2 gap-2">
-                       {['max-w-2xl', 'max-w-4xl', 'max-w-6xl', 'max-w-none'].map(w => (
-                         <button key={w} onClick={() => updateGlobalStyle({maxWidth: w})} className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${maxWidth === w ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-500 border-zinc-800 hover:bg-zinc-800'}`}>{w === 'max-w-none' ? 'FULL' : w.split('-')[2]}</button>
+                    <div className="grid grid-cols-4 gap-1.5">
+                       {[
+                         { value: 'max-w-2xl', label: '2xl' },
+                         { value: 'max-w-4xl', label: '4xl' },
+                         { value: 'max-w-5xl', label: '5xl' },
+                         { value: 'max-w-6xl', label: '6xl' },
+                         { value: 'max-w-7xl', label: '7xl' },
+                         { value: 'max-w-[1440px]', label: '8xl' },
+                         { value: 'max-w-[1600px]', label: '9xl' },
+                         { value: 'max-w-none', label: 'FULL' },
+                       ].map(w => (
+                         <button key={w.value} onClick={() => updateGlobalStyle({maxWidth: w.value})} className={`py-2 rounded-lg text-[10px] font-bold border transition-all ${maxWidth === w.value ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-500 border-zinc-800 hover:bg-zinc-800'}`}>{w.label}</button>
                        ))}
                     </div>
                   </div>
@@ -1338,6 +1362,10 @@ function TeleprompterContent({ id }: { id: string }) {
                       duration={duration}
                       progress={localProgress}
                         update={(data) => {
+                          if (typeof data.speed === "number") {
+                            setSpeed(data.speed);
+                            speedRef.current = data.speed;
+                          }
                           if (countdownActiveRef.current) {
                             if (data.isPlaying !== undefined) {
                               if (countdownRef.current) clearInterval(countdownRef.current);
@@ -1346,6 +1374,7 @@ function TeleprompterContent({ id }: { id: string }) {
                               updateDoc(doc(db, "scripts", id), { countdownStartedAt: null, isPlaying: false });
                             } else {
                               updateDoc(doc(db, "scripts", id), data);
+                              if (typeof data.speed === "number") saveUserPreferences(data);
                             }
                             return;
                           }
@@ -1356,14 +1385,24 @@ function TeleprompterContent({ id }: { id: string }) {
                             startCountdown();
                           } else {
                             updateDoc(doc(db, "scripts", id), data);
+                            if (typeof data.speed === "number") saveUserPreferences(data);
                           }
                         }}
                       manualScroll={(amt) => { if (containerRef.current) containerRef.current.scrollBy({ top: amt, behavior: 'smooth' }); }}
                       goToPrevScene={goToPrevScene}
                       goToNextScene={goToNextScene}
-                      isCommentsVisible={isCommentsVisible}
-                      setIsCommentsVisible={setIsCommentsVisible}
+                       isCommentsVisible={isCommentsVisible}
+                       setIsCommentsVisible={setIsCommentsVisible}
                    />
+                   <div className="pt-4 border-t border-zinc-900 mt-4">
+                     <button 
+                       onClick={handleSetRecorded}
+                       className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20"
+                     >
+                       {saveStatus === 'saved' ? <CheckCircle2 size={16} /> : <Zap size={16} />}
+                       {saveStatus === 'saved' ? 'GRAVADO!' : 'MARCAR COMO GRAVADO'}
+                     </button>
+                   </div>
               </div>
             )}
           </div>
@@ -1494,41 +1533,53 @@ function TeleprompterContent({ id }: { id: string }) {
           </div>
 
           <div className="p-8 space-y-6">
-            <div className="space-y-4">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Sugestão de Próximo</p>
-              <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-2xl group hover:border-blue-500/50 transition-all cursor-pointer" onClick={() => { navigatingAwayRef.current = true; router.push(`/tp/${nextScript?.id}`); }}>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-1">
-                    <h4 className="text-lg font-black text-white group-hover:text-blue-400 transition-colors">{nextScript?.title}</h4>
-                    <div className="flex items-center gap-2">
-                       <Badge variant="secondary" className="text-[9px] font-black uppercase tracking-widest bg-zinc-800 text-zinc-400 border-none px-2 h-5">
-                         {nextScript?.projectName || "Geral"}
-                       </Badge>
-                       <span className="text-zinc-600 text-xs">/</span>
-                       <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{nextScript?.folder || "Sem Pasta"}</span>
+            {nextScript ? (
+              <div className="space-y-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Sugestão de Próximo</p>
+                <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-2xl group hover:border-blue-500/50 transition-all cursor-pointer" onClick={() => { navigatingAwayRef.current = true; router.push(`/tp/${nextScript.id}`); }}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <h4 className="text-lg font-black text-white group-hover:text-blue-400 transition-colors">{nextScript.title}</h4>
+                      <div className="flex items-center gap-2">
+                         <Badge variant="secondary" className="text-[9px] font-black uppercase tracking-widest bg-zinc-800 text-zinc-400 border-none px-2 h-5">
+                           {nextScript.projectName || "Geral"}
+                         </Badge>
+                         <span className="text-zinc-600 text-xs">/</span>
+                         <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{nextScript.folder || "Sem Pasta"}</span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="w-10 h-10 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-500 group-hover:bg-blue-600 group-hover:text-white transition-all">
-                    <ChevronRight size={20} />
+                    <div className="w-10 h-10 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-500 group-hover:bg-blue-600 group-hover:text-white transition-all">
+                      <ChevronRight size={20} />
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="text-center py-4 space-y-3">
+                <div className="w-14 h-14 bg-emerald-600/20 rounded-full flex items-center justify-center mx-auto">
+                  <CheckCircle2 size={28} className="text-emerald-400" />
+                </div>
+                <p className="text-zinc-300 font-bold text-sm">Todos os roteiros desta pasta foram gravados!</p>
+                <p className="text-zinc-500 text-xs">Não há mais roteiros prontos para gravação nesta pasta.</p>
+              </div>
+            )}
 
-            <div className="grid grid-cols-2 gap-4 pt-4">
+            <div className={nextScript ? "grid grid-cols-2 gap-4 pt-4" : "pt-2"}>
               <Button 
                 variant="outline" 
                 onClick={() => { navigatingAwayRef.current = true; router.push('/dashboard'); }}
-                className="h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest border-zinc-800 text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all"
+                className={nextScript ? "h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest border-zinc-800 text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all" : "h-14 w-full rounded-2xl font-black text-[10px] uppercase tracking-widest border-zinc-800 text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all"}
               >
                 <X size={16} className="mr-2" /> Sair
               </Button>
-              <Button 
-                onClick={() => { navigatingAwayRef.current = true; router.push(`/tp/${nextScript?.id}`); }}
-                className="h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest bg-blue-600 hover:bg-blue-500 text-white shadow-xl shadow-blue-600/20 transition-all gap-2"
-              >
-                Continuar <ChevronRight size={16} />
-              </Button>
+              {nextScript && (
+                <Button 
+                  onClick={() => { navigatingAwayRef.current = true; router.push(`/tp/${nextScript.id}`); }}
+                  className="h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest bg-blue-600 hover:bg-blue-500 text-white shadow-xl shadow-blue-600/20 transition-all gap-2"
+                >
+                  Continuar <ChevronRight size={16} />
+                </Button>
+              )}
             </div>
           </div>
         </DialogContent>

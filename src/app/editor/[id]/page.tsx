@@ -149,6 +149,7 @@ function HighlightedSpokenText({
   commentCounts = {},
   onSpellCheckApply,
   contentEditableRef,
+  disableSpellCheck = false,
 }: { 
   text: string; 
   onChange: (value: string) => void;
@@ -159,6 +160,7 @@ function HighlightedSpokenText({
   commentCounts?: Record<number, number>;
   onSpellCheckApply?: (word: string, replacement: string) => void;
   contentEditableRef?: (el: HTMLDivElement | null) => void;
+  disableSpellCheck?: boolean;
 }) {
   const [typoReady, setTypoReady] = useState(false);
   const [debouncedText, setDebouncedText] = useState(text);
@@ -179,9 +181,9 @@ function HighlightedSpokenText({
   }, [text]);
 
   const spellErrors = useMemo(() => {
-    if (!debouncedText || !typoReady) return null;
+    if (disableSpellCheck || !debouncedText || !typoReady) return null;
     return checkText(debouncedText);
-  }, [debouncedText, typoReady]);
+  }, [debouncedText, typoReady, disableSpellCheck]);
 
   const highlights = useMemo(() => {
     if (!text || isEditing) return null;
@@ -423,6 +425,34 @@ function EditorContent({ id }: { id: string }) {
   const textareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const contentEditableRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
+  // Timer de edição ativo — mede tempo real gasto editando o roteiro
+  const editingStartRef = useRef<number | null>(null);
+  const accumulatedEditingRef = useRef(0);
+  const editingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (isNew || !id || loading) return;
+    editingStartRef.current = Date.now();
+    editingTimerRef.current = setInterval(() => {
+      // keepalive — o tempo real é calculado no save/unmount
+    }, 1000);
+    return () => {
+      if (editingTimerRef.current) clearInterval(editingTimerRef.current);
+      if (editingStartRef.current) {
+        accumulatedEditingRef.current += Date.now() - editingStartRef.current;
+        editingStartRef.current = null;
+      }
+    };
+  }, [id, isNew, loading]);
+
+  const getEditingDuration = () => {
+    let total = accumulatedEditingRef.current;
+    if (editingStartRef.current) {
+      total += Date.now() - editingStartRef.current;
+    }
+    return total;
+  };
+
   useEffect(() => {
     if (isNew || !id) return;
     let cancelled = false;
@@ -629,7 +659,8 @@ function EditorContent({ id }: { id: string }) {
         const q = query(
           collection(db, "scripts"),
           ...(user?.isSuperAdmin ? [] : [where("workspaceId", "==", workspaceId || user?.workspaceId || "senai")]),
-          where("projectName", "==", project)
+          where("projectName", "==", project),
+          limit(500)
         );
         const snap = await getDocs(q);
         if (cancelled) return;
@@ -744,6 +775,7 @@ function EditorContent({ id }: { id: string }) {
         videomakerId: finalVideomakerId,
         videomakerName: finalVideomakerName,
         isMirrored,
+        editingDuration: getEditingDuration(),
       });
 
       if (isNew) {
@@ -751,7 +783,7 @@ function EditorContent({ id }: { id: string }) {
           ...saveData,
           createdBy: user?.uid,
           createdByName: user?.displayName || user?.email || "Unknown",
-          createdAt: new Date().toISOString(),
+          createdAt: serverTimestamp(),
           lockedForEditing: false,
         });
         currentScriptId = docRef.id;
@@ -764,7 +796,7 @@ function EditorContent({ id }: { id: string }) {
         scenes: scenes as Scene[],
         createdBy: user?.uid,
         createdByName: user?.displayName || user?.email || "Usuário",
-        createdAt: new Date().toISOString(),
+        createdAt: serverTimestamp(),
       });
 
       await addDoc(
@@ -794,6 +826,9 @@ function EditorContent({ id }: { id: string }) {
       setIsSaving(false);
       setShowSaveModal(false);
       clearTimeout(safetyTimer);
+      // Resetar timer de edição após salvar
+      accumulatedEditingRef.current = 0;
+      editingStartRef.current = Date.now();
       
       setTimeout(() => {
         router.push("/dashboard");
