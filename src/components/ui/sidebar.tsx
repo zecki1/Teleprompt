@@ -606,11 +606,10 @@ function SidebarMenuSkeleton({
 }: React.ComponentProps<"div"> & {
   showIcon?: boolean
 }) {
-  // Corrigido: Usamos useState para gerar a largura aleatória uma única vez,
-  // satisfazendo a regra de pureza do linter.
-  const [width] = React.useState(() => {
+  // Largura aleatória entre 50 a 90%.
+  const width = React.useMemo(() => {
     return `${Math.floor(Math.random() * 40) + 50}%`
-  })
+  }, [])
 
   return (
     <div
@@ -675,7 +674,7 @@ function SidebarMenuSubButton({
   ...props
 }: React.ComponentProps<"a"> & {
   asChild?: boolean
-  size?: "sm" | "md" | "lg"
+  size?: "sm" | "md"
   isActive?: boolean
 }) {
   const Comp = asChild ? Slot : "a"
