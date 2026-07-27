@@ -11,7 +11,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Hourglass, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check, List, LayoutGrid, ArrowLeftRight, Minimize2, Mic, Settings } from "lucide-react";
+import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Hourglass, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check, List, LayoutGrid, ArrowLeftRight, Minimize2, Mic, Settings, Sticker } from "lucide-react";
+
+
+
+
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
@@ -311,6 +315,44 @@ function DashboardContent() {
         });
       }
       toast.success(`PPT exportado com sucesso para o projeto "${projectName}"!`);
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao exportar para PPT.");
+    } finally {
+      setExportingProject(null);
+    }
+  };
+
+  const handleExportProjectPPTNoReflection = async (projectName: string, projectScripts: ScriptDoc[]) => {
+    setExportingProject(projectName);
+    try {
+      const scriptsWithScenes = await Promise.all(
+        projectScripts.map(async (script) => ({
+          title: script.title,
+          path: script.path,
+          folder: script.folder,
+          subfolder: script.subfolder,
+          lesson: script.lesson,
+          editorName: script.editorName,
+          reviewerName: script.reviewerName,
+          videomakerName: script.videomakerName,
+          scenes: await fetchScriptScenes(script),
+        }))
+      );
+      await exportAllToPPT(projectName, scriptsWithScenes, { skipReflection: true });
+      if (user) {
+        const { logActivity } = await import("@/lib/activity");
+        await logActivity({
+          userId: user.uid,
+          userName: user.displayName || user.name || user.email || "Usuário",
+          userAvatar: user.photoURL || null,
+          action: "ExportouBackup",
+          metadata: "PPT_SemRefletivo",
+          projectName,
+          workspaceId: user.workspaceId || "",
+        });
+      }
+      toast.success(`PPT (sem refletivo) exportado com sucesso para o projeto "${projectName}"!`);
     } catch (e) {
       console.error(e);
       toast.error("Erro ao exportar para PPT.");
@@ -1301,6 +1343,14 @@ function DashboardContent() {
                             <Video className="w-4 h-4 text-orange-500" />
                             Exportar PPT (.pptx)
                           </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-[11px] font-bold gap-3 py-2.5 cursor-pointer"
+                            onClick={() => handleExportProjectPPTNoReflection(projectName, projectScripts)}
+                            disabled={exportingProject === projectName}
+                          >
+                            <Sticker className="w-4 h-4 text-yellow-500" />
+                            Teleprompt (sem refletir)
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                       <Button
@@ -1365,6 +1415,8 @@ function DashboardContent() {
                             handleExportProjectWord(folderLabel, scripts);
                           } else if (format === 'ppt') {
                             handleExportProjectPPT(folderLabel, scripts);
+                          } else if (format === 'ppt-no-reflection') {
+                            handleExportProjectPPTNoReflection(folderLabel, scripts);
                           }
                         }}
                         viewMode={viewMode}

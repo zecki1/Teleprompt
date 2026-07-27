@@ -72,7 +72,7 @@ interface FolderTreeProps {
   /** Called when user wants to delete a folder */
   onDeleteFolder: (scripts: ScriptDoc[]) => void;
   /** Called when user wants to backup a folder */
-  onBackupFolder?: (folderPath: string[], scripts: ScriptDoc[], format: 'json' | 'word' | 'ppt') => void;
+  onBackupFolder?: (folderPath: string[], scripts: ScriptDoc[], format: 'json' | 'word' | 'ppt' | 'ppt-no-reflection') => void;
   /** Called when user wants to assign roles to all scripts in a folder */
   onAssignFolder?: (scripts: ScriptDoc[]) => void;
   /** Initial depth (used internally for recursion) */
@@ -138,7 +138,7 @@ interface FolderNodeItemProps {
   renderScripts: (scripts: ScriptDoc[], path: string[]) => React.ReactNode;
   onDeleteFolder: (scripts: ScriptDoc[]) => void;
   onAssignFolder?: (scripts: ScriptDoc[]) => void;
-  onBackupFolder?: (folderPath: string[], scripts: ScriptDoc[], format: 'json' | 'word' | 'ppt') => void;
+  onBackupFolder?: (folderPath: string[], scripts: ScriptDoc[], format: 'json' | 'word' | 'ppt' | 'ppt-no-reflection') => void;
   depth: number;
   viewMode?: ScriptViewMode;
 }
@@ -377,6 +377,13 @@ function FolderNodeItem({
               >
                 <Video className="w-3.5 h-3.5 text-orange-500" />
                 Exportar PPT (.pptx)
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-[10px] font-bold gap-2 py-2 cursor-pointer"
+                onClick={() => onBackupFolder?.(node.fullPath, node.allScriptsRecursive, 'ppt-no-reflection')}
+              >
+                <Video className="w-3.5 h-3.5 text-yellow-500" />
+                Backup PPT (sem refletivo)
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

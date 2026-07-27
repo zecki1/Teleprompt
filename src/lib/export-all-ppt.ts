@@ -106,7 +106,7 @@ async function apply3dToContentSlides(zip: JSZip, contentSlides: Set<number>): P
   }
 }
 
-export async function exportAllToPPT(projectName: string, scripts: ScriptExportData[]) {
+export async function exportAllToPPT(projectName: string, scripts: ScriptExportData[], options?: { skipReflection?: boolean }) {
   const pptx = new pptxgen();
   pptx.title = `Projeto: ${projectName}`;
   pptx.subject = `Backup do projeto ${projectName}`;
@@ -199,7 +199,9 @@ export async function exportAllToPPT(projectName: string, scripts: ScriptExportD
 
   const array = await pptx.write({ outputType: "uint8array" });
   const zip = await JSZip.loadAsync(array);
-  await apply3dToContentSlides(zip, contentSlides);
+  if (!options?.skipReflection) {
+    await apply3dToContentSlides(zip, contentSlides);
+  }
   const finalArray = await zip.generateAsync({ type: "uint8array" });
   const blob = new Blob([finalArray as BlobPart], {
     type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",

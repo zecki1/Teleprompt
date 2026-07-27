@@ -67,16 +67,29 @@ export const joinWorkspaceByToken = async (
   defaultRole: Role = 'Estagiário'
 ): Promise<{ success: boolean; workspaceName?: string }> => {
   try {
+    let resolvedToken = token.trim();
+
+    // Extract workspaceId from URL if a full URL was pasted
+    try {
+      if (resolvedToken.includes("/login") || resolvedToken.includes("workspaceId=")) {
+        const url = new URL(resolvedToken);
+        const wsId = url.searchParams.get("workspaceId");
+        if (wsId) resolvedToken = wsId;
+      }
+    } catch {
+      // Not a valid URL, use the raw token
+    }
+
     // Try by inviteToken first
     const q = query(
       collection(db, "workspaces"),
-      where("inviteToken", "==", token)
+      where("inviteToken", "==", resolvedToken)
     );
     let snap = await getDocs(q);
 
     // If not found, try by workspace document ID
     if (snap.empty) {
-      const docRef = doc(db, "workspaces", token);
+      const docRef = doc(db, "workspaces", resolvedToken);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         // Create a fake snapshot structure
