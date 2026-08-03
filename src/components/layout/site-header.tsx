@@ -28,6 +28,7 @@ import {
 
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter, usePathname } from "next/navigation";
+import { GlobalSearch } from "@/components/layout/GlobalSearch";
 import {
   Select,
   SelectContent,
@@ -121,6 +122,7 @@ export function SiteHeader() {
 
         {/* Ações & Menu Mobile */}
         <div className="flex items-center gap-6">
+          <GlobalSearch />
           <TourGuide />
 
           <button

@@ -54,11 +54,11 @@ const nextConfig: NextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://vlibras.gov.br",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: https:",
               "font-src 'self' data:",
-              "connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebase.googleapis.com wss://firestore.googleapis.com https://*.firebasestorage.app https://*.firebasestorage.googleapis.com",
+              "connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebase.googleapis.com wss://firestore.googleapis.com https://*.firebasestorage.app https://*.firebasestorage.googleapis.com https://vlibras.gov.br",
               "frame-src 'none'",
               "media-src 'self' https: blob:",
             ].join("; "),

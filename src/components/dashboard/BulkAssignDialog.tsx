@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { doc, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { ScriptDoc } from "@/types/script";
@@ -8,7 +8,7 @@ import { Presenter } from "@/services/presenters";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Check, UserPlus, Users, Video, Plus } from "lucide-react";
+import { Check, UserPlus, Users, Video, Plus, Hourglass, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -24,10 +24,13 @@ interface BulkAssignDialogProps {
   scripts: ScriptDoc[];
   allUsers: { uid: string; displayName?: string | null; name?: string | null; photoURL?: string | null; isEditor?: boolean; isRevisor?: boolean }[];
   presenters: Presenter[];
+  workspaceId?: string;
+  currentUserId?: string;
   onAssigned: (updatedScripts: ScriptDoc[]) => void;
+  onPresenterCreated?: (presenter: Presenter) => void;
 }
 
-type AssignField = "editor" | "reviewer" | "videomaker" | "presenter";
+const SELECTED_CLASS = "border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-500/5";
 
 export function BulkAssignDialog({
   open,
@@ -35,74 +38,146 @@ export function BulkAssignDialog({
   scripts,
   allUsers,
   presenters: presentersList,
+  workspaceId,
+  currentUserId,
   onAssigned,
+  onPresenterCreated,
 }: BulkAssignDialogProps) {
   const [loading, setLoading] = useState(false);
   const [presenterSearch, setPresenterSearch] = useState("");
   const [selectedEditor, setSelectedEditor] = useState<string | null>(null);
   const [selectedReviewer, setSelectedReviewer] = useState<string | null>(null);
   const [selectedVideomaker, setSelectedVideomaker] = useState<string | null>(null);
-  const [selectedPresenter, setSelectedPresenter] = useState<string | null>(null);
+  const [selectedPresenters, setSelectedPresenters] = useState<Set<string>>(new Set());
 
   const count = scripts.length;
   const label = count === 1 ? "1 roteiro" : `${count} roteiros`;
 
-  const handleApply = async (field: AssignField, value: string, name: string) => {
-    if (scripts.length === 0) return;
-    setLoading(true);
-    try {
-      const batch = writeBatch(db);
-      const updates: ScriptDoc[] = [];
+  const getUserName = (uid: string) =>
+    allUsers.find(u => u.uid === uid)?.displayName || allUsers.find(u => u.uid === uid)?.name || "Usuário";
 
-      for (const script of scripts) {
-        const ref = doc(db, "scripts", script.id);
-        const data: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+  useEffect(() => {
+    if (!open) return;
+    setLoading(false);
+    setPresenterSearch("");
 
-        if (field === "editor") {
-          data.editorId = value;
-          data.editorName = name;
-          updates.push({ ...script, editorId: value, editorName: name });
-        } else if (field === "reviewer") {
-          data.reviewerId = value;
-          data.reviewerName = name;
-          updates.push({ ...script, reviewerId: value, reviewerName: name });
-        } else if (field === "videomaker") {
-          data.videomakerId = value;
-          data.videomakerName = name;
-          updates.push({ ...script, videomakerId: value, videomakerName: name });
-        } else if (field === "presenter") {
-          const current = script.presenterIds || [];
-          const isAssigned = current.includes(value);
-          const newIds = isAssigned ? current.filter(id => id !== value) : [...current, value];
-          data.presenterIds = newIds;
-          updates.push({ ...script, presenterIds: newIds });
-        }
+    const commonId = (field: "editorId" | "reviewerId" | "videomakerId"): string | null => {
+      if (scripts.length === 0) return null;
+      const first = scripts[0][field];
+      if (!first) return null;
+      return scripts.every(s => s[field] === first) ? first : null;
+    };
 
-        batch.update(ref, data);
+    setSelectedEditor(commonId("editorId"));
+    setSelectedReviewer(commonId("reviewerId"));
+    setSelectedVideomaker(commonId("videomakerId"));
+
+    let common: Set<string> | null = null;
+    for (const s of scripts) {
+      const ids = new Set(s.presenterIds || []);
+      if (common === null) {
+        common = ids;
+      } else {
+        const next = new Set<string>();
+        common.forEach(id => { if (ids.has(id)) next.add(id); });
+        common = next;
       }
-
-      await batch.commit();
-      onAssigned(updates);
-
-      const fieldLabel = field === "editor" ? "Editor" : field === "reviewer" ? "Revisor" : field === "videomaker" ? "Videomaker" : "Apresentador";
-      toast.success(`${fieldLabel} atribuído a ${label}!`);
-    } catch (error) {
-      console.error("Erro na atribuição em lote:", error);
-      toast.error("Erro ao atribuir em lote.");
-    } finally {
-      setLoading(false);
     }
+    setSelectedPresenters(common || new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when the dialog opens
+  }, [open]);
+
+  const hasSelection = Boolean(
+    selectedEditor || selectedReviewer || selectedVideomaker || selectedPresenters.size > 0
+  );
+
+  const handleTogglePresenter = (id: string) => {
+    setSelectedPresenters(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const handleCreatePresenter = async (name: string) => {
     if (!name.trim()) return;
     try {
-      const id = await addPresenter(name.trim(), "", "");
-      toast.success(`Apresentador "${name}" cadastrado!`);
-      return id;
+      const id = await addPresenter(name.trim(), workspaceId || "", currentUserId || "");
+      const newPresenter: Presenter = {
+        id,
+        name: name.trim(),
+        workspaceId: workspaceId || "",
+        createdBy: currentUserId || "",
+      };
+      onPresenterCreated?.(newPresenter);
+      setSelectedPresenters(prev => new Set(prev).add(id));
+      setPresenterSearch("");
+      toast.success(`Apresentador "${name.trim()}" cadastrado!`);
     } catch {
       toast.error("Erro ao cadastrar apresentador.");
-      return null;
+    }
+  };
+
+  const handleApply = async () => {
+    if (scripts.length === 0) return;
+    if (!hasSelection) return;
+    setLoading(true);
+    try {
+      const batch = writeBatch(db);
+      const updates: ScriptDoc[] = [];
+      const appliedParts: string[] = [];
+
+      for (const script of scripts) {
+        const ref = doc(db, "scripts", script.id);
+        const data: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+        const next: ScriptDoc = { ...script };
+
+        if (selectedEditor) {
+          const editorName = getUserName(selectedEditor);
+          data.editorId = selectedEditor;
+          data.editorName = editorName;
+          next.editorId = selectedEditor;
+          next.editorName = editorName;
+          appliedParts.push("Editor");
+        }
+        if (selectedReviewer) {
+          const reviewerName = getUserName(selectedReviewer);
+          data.reviewerId = selectedReviewer;
+          data.reviewerName = reviewerName;
+          next.reviewerId = selectedReviewer;
+          next.reviewerName = reviewerName;
+          appliedParts.push("Revisor");
+        }
+        if (selectedVideomaker) {
+          const videomakerName = getUserName(selectedVideomaker);
+          data.videomakerId = selectedVideomaker;
+          data.videomakerName = videomakerName;
+          next.videomakerId = selectedVideomaker;
+          next.videomakerName = videomakerName;
+          appliedParts.push("Videomaker");
+        }
+        if (selectedPresenters.size > 0) {
+          const ids = Array.from(selectedPresenters);
+          data.presenterIds = ids;
+          next.presenterIds = ids;
+          appliedParts.push("Apresentador");
+        }
+
+        batch.update(ref, data);
+        updates.push(next);
+      }
+
+      await batch.commit();
+      const uniqueParts = Array.from(new Set(appliedParts)).join(", ");
+      onAssigned(updates);
+      onOpenChange(false);
+      toast.success(`Atribuição de ${uniqueParts} concluída para ${label}!`);
+    } catch (error) {
+      console.error("Erro na atribuição em lote:", error);
+      toast.error("Erro ao atribuir em lote.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -117,7 +192,8 @@ export function BulkAssignDialog({
         <DialogHeader>
           <DialogTitle className="text-2xl font-black text-center mb-2">Atribuir em Lote</DialogTitle>
           <p className="text-center text-zinc-500 text-sm font-medium mb-6">
-            Atribuir colaboradores para <span className="font-bold text-white">{label}</span>.
+            Selecione os colaboradores para <span className="font-bold text-white">{label}</span> e clique em
+            <span className="font-bold text-emerald-500"> Atribuir</span> para confirmar.
           </p>
         </DialogHeader>
 
@@ -129,24 +205,27 @@ export function BulkAssignDialog({
             </h4>
             <div className="grid gap-2">
               {allUsers.filter(u => u.isEditor).length > 0 ? (
-                allUsers.filter(u => u.isEditor).map(u => (
-                  <Button
-                    key={u.uid}
-                    variant={selectedEditor === u.uid ? "secondary" : "outline"}
-                    className={`justify-between h-12 rounded font-bold transition-all ${selectedEditor === u.uid ? 'border-primary ring-2 ring-primary/20 bg-primary/5' : ''}`}
-                    onClick={() => { setSelectedEditor(u.uid); handleApply("editor", u.uid, u.displayName || u.name || "Usuário"); }}
-                    disabled={loading}
-                  >
-                    <div className="flex items-center gap-2">
-                      <Avatar className="h-6 w-6">
-                        <AvatarImage src={u.photoURL || undefined} />
-                        <AvatarFallback className="text-[10px]">{getInitials(u.displayName || u.name)}</AvatarFallback>
-                      </Avatar>
-                      <span>{u.displayName || u.name}</span>
-                    </div>
-                    {selectedEditor === u.uid && <Check className="w-4 h-4 text-primary" />}
-                  </Button>
-                ))
+                allUsers.filter(u => u.isEditor).map(u => {
+                  const isSelected = selectedEditor === u.uid;
+                  return (
+                    <Button
+                      key={u.uid}
+                      variant="outline"
+                      className={`justify-between h-12 rounded font-bold transition-all ${isSelected ? SELECTED_CLASS : ""}`}
+                      onClick={() => setSelectedEditor(isSelected ? null : u.uid)}
+                      disabled={loading}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Avatar className="h-6 w-6">
+                          <AvatarImage src={u.photoURL || undefined} />
+                          <AvatarFallback className="text-[10px]">{getInitials(u.displayName || u.name)}</AvatarFallback>
+                        </Avatar>
+                        <span>{u.displayName || u.name}</span>
+                      </div>
+                      {isSelected && <Check className="w-4 h-4 text-emerald-500" />}
+                    </Button>
+                  );
+                })
               ) : (
                 <p className="text-xs text-zinc-400 italic">Nenhum editor definido no painel admin.</p>
               )}
@@ -160,24 +239,27 @@ export function BulkAssignDialog({
             </h4>
             <div className="grid gap-2">
               {allUsers.filter(u => u.isRevisor).length > 0 ? (
-                allUsers.filter(u => u.isRevisor).map(u => (
-                  <Button
-                    key={u.uid}
-                    variant={selectedReviewer === u.uid ? "secondary" : "outline"}
-                    className={`justify-between h-12 rounded font-bold transition-all ${selectedReviewer === u.uid ? 'border-purple-500 ring-2 ring-purple-500/20 bg-purple-500/5' : ''}`}
-                    onClick={() => { setSelectedReviewer(u.uid); handleApply("reviewer", u.uid, u.displayName || u.name || "Usuário"); }}
-                    disabled={loading}
-                  >
-                    <div className="flex items-center gap-2">
-                      <Avatar className="h-6 w-6">
-                        <AvatarImage src={u.photoURL || undefined} />
-                        <AvatarFallback className="text-[10px]">{getInitials(u.displayName || u.name)}</AvatarFallback>
-                      </Avatar>
-                      <span>{u.displayName || u.name}</span>
-                    </div>
-                    {selectedReviewer === u.uid && <Check className="w-4 h-4 text-purple-500" />}
-                  </Button>
-                ))
+                allUsers.filter(u => u.isRevisor).map(u => {
+                  const isSelected = selectedReviewer === u.uid;
+                  return (
+                    <Button
+                      key={u.uid}
+                      variant="outline"
+                      className={`justify-between h-12 rounded font-bold transition-all ${isSelected ? SELECTED_CLASS : ""}`}
+                      onClick={() => setSelectedReviewer(isSelected ? null : u.uid)}
+                      disabled={loading}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Avatar className="h-6 w-6">
+                          <AvatarImage src={u.photoURL || undefined} />
+                          <AvatarFallback className="text-[10px]">{getInitials(u.displayName || u.name)}</AvatarFallback>
+                        </Avatar>
+                        <span>{u.displayName || u.name}</span>
+                      </div>
+                      {isSelected && <Check className="w-4 h-4 text-emerald-500" />}
+                    </Button>
+                  );
+                })
               ) : (
                 <p className="text-xs text-zinc-400 italic">Nenhum revisor definido no painel admin.</p>
               )}
@@ -191,24 +273,27 @@ export function BulkAssignDialog({
             </h4>
             <div className="grid gap-2">
               {allUsers.length > 0 ? (
-                allUsers.map(u => (
-                  <Button
-                    key={u.uid}
-                    variant={selectedVideomaker === u.uid ? "secondary" : "outline"}
-                    className={`justify-between h-12 rounded font-bold transition-all ${selectedVideomaker === u.uid ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-500/5' : ''}`}
-                    onClick={() => { setSelectedVideomaker(u.uid); handleApply("videomaker", u.uid, u.displayName || u.name || "Usuário"); }}
-                    disabled={loading}
-                  >
-                    <div className="flex items-center gap-2">
-                      <Avatar className="h-6 w-6">
-                        <AvatarImage src={u.photoURL || undefined} />
-                        <AvatarFallback className="text-[10px]">{getInitials(u.displayName || u.name)}</AvatarFallback>
-                      </Avatar>
-                      <span>{u.displayName || u.name}</span>
-                    </div>
-                    {selectedVideomaker === u.uid && <Check className="w-4 h-4 text-blue-500" />}
-                  </Button>
-                ))
+                allUsers.map(u => {
+                  const isSelected = selectedVideomaker === u.uid;
+                  return (
+                    <Button
+                      key={u.uid}
+                      variant="outline"
+                      className={`justify-between h-12 rounded font-bold transition-all ${isSelected ? SELECTED_CLASS : ""}`}
+                      onClick={() => setSelectedVideomaker(isSelected ? null : u.uid)}
+                      disabled={loading}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Avatar className="h-6 w-6">
+                          <AvatarImage src={u.photoURL || undefined} />
+                          <AvatarFallback className="text-[10px]">{getInitials(u.displayName || u.name)}</AvatarFallback>
+                        </Avatar>
+                        <span>{u.displayName || u.name}</span>
+                      </div>
+                      {isSelected && <Check className="w-4 h-4 text-emerald-500" />}
+                    </Button>
+                  );
+                })
               ) : (
                 <p className="text-xs text-zinc-400 italic">Nenhum usuário disponível.</p>
               )}
@@ -223,7 +308,7 @@ export function BulkAssignDialog({
             <Input
               value={presenterSearch}
               onChange={e => setPresenterSearch(e.target.value)}
-              placeholder="Pesquisar apresentador..."
+              placeholder="Pesquisar ou cadastrar apresentador..."
               className="h-10 text-sm rounded bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800"
             />
             <div className="grid gap-2 max-h-40 overflow-y-auto">
@@ -233,17 +318,17 @@ export function BulkAssignDialog({
                   : presentersList;
                 if (filtered.length > 0) {
                   return filtered.map(p => {
-                    const isAnyAssigned = scripts.some(s => s.presenterIds?.includes(p.id));
+                    const isSelected = selectedPresenters.has(p.id);
                     return (
                       <Button
                         key={p.id}
-                        variant={isAnyAssigned ? "secondary" : "outline"}
-                        className={`justify-between h-10 rounded font-bold transition-all ${isAnyAssigned ? 'border-amber-500 ring-2 ring-amber-500/20 bg-amber-500/5' : ''}`}
-                        onClick={() => { setSelectedPresenter(p.id); handleApply("presenter", p.id, p.name); }}
+                        variant="outline"
+                        className={`justify-between h-10 rounded font-bold transition-all ${isSelected ? SELECTED_CLASS : ""}`}
+                        onClick={() => handleTogglePresenter(p.id)}
                         disabled={loading}
                       >
                         <span>{p.name}</span>
-                        {isAnyAssigned && <Check className="w-4 h-4 text-amber-500" />}
+                        {isSelected && <Check className="w-4 h-4 text-emerald-500" />}
                       </Button>
                     );
                   });
@@ -253,13 +338,7 @@ export function BulkAssignDialog({
                     <Button
                       variant="outline"
                       className="h-10 rounded font-bold text-emerald-600 border-emerald-300 dark:border-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-all"
-                      onClick={async () => {
-                        const id = await handleCreatePresenter(presenterSearch.trim());
-                        if (id) {
-                          setPresenterSearch("");
-                          handleApply("presenter", id, presenterSearch.trim());
-                        }
-                      }}
+                      onClick={() => handleCreatePresenter(presenterSearch.trim())}
                       disabled={loading}
                     >
                       <Plus className="w-3.5 h-3.5 mr-1.5 text-emerald-500" />
@@ -271,11 +350,51 @@ export function BulkAssignDialog({
               })()}
             </div>
           </div>
+
+          {/* Resumo da seleção */}
+          <div className="pt-4 border-t border-zinc-100 dark:border-zinc-800">
+            <div className="bg-zinc-50 dark:bg-zinc-900 rounded-xl p-4 border border-zinc-100 dark:border-zinc-800 space-y-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Resumo da atribuição</p>
+              <div className="grid grid-cols-2 gap-2 text-[11px] font-bold text-zinc-600 dark:text-zinc-300">
+                <span className="text-blue-500 uppercase tracking-wider text-[9px]">Editor</span>
+                <span className="text-right truncate">{selectedEditor ? getUserName(selectedEditor) : <span className="text-zinc-400">—</span>}</span>
+                <span className="text-purple-500 uppercase tracking-wider text-[9px]">Revisor</span>
+                <span className="text-right truncate">{selectedReviewer ? getUserName(selectedReviewer) : <span className="text-zinc-400">—</span>}</span>
+                <span className="text-blue-500 uppercase tracking-wider text-[9px]">Videomaker</span>
+                <span className="text-right truncate">{selectedVideomaker ? getUserName(selectedVideomaker) : <span className="text-zinc-400">—</span>}</span>
+                <span className="text-amber-500 uppercase tracking-wider text-[9px]">Apresentadores</span>
+                <span className="text-right truncate">
+                  {selectedPresenters.size > 0
+                    ? Array.from(selectedPresenters).map(id => presentersList.find(p => p.id === id)?.name || id).join(", ")
+                    : <span className="text-zinc-400">—</span>}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <Button onClick={() => onOpenChange(false)} className="w-full h-14 rounded bg-zinc-900 text-white font-black uppercase tracking-widest text-[10px] mt-4">
-          Concluir
-        </Button>
+        <div className="flex gap-3 mt-4">
+          <Button
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+            className="flex-1 h-14 rounded font-black uppercase tracking-widest text-[10px]"
+            disabled={loading}
+          >
+            <X className="w-4 h-4 mr-2" /> Cancelar
+          </Button>
+          <Button
+            onClick={handleApply}
+            disabled={loading || !hasSelection}
+            className="flex-[2] h-14 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-widest text-[10px] shadow-lg"
+          >
+            {loading ? (
+              <Hourglass className="w-4 h-4 animate-spin" style={{ animationDuration: "2s" }} />
+            ) : (
+              <Check className="w-4 h-4 mr-2" />
+            )}
+            Atribuir
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );

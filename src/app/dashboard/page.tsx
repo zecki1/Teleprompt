@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { collection, query, deleteDoc, doc, updateDoc, writeBatch, where, addDoc, serverTimestamp, onSnapshot, orderBy, limit, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Hourglass, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check, List, LayoutGrid, ArrowLeftRight, Minimize2, Mic, Settings, Sticker } from "lucide-react";
+import { Link2 as LinkIcon, Plus, Play, Trash2, Edit2, FolderInput, X, FileText, Send, Clock, CheckCircle2, ChevronRight, ChevronDown, Briefcase, Hourglass, Users, UserPlus, ClipboardCheck, MessageSquare, FolderPlus, PlusCircle, Video, Download, Check, List, LayoutGrid, ArrowLeftRight, Minimize2, Mic, Settings, Sticker, Search } from "lucide-react";
 
 
 
@@ -67,7 +67,7 @@ import {
 import { Scene, parseScript } from "@/lib/parser";
 import { exportAllToWord } from "@/lib/export-all-word";
 import { exportAllToPPT } from "@/lib/export-all-ppt";
-import { Presenter, addPresenter, getPresenters, deletePresenter } from "@/services/presenters";
+import { Presenter, getPresenters } from "@/services/presenters";
 import { BulkAssignDialog } from "@/components/dashboard/BulkAssignDialog";
 
 type ScriptCategory = "video" | "podcast";
@@ -119,9 +119,10 @@ function DashboardContent() {
   const [exportingProject, setExportingProject] = useState<string | null>(null);
   const [showConcluded, setShowConcluded] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'scroll'>('scroll');
+  const [projectSort, setProjectSort] = useState<'codigo' | 'nome'>('codigo');
+  const [projectSearch, setProjectSearch] = useState("");
   const [treeCollapseVersions, setTreeCollapseVersions] = useState<Record<string, number>>({});
   const [presenters, setPresenters] = useState<Presenter[]>([]);
-  const [presenterSearch, setPresenterSearch] = useState("");
   const [changingStatusScript, setChangingStatusScript] = useState<ScriptDoc | null>(null);
   const [changingStatusValue, setChangingStatusValue] = useState<ScriptStatus>("rascunho");
   const [changingStatusPersonId, setChangingStatusPersonId] = useState("");
@@ -369,6 +370,7 @@ function DashboardContent() {
 
   const projectIdFilter = searchParams.get("projectId");
   const selectedProject = projects.find(p => p.id === projectIdFilter);
+  const searchQuery = (searchParams.get("q") || "").toLowerCase().trim();
 
   useEffect(() => {
     const saved = localStorage.getItem("teleprompt_dashboard_filters");
@@ -391,6 +393,9 @@ function DashboardContent() {
 
     const savedViewMode = localStorage.getItem("teleprompt_view_mode");
     if (savedViewMode === 'list' || savedViewMode === 'scroll') setViewMode(savedViewMode);
+
+    const savedProjectSort = localStorage.getItem("teleprompt_project_sort");
+    if (savedProjectSort === 'codigo' || savedProjectSort === 'nome') setProjectSort(savedProjectSort);
 
     const statusParam = searchParams.get("status");
     const commenterParam = searchParams.get("commenter");
@@ -418,14 +423,19 @@ function DashboardContent() {
   }, [viewMode]);
 
   useEffect(() => {
+    localStorage.setItem("teleprompt_project_sort", projectSort);
+  }, [projectSort]);
+
+  useEffect(() => {
     const params = new URLSearchParams();
     if (projectIdFilter) params.set("projectId", projectIdFilter);
     if (statusFilter !== "all") params.set("status", statusFilter);
     if (filterCommenter !== "all") params.set("commenter", filterCommenter);
+    if (searchQuery) params.set("q", searchQuery);
     params.set("concluded", showConcluded ? "1" : "0");
     const newUrl = `${window.location.pathname}?${params.toString()}`;
     window.history.replaceState(null, "", newUrl);
-  }, [statusFilter, filterCommenter, showConcluded, projectIdFilter]);
+  }, [statusFilter, filterCommenter, showConcluded, projectIdFilter, searchQuery]);
 
   useEffect(() => {
     if (loadingProjects) return;
@@ -433,12 +443,13 @@ function DashboardContent() {
     if (!projectIdFilter && savedProjectId) {
       const projectExists = projects.some(p => p.id === savedProjectId);
       if (projectExists) {
-        router.replace(`/dashboard?projectId=${savedProjectId}`);
+        const qs = searchQuery ? `&q=${encodeURIComponent(searchQuery)}` : "";
+        router.replace(`/dashboard?projectId=${savedProjectId}${qs}`);
       } else {
         localStorage.removeItem("teleprompt_last_project_id");
       }
     }
-  }, [loadingProjects, projectIdFilter, projects, router]);
+  }, [loadingProjects, projectIdFilter, projects, router, searchQuery]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -517,7 +528,11 @@ function DashboardContent() {
     const matchesStatus = statusFilter === "all" || s.status === statusFilter;
     const matchesProject = !projectIdFilter || s.projectId === projectIdFilter;
     const matchesCommenter = filterCommenter === "all" || (s.commentAuthors && s.commentAuthors.includes(filterCommenter));
-    return matchesStatus && matchesProject && matchesCommenter;
+    const matchesQuery = !searchQuery
+      || (s.title || "").toLowerCase().includes(searchQuery)
+      || (s.projectName || s.project || "").toLowerCase().includes(searchQuery)
+      || (s.path || []).join(" ").toLowerCase().includes(searchQuery);
+    return matchesStatus && matchesProject && matchesCommenter && matchesQuery;
   });
 
   const statusCounts = {
@@ -565,48 +580,6 @@ function DashboardContent() {
     }
   };
 
-  const handleAssign = async (scriptId: string, userId: string, userName: string, field: 'editor' | 'reviewer' | 'videomaker') => {
-    try {
-      const scriptRef = doc(db, "scripts", scriptId);
-      const updateData = field === 'editor' 
-        ? { editorId: userId, editorName: userName }
-        : field === 'reviewer'
-        ? { reviewerId: userId, reviewerName: userName }
-        : { videomakerId: userId, videomakerName: userName };
-      
-      await updateDoc(scriptRef, {
-        ...updateData,
-        updatedAt: new Date().toISOString()
-      });
-      
-      setScripts(scripts.map(s => s.id === scriptId ? { ...s, ...updateData } : s));
-      const label = field === 'editor' ? 'Editor' : field === 'reviewer' ? 'Revisor' : 'Videomaker';
-      toast.success(`${label} atribuído com sucesso!`);
-    } catch (error) {
-      console.error("Erro ao atribuir:", error);
-      toast.error("Erro ao realizar atribuição.");
-    }
-  };
-
-  const handleTogglePresenter = async (scriptId: string, presenterId: string) => {
-    const script = scripts.find(s => s.id === scriptId);
-    if (!script) return;
-    const current = script.presenterIds || [];
-    const isAssigned = current.includes(presenterId);
-    const newIds = isAssigned ? current.filter(id => id !== presenterId) : [...current, presenterId];
-    try {
-      await updateDoc(doc(db, "scripts", scriptId), {
-        presenterIds: newIds,
-        updatedAt: new Date().toISOString(),
-      });
-      setScripts(scripts.map(s => s.id === scriptId ? { ...s, presenterIds: newIds } : s));
-      toast.success(isAssigned ? "Apresentador removido" : "Apresentador atribuído");
-    } catch (error) {
-      console.error("Erro ao atribuir apresentador:", error);
-      toast.error("Erro ao atribuir apresentador.");
-    }
-  };
-
   const toggleScriptSelection = (scriptId: string) => {
     setSelectedScripts(prev => {
       const next = new Set(prev);
@@ -623,6 +596,14 @@ function DashboardContent() {
     }));
     setSelectedScripts(new Set());
     setBulkAssignScripts(null);
+  };
+
+  const handleSingleAssigned = (updatedScripts: ScriptDoc[]) => {
+    setScripts(prev => prev.map(s => {
+      const update = updatedScripts.find(u => u.id === s.id);
+      return update ? { ...s, ...update } : s;
+    }));
+    setAssigningScript(null);
   };
 
   const handleQuickStatusChange = async () => {
@@ -888,6 +869,50 @@ function DashboardContent() {
         Object.entries(scriptsByProject).filter(([name]) => !concludedProjects.has(name))
       );
 
+  const projectSortKey = (projectName: string): { num: number; text: string } => {
+    const project = projects.find(p => p.name === projectName);
+    const code = (project?.code || "").toLowerCase();
+    const parsed = parseInt(code.replace(/\D/g, ""), 10);
+    return { num: Number.isNaN(parsed) ? Infinity : parsed, text: code || projectName.toLowerCase() };
+  };
+
+  const compareProjectNames = (a: string, b: string): number => {
+    if (projectSort === "codigo") {
+      const ka = projectSortKey(a);
+      const kb = projectSortKey(b);
+      if (ka.num !== kb.num) return ka.num - kb.num;
+      return ka.text.localeCompare(kb.text, undefined, { numeric: true, sensitivity: "base" });
+    }
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+  };
+
+  const sortedProjects = useMemo(
+    () => [...projects].sort((a, b) => {
+      const codeFor = (p: Project) => {
+        const code = (p.code || "").toLowerCase();
+        const parsed = parseInt(code.replace(/\D/g, ""), 10);
+        return { num: Number.isNaN(parsed) ? Infinity : parsed, text: code || p.name.toLowerCase() };
+      };
+      if (projectSort === "codigo") {
+        const ka = codeFor(a);
+        const kb = codeFor(b);
+        if (ka.num !== kb.num) return ka.num - kb.num;
+        return ka.text.localeCompare(kb.text, undefined, { numeric: true, sensitivity: "base" });
+      }
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+    }),
+    [projects, projectSort]
+  );
+
+  const filteredSortedProjects = useMemo(() => {
+    const term = projectSearch.trim().toLowerCase();
+    if (!term) return sortedProjects;
+    return sortedProjects.filter(p =>
+      (p.name || "").toLowerCase().includes(term) ||
+      (p.code || "").toLowerCase().includes(term)
+    );
+  }, [sortedProjects, projectSearch]);
+
   return (
     <>
       <WelcomeModal />
@@ -969,6 +994,21 @@ function DashboardContent() {
             Projetos Ativos
           </h2>
           <div className="flex items-center gap-2">
+            <Input
+              value={projectSearch}
+              onChange={e => setProjectSearch(e.target.value)}
+              placeholder="Filtrar por nome/código..."
+              className="h-7 w-40 text-[10px] font-bold rounded bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800"
+            />
+            <Select value={projectSort} onValueChange={(v) => setProjectSort(v as 'codigo' | 'nome')}>
+              <SelectTrigger className="h-7 w-[110px] text-[10px] font-bold border-zinc-200 dark:border-zinc-800 rounded">
+                <SelectValue placeholder="Ordenar" />
+              </SelectTrigger>
+              <SelectContent className="rounded border-zinc-200 dark:border-zinc-800">
+                <SelectItem value="codigo" className="text-[10px] font-black uppercase">Número (código)</SelectItem>
+                <SelectItem value="nome" className="text-[10px] font-black uppercase">Nome (A-Z)</SelectItem>
+              </SelectContent>
+            </Select>
             <div className="flex items-center border border-zinc-200 dark:border-zinc-800 rounded overflow-hidden">
               <Button
                 variant="ghost"
@@ -1004,7 +1044,7 @@ function DashboardContent() {
                <p className="text-sm text-zinc-500">Nenhum projeto vinculado a este workspace.</p>
             </div>
           ) : (
-            projects.map(project => {
+            filteredSortedProjects.map(project => {
               const isActive = projectIdFilter === project.id;
               return (
                 <Card 
@@ -1059,7 +1099,7 @@ function DashboardContent() {
             </div>
           ) : (
             <div className="space-y-1">
-              {projects.map(project => {
+              {filteredSortedProjects.map(project => {
                 const isActive = projectIdFilter === project.id;
                 return (
                   <div
@@ -1103,6 +1143,21 @@ function DashboardContent() {
       </div>
 
       <div data-tour="dashboard-status-filter" className="flex gap-2 mb-8 overflow-x-auto pb-2 no-scrollbar">
+        {searchQuery && (
+          <button
+            onClick={() => {
+              const params = new URLSearchParams(window.location.search);
+              params.delete("q");
+              router.replace(`${window.location.pathname}?${params.toString()}`);
+            }}
+            className="inline-flex items-center gap-2 px-4 h-8 rounded-full bg-blue-50 dark:bg-blue-950/30 border border-blue-500 text-blue-600 dark:text-blue-400 text-[11px] font-black uppercase tracking-widest hover:bg-blue-100 dark:hover:bg-blue-950/50 transition-colors shrink-0"
+            title="Remover filtro de palavra-chave"
+          >
+            <Search className="w-3.5 h-3.5" />
+            &quot;{searchQuery}&quot;
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
         <Button
           variant={statusFilter === "all" ? "default" : "outline"}
           size="sm"
@@ -1216,7 +1271,7 @@ function DashboardContent() {
       ) : (
         <div data-tour="dashboard-script-list" className="space-y-16">
           {Object.entries(visibleProjects)
-            .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: "base" }))
+            .sort((a, b) => compareProjectNames(a[0], b[0]))
             .map(([projectName, projectScripts]) => {
               const tree = buildTree(projectScripts);
               const project = projects.find(p => p.name === projectName);
@@ -1809,174 +1864,19 @@ function DashboardContent() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!assigningScript} onOpenChange={(open) => !open && setAssigningScript(null)}>
-        <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded-[40px] p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)] max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-black text-center mb-2">Atribuir Colaboradores</DialogTitle>
-            <p className="text-center text-zinc-500 text-sm font-medium mb-6">Selecione quem será responsável pela edição, revisão e gravação deste roteiro.</p>
-          </DialogHeader>
-          
-          <div className="space-y-8">
-            <div className="space-y-4">
-              <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-500 flex items-center gap-2">
-                <UserPlus className="w-4 h-4" /> Editor Responsável
-              </h4>
-              <div className="grid gap-2">
-                {allUsers.filter(u => u.isEditor).length > 0 ? (
-                  allUsers.filter(u => u.isEditor).map(u => (
-                    <Button 
-                      key={u.uid} 
-                      variant={assigningScript?.editorId === u.uid ? "secondary" : "outline"}
-                      className={`justify-between h-12 rounded font-bold transition-all ${assigningScript?.editorId === u.uid ? 'border-primary ring-2 ring-primary/20 bg-primary/5' : ''}`}
-                      onClick={() => handleAssign(assigningScript!.id, u.uid, u.displayName || u.name || "Usuário", 'editor')}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Avatar className="h-6 w-6">
-                          <AvatarImage src={u.photoURL || undefined} />
-                          <AvatarFallback className="text-[10px]">
-                            {(u.displayName || u.name || "U").slice(0, 2).toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span>{u.displayName || u.name}</span>
-                      </div>
-                      {assigningScript?.editorId === u.uid && <Check className="w-4 h-4 text-primary" />}
-                    </Button>
-                  ))
-                ) : (
-                  <p className="text-xs text-zinc-400 italic">Nenhum editor definido no painel admin.</p>
-                )}
-              </div>
-            </div>
+      {/* Single Script Assign Dialog */}
+      <BulkAssignDialog
+        open={!!assigningScript}
+        onOpenChange={(open) => { if (!open) setAssigningScript(null); }}
+        scripts={assigningScript ? [assigningScript] : []}
+        allUsers={allUsers}
+        presenters={presenters}
+        workspaceId={user?.workspaceId || ""}
+        currentUserId={user?.uid}
+        onPresenterCreated={(p) => setPresenters(prev => [...prev, p])}
+        onAssigned={handleSingleAssigned}
+      />
 
-            <div className="space-y-4 pt-4 border-t border-zinc-100 dark:border-zinc-800">
-              <h4 className="text-[10px] font-black uppercase tracking-widest text-purple-500 flex items-center gap-2">
-                <Users className="w-4 h-4" /> Revisor Designado
-              </h4>
-              <div className="grid gap-2">
-                {allUsers.filter(u => u.isRevisor).length > 0 ? (
-                  allUsers.filter(u => u.isRevisor).map(u => (
-                    <Button 
-                      key={u.uid} 
-                      variant={assigningScript?.reviewerId === u.uid ? "secondary" : "outline"}
-                      className={`justify-between h-12 rounded font-bold transition-all ${assigningScript?.reviewerId === u.uid ? 'border-purple-500 ring-2 ring-purple-500/20 bg-purple-500/5' : ''}`}
-                      onClick={() => handleAssign(assigningScript!.id, u.uid, u.displayName || u.name || "Usuário", 'reviewer')}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Avatar className="h-6 w-6 text-purple-500">
-                          <AvatarImage src={u.photoURL || undefined} />
-                          <AvatarFallback className="text-[10px]">
-                            {(u.displayName || u.name || "U").slice(0, 2).toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span>{u.displayName || u.name}</span>
-                      </div>
-                      {assigningScript?.reviewerId === u.uid && <Check className="w-4 h-4 text-purple-500" />}
-                    </Button>
-                  ))
-                ) : (
-                  <p className="text-xs text-zinc-400 italic">Nenhum revisor definido no painel admin.</p>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-4 pt-4 border-t border-zinc-100 dark:border-zinc-800">
-              <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-500 flex items-center gap-2">
-                <Video className="w-4 h-4" /> Videomaker Responsável
-              </h4>
-              <div className="grid gap-2">
-                {allUsers.length > 0 ? (
-                  allUsers.map(u => (
-                    <Button 
-                      key={u.uid} 
-                      variant={assigningScript?.videomakerId === u.uid ? "secondary" : "outline"}
-                      className={`justify-between h-12 rounded font-bold transition-all ${assigningScript?.videomakerId === u.uid ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-500/5' : ''}`}
-                      onClick={() => handleAssign(assigningScript!.id, u.uid, u.displayName || u.name || "Usuário", 'videomaker')}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Avatar className="h-6 w-6">
-                          <AvatarImage src={u.photoURL || undefined} />
-                          <AvatarFallback className="text-[10px]">
-                            {(u.displayName || u.name || "U").slice(0, 2).toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span>{u.displayName || u.name}</span>
-                      </div>
-                      {assigningScript?.videomakerId === u.uid && <Check className="w-4 h-4 text-blue-500" />}
-                    </Button>
-                  ))
-                ) : (
-                  <p className="text-xs text-zinc-400 italic">Nenhum usuário disponível.</p>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-4 pt-4 border-t border-zinc-100 dark:border-zinc-800">
-              <h4 className="text-[10px] font-black uppercase tracking-widest text-amber-500 flex items-center gap-2">
-                <Users className="w-4 h-4" /> Apresentador(es)
-              </h4>
-              <Input
-                value={presenterSearch}
-                onChange={e => setPresenterSearch(e.target.value)}
-                placeholder="Pesquisar apresentador..."
-                className="h-10 text-sm rounded bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800"
-              />
-              <div className="grid gap-2 max-h-40 overflow-y-auto">
-                {(() => {
-                  const filtered = presenterSearch.trim()
-                    ? presenters.filter(p => p.name.toLowerCase().includes(presenterSearch.toLowerCase()))
-                    : presenters;
-                  if (filtered.length > 0) {
-                    return filtered.map(p => {
-                      const assigned = assigningScript?.presenterIds?.includes(p.id) || false;
-                      return (
-                        <Button 
-                          key={p.id} 
-                          variant={assigned ? "secondary" : "outline"}
-                          className={`justify-between h-10 rounded font-bold transition-all ${assigned ? 'border-amber-500 ring-2 ring-amber-500/20 bg-amber-500/5' : ''}`}
-                          onClick={() => handleTogglePresenter(assigningScript!.id, p.id)}
-                        >
-                          <span>{p.name}</span>
-                          {assigned && <Check className="w-4 h-4 text-amber-500" />}
-                        </Button>
-                      );
-                    });
-                  }
-                  if (presenterSearch.trim()) {
-                    return (
-                      <Button
-                        variant="outline"
-                        className="h-10 rounded font-bold text-emerald-600 border-emerald-300 dark:border-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-all"
-                        onClick={async () => {
-                          const name = presenterSearch.trim();
-                          if (!name || !user?.workspaceId) return;
-                          try {
-                            const id = await addPresenter(name, user.workspaceId, user.uid);
-                            setPresenters([...presenters, { id, name, workspaceId: user.workspaceId, createdBy: user.uid }]);
-                            setPresenterSearch("");
-                            if (assigningScript) {
-                              handleTogglePresenter(assigningScript.id, id);
-                            }
-                            toast.success(`Apresentador "${name}" cadastrado!`);
-                          } catch {
-                            toast.error("Erro ao cadastrar apresentador.");
-                          }
-                        }}
-                      >
-                        <Plus className="w-3.5 h-3.5 mr-1.5 text-emerald-500" />
-                        Cadastrar "{presenterSearch.trim()}"
-                      </Button>
-                    );
-                  }
-                  return <p className="text-xs text-zinc-400 italic text-center py-4">Nenhum apresentador cadastrado.</p>;
-                })()}
-              </div>
-            </div>
-
-            <Button onClick={() => setAssigningScript(null)} className="w-full h-14 rounded bg-zinc-900 text-white font-black uppercase tracking-widest text-[10px] mt-4">Concluir Atribuição</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-      
       <Dialog open={!!reviewingScript} onOpenChange={(open) => !open && setReviewingScript(null)}>
         <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded-[40px] p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)]">
           <DialogHeader>
@@ -2293,6 +2193,9 @@ function DashboardContent() {
         scripts={bulkAssignScripts || []}
         allUsers={allUsers}
         presenters={presenters}
+        workspaceId={user?.workspaceId || ""}
+        currentUserId={user?.uid}
+        onPresenterCreated={(p) => setPresenters(prev => [...prev, p])}
         onAssigned={handleBulkAssigned}
       />
 
