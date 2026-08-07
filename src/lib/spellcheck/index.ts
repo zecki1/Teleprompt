@@ -35,10 +35,6 @@ async function loadDictionaries(): Promise<void> {
   listeners = [];
 }
 
-if (typeof window !== "undefined") {
-  loadDictionaries();
-}
-
 export function isSpellCheckReady(): boolean {
   return typoInstance !== null;
 }
@@ -48,6 +44,8 @@ export function onSpellCheckReady(fn: () => void): () => void {
     fn();
     return () => {};
   }
+  // Inicia o download dos dicionários só quando alguém realmente precisa
+  loadDictionaries();
   listeners.push(fn);
   return () => {
     listeners = listeners.filter((l) => l !== fn);

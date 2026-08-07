@@ -170,9 +170,11 @@ function HighlightedSpokenText({
 
   const plainText = useMemo(() => stripHtml(text), [text]);
 
+  // Spellcheck sob demanda: só baixa os dicionários quando o usuário começa a digitar
   useEffect(() => {
+    if (!debouncedText || disableSpellCheck) return;
     return onSpellCheckReady(() => setTypoReady(true));
-  }, []);
+  }, [debouncedText, disableSpellCheck]);
 
   // Debounce spellcheck para não travar a UI a cada tecla
   useEffect(() => {
@@ -776,6 +778,9 @@ function EditorContent({ id }: { id: string }) {
         videomakerName: finalVideomakerName,
         isMirrored,
         editingDuration: getEditingDuration(),
+        charCount: scenes.reduce((sum, sc) => sum + (typeof sc.spokenText === "string" ? sc.spokenText.length : 0), 0),
+        wordCount: scenes.reduce((sum, sc) => sum + (typeof sc.spokenText === "string" ? sc.spokenText.trim().split(/\s+/).filter(Boolean).length : 0), 0),
+        sceneCount: scenes.length,
       });
 
       if (isNew) {

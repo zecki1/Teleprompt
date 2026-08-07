@@ -45,6 +45,7 @@ export const UserSchema = z.object({
   surname: z.string().optional(),
   role: z.enum(ROLES).default("Estagiário"),
   isSuperAdmin: z.boolean().default(false),
+  canCollaborate: z.boolean().default(false),
   isEditor: z.boolean().default(false),
   isRevisor: z.boolean().default(false),
   canRevert: z.boolean().default(false),

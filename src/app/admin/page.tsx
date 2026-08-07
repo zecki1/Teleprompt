@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { ExtendedUser, Role, ROLES } from "@/services/schemas";
-import { getUsers, updateUserRole } from "@/services/users";
+import { updateUserRole, updateUserPermissions, mapUserDoc } from "@/services/users";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -66,7 +66,7 @@ import {
 } from "@/components/ui/select";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { updateDoc, doc, deleteDoc, serverTimestamp, collection, getDocs, query, orderBy, limit, where } from "firebase/firestore";
+import { doc, deleteDoc, collection, getDocs, query, orderBy, limit, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { toDate } from "@/lib/firebase-utils";
 import { backfillActivitiesWorkspaceId, BackfillResult } from "@/lib/migrate-activities";
@@ -174,11 +174,32 @@ export default function AdminPage() {
     }
 
     if (user) {
-      loadUsers();
       loadActivities();
       loadPresenters();
     }
   }, [user, router]);
+
+  // Lista de usuários em tempo real (permite refletir mudanças de permissões sem reload)
+  useEffect(() => {
+    if (!user) return;
+    const constraints: Parameters<typeof query>[1][] = user?.isSuperAdmin
+      ? []
+      : [where("workspaceId", "==", user?.workspaceId || "")];
+    const q = query(collection(db, "users"), ...constraints);
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs
+        .map(doc => mapUserDoc(doc))
+        .filter((u): u is ExtendedUser => u !== null)
+        .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
+      setUsersList(list);
+      setLoading(false);
+    }, (error) => {
+      console.error("Erro ao carregar usuários:", error);
+      toast.error("Erro ao carregar usuários.");
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [user?.uid, user?.workspaceId, user?.isSuperAdmin]);
 
   const loadActivities = async () => {
     try {
@@ -260,22 +281,6 @@ export default function AdminPage() {
     }
   };
 
-  const loadUsers = async () => {
-    try {
-      let usersData = await getUsers(user?.workspaceId, user?.isSuperAdmin);
-      // Fallback: se não achou usuários com workspaceId, tenta sem filtro (admin)
-      if (usersData.length === 0 && !user?.isSuperAdmin) {
-        usersData = await getUsers(user?.workspaceId, true);
-      }
-      setUsersList(usersData);
-    } catch (error) {
-      console.error("Erro ao carregar usuários:", error);
-      toast.error("Erro ao carregar usuários.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const loadPresenters = async () => {
     if (!user?.workspaceId) return;
     try {
@@ -342,17 +347,14 @@ export default function AdminPage() {
     }
   };
 
-  const togglePermission = async (uid: string, field: 'isEditor' | 'isRevisor' | 'requiresChecklist' | 'canRevert' | 'canAssign' | 'canViewAdmin' | 'canViewReports' | 'canViewActivityHistory', value: boolean) => {
+  const togglePermission = async (uid: string, field: 'canCollaborate' | 'isEditor' | 'isRevisor' | 'requiresChecklist' | 'canRevert' | 'canAssign' | 'canViewAdmin' | 'canViewReports' | 'canViewActivityHistory', value: boolean) => {
     setUpdating(uid);
     try {
-      const userRef = doc(db, "users", uid);
-      await updateDoc(userRef, {
-        [field]: value,
-        updatedAt: serverTimestamp()
-      });
+      await updateUserPermissions(uid, { [field]: value });
       setUsersList(usersList.map(u => u.uid === uid ? { ...u, [field]: value } : u));
       
       const labels: Record<string, string> = {
+        canCollaborate: "Colaborador",
         isEditor: "Editor",
         isRevisor: "Revisor",
         canRevert: "Reverter",
@@ -561,6 +563,7 @@ export default function AdminPage() {
                 <TableHeader className="bg-zinc-50/30 dark:bg-zinc-900/30">
                   <TableRow className="hover:bg-transparent border-zinc-100 dark:border-zinc-900">
                     <TableHead className="w-[300px] h-14 px-8 font-bold text-zinc-900 dark:text-zinc-100">Colaborador</TableHead>
+                    <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100 text-[11px]">Colaborar</TableHead>
                     <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Editor</TableHead>
                     <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Revisor</TableHead>
                     <TableHead className="w-[120px] text-center font-bold text-zinc-900 dark:text-zinc-100">Reverter</TableHead>
@@ -575,7 +578,7 @@ export default function AdminPage() {
                 <TableBody>
                   {usersList.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="text-center py-12 text-zinc-400">
+                      <TableCell colSpan={11} className="text-center py-12 text-zinc-400">
                         <Users className="w-8 h-8 mx-auto mb-3 opacity-50" />
                         <p className="font-medium">Nenhum colaborador encontrado</p>
                         <p className="text-sm mt-1">Verifique se os usuários possuem um workspace vinculado.</p>
@@ -598,9 +601,18 @@ export default function AdminPage() {
                       <TableCell className="text-center">
                         <div className="flex justify-center">
                           <Switch 
+                            checked={userItem.canCollaborate ?? false} 
+                            onCheckedChange={(val) => togglePermission(userItem.uid, 'canCollaborate', val)}
+                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                          />
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex justify-center">
+                          <Switch 
                             checked={userItem.isEditor} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'isEditor', val)}
-                            disabled={updating === userItem.uid}
+                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -609,7 +621,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.isRevisor} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'isRevisor', val)}
-                            disabled={updating === userItem.uid}
+                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -618,7 +630,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.canRevert} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canRevert', val)}
-                            disabled={updating === userItem.uid}
+                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -627,7 +639,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.requiresChecklist ?? true} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'requiresChecklist', val)}
-                            disabled={updating === userItem.uid}
+                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -636,7 +648,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.canAssign} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canAssign', val)}
-                            disabled={updating === userItem.uid}
+                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -645,7 +657,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.canViewAdmin} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canViewAdmin', val)}
-                            disabled={updating === userItem.uid}
+                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -654,7 +666,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.canViewReports} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canViewReports', val)}
-                            disabled={updating === userItem.uid}
+                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -663,12 +675,13 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.canViewActivityHistory} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canViewActivityHistory', val)}
-                            disabled={updating === userItem.uid}
+                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
                       <TableCell>
                          <div className="flex gap-1 flex-wrap">
+                            {userItem.canCollaborate && <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400 border-none text-[9px]">COLABORADOR</Badge>}
                             {userItem.isEditor && <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-none text-[9px]">EDITOR</Badge>}
                             {userItem.isRevisor && <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border-none text-[9px]">REVISOR</Badge>}
                             {userItem.canRevert && <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-none text-[9px]">REVERTER</Badge>}
@@ -676,7 +689,7 @@ export default function AdminPage() {
                             {userItem.canViewAdmin && <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 border-none text-[9px]">ADMIN</Badge>}
                             {userItem.canViewReports && <Badge className="bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400 border-none text-[9px]">RELATÓRIOS</Badge>}
                             {userItem.canViewActivityHistory && <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-none text-[9px]">HISTÓRICO</Badge>}
-                            {!userItem.isEditor && !userItem.isRevisor && !userItem.canRevert && !userItem.canAssign && !userItem.canViewAdmin && !userItem.canViewReports && !userItem.canViewActivityHistory && <span className="text-zinc-400 text-xs italic">Sem atribuições</span>}
+                            {!userItem.canCollaborate && !userItem.isEditor && !userItem.isRevisor && !userItem.canRevert && !userItem.canAssign && !userItem.canViewAdmin && !userItem.canViewReports && !userItem.canViewActivityHistory && <span className="text-zinc-400 text-xs italic">Sem atribuições</span>}
                          </div>
                       </TableCell>
                     </TableRow>

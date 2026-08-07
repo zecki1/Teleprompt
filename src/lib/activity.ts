@@ -44,8 +44,42 @@ export async function logActivity(data: ActivityData) {
       ...stripUndefined(data as unknown as Record<string, unknown>),
       timestamp: serverTimestamp(),
     });
+    if (data.workspaceId) {
+      cleanupExpiredActivities(data.workspaceId).catch(() => {});
+    }
   } catch (error) {
     console.error("Error logging activity:", error);
+  }
+}
+
+/**
+ * TTL: remove atividades com mais de 30 dias do workspace.
+ * Executa no máximo 1x por dia por workspace (via localStorage) para não
+ * adicionar leituras/escritas ao fluxo normal.
+ */
+async function cleanupExpiredActivities(workspaceId: string) {
+  const key = `activity_cleanup_${workspaceId}`;
+  const lastRun = Number(localStorage.getItem(key) || 0);
+  const DAY = 24 * 60 * 60 * 1000;
+  if (Date.now() - lastRun < DAY) return;
+
+  try {
+    const cutoff = Timestamp.fromDate(new Date(Date.now() - 30 * DAY));
+    const q = query(
+      collection(db, "activities"),
+      where("workspaceId", "==", workspaceId),
+      where("timestamp", "<", cutoff)
+    );
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const batch = writeBatch(db);
+      snap.docs.forEach(d => batch.delete(doc(db, "activities", d.id)));
+      await batch.commit();
+    }
+  } catch (error) {
+    console.error("Error cleaning expired activities:", error);
+  } finally {
+    localStorage.setItem(key, String(Date.now()));
   }
 }
 

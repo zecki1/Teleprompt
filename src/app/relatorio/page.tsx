@@ -313,9 +313,18 @@ export default function RelatorioPage() {
 
   const fetchScriptsCharMap = async (scripts: ScriptDoc[]): Promise<Map<string, number>> => {
     const charMap = new Map<string, number>();
+    // Prefere a métrica já gravada no doc (evita N+1); fallback para versões legadas
+    const missing = scripts.filter(s => {
+      const cached = s.charCount;
+      if (typeof cached === "number") {
+        charMap.set(s.id, cached);
+        return false;
+      }
+      return true;
+    });
     const batchSize = 20;
-    for (let i = 0; i < scripts.length; i += batchSize) {
-      const batch = scripts.slice(i, i + batchSize);
+    for (let i = 0; i < missing.length; i += batchSize) {
+      const batch = missing.slice(i, i + batchSize);
       const results = await Promise.allSettled(
         batch.map(async (script) => {
           const vQ = query(

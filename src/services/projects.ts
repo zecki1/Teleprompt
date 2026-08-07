@@ -66,3 +66,15 @@ export async function getScriptsByWorkspace(workspaceId: string, isSuperAdmin?: 
     return [];
   }
 }
+
+export async function getScriptsByProject(projectId: string): Promise<ScriptDoc[]> {
+  try {
+    const scriptsRef = collection(db, "scripts");
+    const q = query(scriptsRef, where("projectId", "==", projectId));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as ScriptDoc[];
+  } catch (error) {
+    console.error("Erro ao buscar roteiros do projeto:", error);
+    return [];
+  }
+}

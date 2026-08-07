@@ -64,6 +64,11 @@ export interface ScriptDoc {
 
   /** Workspace a que este script pertence */
   workspaceId?: string;
+
+  // Métricas gravadas no save para evitar N+1 em relatórios
+  charCount?: number;
+  wordCount?: number;
+  sceneCount?: number;
 }
 
 /** A node in the virtual folder tree built from scripts */

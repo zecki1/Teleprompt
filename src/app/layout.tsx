@@ -4,7 +4,6 @@ import { PreferencesProvider } from "@/components/providers/preferences-provider
 import { VlibrasWidget } from "@/components/accessibility/vlibras-widget";
 import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
-import { AOSInit } from "@/components/providers/aos-init";
 import { ThemeProvider } from "next-themes";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
@@ -73,7 +72,6 @@ export default function RootLayout({
         >
           <AuthProvider>
             <PreferencesProvider>
-              <AOSInit />
               <SiteHeader />
               {/* O main cresce para empurrar o footer, mas não força scroll interno */}
               <main className="flex-1 w-full max-w-[100vw]">

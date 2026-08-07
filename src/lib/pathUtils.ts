@@ -1,5 +1,5 @@
 import { ScriptDoc, FolderNode, MAX_PATH_DEPTH } from "@/types/script";
-import { doc, updateDoc } from "firebase/firestore";
+import { doc, updateDoc, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 /**
@@ -144,6 +144,7 @@ export async function moveScript(
     folder: newPath[0] ?? null,
     subfolder: newPath[1] ?? null,
     lesson: newPath[2] ?? null,
+    updatedAt: new Date(),
   };
   if (targetProject) {
     data.projectId = targetProject.projectId;
@@ -151,6 +152,33 @@ export async function moveScript(
     data.project = targetProject.projectName;
   }
   await updateDoc(ref, data);
+}
+
+/** Moves multiple scripts to the same path (and optionally a different project) in a single batch */
+export async function moveScripts(
+  scripts: ScriptDoc[],
+  newPath: string[],
+  targetProject?: { projectId: string; projectName: string }
+): Promise<void> {
+  if (scripts.length === 0) return;
+  const batch = writeBatch(db);
+  for (const script of scripts) {
+    const ref = doc(db, "scripts", script.id);
+    const data: Record<string, unknown> = {
+      path: newPath,
+      folder: newPath[0] ?? null,
+      subfolder: newPath[1] ?? null,
+      lesson: newPath[2] ?? null,
+      updatedAt: new Date(),
+    };
+    if (targetProject) {
+      data.projectId = targetProject.projectId;
+      data.projectName = targetProject.projectName;
+      data.project = targetProject.projectName;
+    }
+    batch.update(ref, data);
+  }
+  await batch.commit();
 }
 
 /** Renames a folder in a script path (updates all scripts that have that segment) */

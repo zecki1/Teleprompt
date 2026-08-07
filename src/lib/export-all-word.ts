@@ -1,18 +1,6 @@
-import {
-  Document,
-  Packer,
-  Paragraph,
-  Table,
-  TableCell,
-  TableRow,
-  TextRun,
-  WidthType,
-  AlignmentType,
-  HeadingLevel,
-  VerticalAlign,
-} from "docx";
 import { saveAs } from "file-saver";
 import { Scene } from "./parser";
+import type { Paragraph, Table } from "docx";
 
 interface ScriptWithScenes {
   title: string;
@@ -27,6 +15,8 @@ interface ScriptWithScenes {
 }
 
 export const exportAllToWord = async (projectName: string, scripts: ScriptWithScenes[]) => {
+  const docx = await import("docx");
+  const { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType, AlignmentType, HeadingLevel, VerticalAlign } = docx;
   const children: (Paragraph | Table)[] = [];
 
   children.push(
@@ -80,9 +70,9 @@ export const exportAllToWord = async (projectName: string, scripts: ScriptWithSc
         rows: [
           new TableRow({
             children: [
-              createHeaderCell("CENA", 8),
-              createHeaderCell("LOCUÇÃO / TEXTO FALADO", 55),
-              createHeaderCell("LETTERING / OBS", 37),
+              createHeaderCell("CENA", 8, docx),
+              createHeaderCell("LOCUÇÃO / TEXTO FALADO", 55, docx),
+              createHeaderCell("LETTERING / OBS", 37, docx),
             ],
           }),
           ...script.scenes.map(
@@ -182,7 +172,8 @@ export const exportAllToWord = async (projectName: string, scripts: ScriptWithSc
   saveAs(blob, `backup_${safeName}.docx`);
 };
 
-function createHeaderCell(text: string, widthPercent: number) {
+function createHeaderCell(text: string, widthPercent: number, docx: typeof import("docx")) {
+  const { TableCell, Paragraph, TextRun, WidthType, AlignmentType } = docx;
   return new TableCell({
     width: { size: widthPercent, type: WidthType.PERCENTAGE },
     shading: { fill: "333333" },

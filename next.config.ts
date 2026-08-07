@@ -1,4 +1,8 @@
 import type { NextConfig } from "next";
+import path from "path";
+import { NormalModuleReplacementPlugin } from "webpack";
+
+const nodeEmptyModule = path.join(process.cwd(), "src/lib/node-empty.js");
 
 const nextConfig: NextConfig = {
   // eslint: {
@@ -33,7 +37,19 @@ const nextConfig: NextConfig = {
     ],
   },
   reactCompiler: true,
-  
+
+  turbopack: {},
+
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.plugins.push(
+        new NormalModuleReplacementPlugin(/^node:fs$/, nodeEmptyModule),
+        new NormalModuleReplacementPlugin(/^node:https$/, nodeEmptyModule)
+      );
+    }
+    return config;
+  },
+
   async headers() {
     return [
       {

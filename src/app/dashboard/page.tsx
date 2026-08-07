@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { collection, query, deleteDoc, doc, updateDoc, writeBatch, where, addDoc, serverTimestamp, onSnapshot, orderBy, limit, getDocs } from "firebase/firestore";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { collection, query, deleteDoc, doc, updateDoc, writeBatch, where, addDoc, serverTimestamp, onSnapshot, orderBy, limit, getDocs, startAfter } from "firebase/firestore";
+import type { QueryDocumentSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -55,7 +56,11 @@ import { buildTree } from "@/lib/pathUtils";
 import { FolderTree } from "@/components/tp/FolderTree";
 import { MoveScriptModal } from "@/components/tp/MoveScriptModal";
 import { MoveFolderModal } from "@/components/tp/MoveFolderModal";
-import { CommentsPanel } from "@/components/tp/CommentsPanel";
+import dynamic from "next/dynamic";
+const CommentsPanel = dynamic(() => import("@/components/tp/CommentsPanel").then(m => m.CommentsPanel), {
+  ssr: false,
+  loading: () => null,
+});
 import { WelcomeModal } from "@/components/auth/WelcomeModal";
 import {
   DropdownMenu,
@@ -129,6 +134,12 @@ function DashboardContent() {
   const [changingStatusPersonName, setChangingStatusPersonName] = useState("");
   const [selectedScripts, setSelectedScripts] = useState<Set<string>>(new Set());
   const [bulkAssignScripts, setBulkAssignScripts] = useState<ScriptDoc[] | null>(null);
+  const [bulkStatusScripts, setBulkStatusScripts] = useState<ScriptDoc[] | null>(null);
+  const [movingScripts, setMovingScripts] = useState<ScriptDoc[]>([]);
+  const SCRIPTS_PAGE_SIZE = 50;
+  const [hasMoreScripts, setHasMoreScripts] = useState(false);
+  const [loadingMoreScripts, setLoadingMoreScripts] = useState(false);
+  const lastVisibleRef = useRef<QueryDocumentSnapshot | null>(null);
 
   useEffect(() => {
     if (user?.workspaceId) {
@@ -481,20 +492,26 @@ function DashboardContent() {
     loadProjects();
 
     const scriptsRef = collection(db, "scripts");
-    const q = isSuper
+      const baseQuery = isSuper
       ? query(scriptsRef)
       : query(scriptsRef, where("workspaceId", "==", activeWorkspaceId));
+      const projectFiltered = !!projectIdFilter;
+      const q = projectFiltered
+        ? query(baseQuery, where("projectId", "==", projectIdFilter), orderBy("createdAt", "desc"))
+        : query(baseQuery, orderBy("createdAt", "desc"), limit(SCRIPTS_PAGE_SIZE));
 
-    const unsub = onSnapshot(q, (snapshot) => {
-      const fetched = snapshot.docs.map(doc => {
+      const mapScriptDoc = (doc: QueryDocumentSnapshot): ScriptDoc => {
         const data = doc.data();
         return {
           id: doc.id,
           ...data,
           status: data.status || "rascunho",
           createdAt: toDate(data.createdAt).toISOString()
-        };
-      }) as ScriptDoc[];
+      } as ScriptDoc;
+    };
+
+      const unsub = onSnapshot(q, (snapshot) => {
+        const fetched = snapshot.docs.map(mapScriptDoc);
 
       fetched.sort((a, b) => {
         const priority: Record<string, number> = {
@@ -513,6 +530,13 @@ function DashboardContent() {
         return a.title.localeCompare(b.title);
       });
 
+      if (projectFiltered) {
+        lastVisibleRef.current = null;
+        setHasMoreScripts(false);
+      } else {
+        lastVisibleRef.current = snapshot.docs[snapshot.docs.length - 1] || null;
+        setHasMoreScripts(snapshot.docs.length === SCRIPTS_PAGE_SIZE);
+      }
       setScripts(fetched);
       setLoading(false);
     }, (err) => {
@@ -522,7 +546,47 @@ function DashboardContent() {
     });
 
     return () => unsub();
-  }, [user?.workspaceId, user?.isSuperAdmin, router, loadProjects]);
+  }, [user?.workspaceId, user?.isSuperAdmin, router, loadProjects, projectIdFilter]);
+
+  const loadMoreScripts = async () => {
+    if (projectIdFilter || loadingMoreScripts || !hasMoreScripts) return;
+    const activeWorkspaceId = user?.workspaceId || "";
+    const isSuper = user?.isSuperAdmin;
+    const lastVisible = lastVisibleRef.current;
+    if (!lastVisible) {
+      setHasMoreScripts(false);
+      return;
+    }
+    setLoadingMoreScripts(true);
+    try {
+      const scriptsRef = collection(db, "scripts");
+      const baseQuery = isSuper
+        ? query(scriptsRef)
+        : query(scriptsRef, where("workspaceId", "==", activeWorkspaceId));
+      const nextQ = query(baseQuery, orderBy("createdAt", "desc"), startAfter(lastVisible), limit(SCRIPTS_PAGE_SIZE));
+      const snap = await getDocs(nextQ);
+      const more = snap.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          status: data.status || "rascunho",
+          createdAt: toDate(data.createdAt).toISOString()
+        } as ScriptDoc;
+      });
+      setScripts(prev => {
+        const seen = new Set(prev.map(s => s.id));
+        return [...prev, ...more.filter(s => !seen.has(s.id))];
+      });
+      lastVisibleRef.current = snap.docs[snap.docs.length - 1] || null;
+      setHasMoreScripts(snap.docs.length === SCRIPTS_PAGE_SIZE);
+    } catch (err) {
+      console.error("Erro ao carregar mais roteiros:", err);
+      toast.error("Erro ao carregar mais roteiros.");
+    } finally {
+      setLoadingMoreScripts(false);
+    }
+  };
 
   const filteredScripts = scripts.filter(s => {
     const matchesStatus = statusFilter === "all" || s.status === statusFilter;
@@ -596,6 +660,40 @@ function DashboardContent() {
     }));
     setSelectedScripts(new Set());
     setBulkAssignScripts(null);
+  };
+
+  const openBulkMove = () => {
+    const selected = scripts.filter(s => selectedScripts.has(s.id));
+    if (selected.length === 0) return;
+    const firstProj = selected[0].projectId || selected[0].projectName || selected[0].project;
+    const sameProject = selected.every(s => (s.projectId || s.projectName || s.project) === firstProj);
+    if (!sameProject) {
+      toast.error("Selecione roteiros do mesmo projeto para mover em lote.");
+      return;
+    }
+    setMovingScripts(selected);
+  };
+
+  const applyBulkStatus = async (newStatus: ScriptStatus) => {
+    if (!bulkStatusScripts || bulkStatusScripts.length === 0) return;
+    const targets = bulkStatusScripts;
+    try {
+      const batch = writeBatch(db);
+      for (const s of targets) {
+        batch.update(doc(db, "scripts", s.id), {
+          status: newStatus,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      await batch.commit();
+      const label = statusConfig[newStatus]?.label || newStatus;
+      setScripts(prev => prev.map(s => targets.some(t => t.id === s.id) ? { ...s, status: newStatus, updatedAt: new Date().toISOString() } : s));
+      setSelectedScripts(new Set());
+      setBulkStatusScripts(null);
+      toast.success(`Status alterado para "${label}" em ${targets.length} roteiro(s).`);
+    } catch {
+      toast.error("Erro ao alterar status.");
+    }
   };
 
   const handleSingleAssigned = (updatedScripts: ScriptDoc[]) => {
@@ -1088,7 +1186,7 @@ function DashboardContent() {
           )}
         </div>
       ) : (
-        <div className="p-2">
+              <div className="p-2 max-h-[50vh] overflow-y-scroll custom-scrollbar pr-1">
           {loadingProjects ? (
             Array(3).fill(0).map((_, i) => (
               <div key={i} className="h-12 bg-zinc-100 dark:bg-zinc-900 animate-pulse rounded border border-zinc-200 dark:border-zinc-800 mb-2" />
@@ -1166,6 +1264,25 @@ function DashboardContent() {
         >
           Todos ({statusCounts.all})
         </Button>
+          {hasMoreScripts && !projectIdFilter && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadMoreScripts}
+              disabled={loadingMoreScripts}
+              className="gap-2 rounded px-4 border-blue-500 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10"
+            >
+              {loadingMoreScripts ? (
+                <>
+                  <Hourglass className="w-3.5 h-3.5 animate-spin" style={{ animationDuration: "2s" }} /> Carregando...
+                </>
+              ) : (
+                <>
+                  <Plus className="w-3.5 h-3.5" /> Carregar mais
+                </>
+              )}
+            </Button>
+          )}
         {(Object.keys(statusConfig) as ScriptStatus[]).map((status) => {
           const config = statusConfig[status];
           const Icon = config.icon;
@@ -1269,6 +1386,7 @@ function DashboardContent() {
           </p>
         </div>
       ) : (
+              <>
         <div data-tour="dashboard-script-list" className="space-y-16">
           {Object.entries(visibleProjects)
             .sort((a, b) => compareProjectNames(a[0], b[0]))
@@ -1735,12 +1853,13 @@ function DashboardContent() {
               );
             })}
         </div>
+              </>
       )}
 
       {/* Move Script Modal */}
       <MoveScriptModal
         open={!!movingScript}
-        script={movingScript}
+          scripts={movingScript ? [movingScript] : []}
         allScripts={scripts}
         projects={projects}
         currentProjectId={movingScript?.projectId || projects.find(p => p.name === (movingScript?.projectName || movingScript?.project))?.id || ""}
@@ -1878,7 +1997,7 @@ function DashboardContent() {
       />
 
       <Dialog open={!!reviewingScript} onOpenChange={(open) => !open && setReviewingScript(null)}>
-        <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded-[40px] p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)]">
+          <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)]">
           <DialogHeader>
             <DialogTitle className="text-2xl font-black text-center mb-2">Concluir Revisão</DialogTitle>
             <p className="text-center text-zinc-500 text-sm font-medium mb-6">Confirme a categoria do roteiro para gerar a tarefa de gravação.</p>
@@ -1926,7 +2045,7 @@ function DashboardContent() {
       </Dialog>
       <MoveScriptModal
         open={!!movingScript}
-        script={movingScript}
+          scripts={movingScript ? [movingScript] : []}
         allScripts={scripts}
         projects={projects}
         currentProjectId={movingScript?.projectId || projects.find(p => p.name === (movingScript?.projectName || movingScript?.project))?.id || ""}
@@ -2135,7 +2254,7 @@ function DashboardContent() {
                           setChangingStatusPersonId(isSelected ? "" : u.uid);
                           setChangingStatusPersonName(isSelected ? "" : (u.displayName || u.name || "Usuário"));
                         }}
-                        className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-all ${
+                        className={`w-full flex items-center gap-2 px-3 py-2 rounded- text-left transition-all ${
                           isSelected
                             ? "bg-blue-50 dark:bg-blue-950/20 ring-1 ring-blue-500"
                             : "hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
@@ -2199,6 +2318,48 @@ function DashboardContent() {
         onAssigned={handleBulkAssigned}
       />
 
+        {/* Bulk Status Dialog */}
+        <Dialog open={!!bulkStatusScripts} onOpenChange={(open) => { if (!open) setBulkStatusScripts(null); }}>
+          <DialogContent className="sm:max-w-sm bg-white dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 rounded-2xl p-6">
+            <DialogHeader>
+              <DialogTitle className="text-lg font-black uppercase tracking-widest">Alterar Status</DialogTitle>
+              <DialogDescription className="text-zinc-500 text-sm">
+                {bulkStatusScripts?.length ?? 0} roteiro(s) selecionado(s). Clique no status para aplicar.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4 space-y-2">
+              {(["rascunho", "em_revisao", "revisao_realizada", "aguardando_gravacao", "gravado", "rejeitado", "nao_gravado"] as ScriptStatus[]).map(status => {
+                const cfg = statusConfig[status];
+                return (
+                  <button
+                    key={status}
+                    onClick={() => applyBulkStatus(status)}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all border-2 border-transparent hover:bg-zinc-50 dark:hover:bg-zinc-900/50 hover:border-blue-500/50"
+                  >
+                    <div className={`w-3 h-3 rounded-full shrink-0 ${cfg.color}`} />
+                    <span className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{cfg.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Bulk Move Dialog */}
+        <MoveScriptModal
+          open={movingScripts.length > 0}
+          scripts={movingScripts}
+          allScripts={scripts}
+          projects={projects}
+          currentProjectId={movingScripts[0]?.projectId || projects.find(p => p.name === (movingScripts[0]?.projectName || movingScripts[0]?.project))?.id || ""}
+          currentProjectName={movingScripts[0]?.projectName || movingScripts[0]?.project || "Geral"}
+          onClose={() => setMovingScripts([])}
+          onMoved={() => {
+            setSelectedScripts(new Set());
+            setMovingScripts([]);
+          }}
+        />
+
       {/* Floating Selection Bar */}
       {selectedScripts.size > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] bg-zinc-900 dark:bg-zinc-800 border border-zinc-700 rounded-2xl px-6 py-3 shadow-2xl flex items-center gap-4 animate-in slide-in-from-bottom-4 duration-300">
@@ -2216,6 +2377,24 @@ function DashboardContent() {
           </Button>
           <Button
             size="sm"
+              className="h-9 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-[10px] uppercase tracking-widest gap-2"
+              onClick={openBulkMove}
+            >
+              <FolderInput className="w-3.5 h-3.5" /> Mover
+            </Button>
+            <Button
+              size="sm"
+              className="h-9 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest gap-2"
+              onClick={() => {
+                const selected = scripts.filter(s => selectedScripts.has(s.id));
+                if (selected.length === 0) return;
+                setBulkStatusScripts(selected);
+              }}
+            >
+              <Settings className="w-3.5 h-3.5" /> Status
+            </Button>
+            <Button
+              size="sm"
             variant="ghost"
             className="h-9 text-zinc-400 hover:text-white font-bold text-[10px]"
             onClick={() => setSelectedScripts(new Set())}

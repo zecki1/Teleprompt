@@ -1,5 +1,4 @@
-import pptxgen from "pptxgenjs";
-import JSZip from "jszip";
+import type JSZip from "jszip";
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import { Scene } from "./parser";
 
@@ -100,6 +99,7 @@ async function apply3dToContentSlides(zip: JSZip, contentSlides: Set<number>): P
 }
 
 export async function exportToPPT(options: ExportOptions, scenes: Scene[]) {
+  const pptxgen = (await import("pptxgenjs")).default;
   const pptx = new pptxgen();
 
   pptx.title = options.title;
@@ -195,7 +195,8 @@ export async function exportToPPT(options: ExportOptions, scenes: Scene[]) {
   });
 
   const array = await pptx.write({ outputType: "uint8array" });
-  const zip = await JSZip.loadAsync(array);
+  const { default: JSZipRuntime } = await import("jszip");
+  const zip = await JSZipRuntime.loadAsync(array);
   await apply3dToContentSlides(zip, contentSlides);
   const finalArray = await zip.generateAsync({ type: "uint8array" });
   const blob = new Blob([finalArray as BlobPart], {

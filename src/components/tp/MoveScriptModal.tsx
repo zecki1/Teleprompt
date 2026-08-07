@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Folder, FolderOpen, Check } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Folder, FolderOpen, Check, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -10,22 +10,17 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FolderNode, ScriptDoc } from "@/types/script";
-import { moveScript, buildTree } from "@/lib/pathUtils";
-import { Project } from "@/services/projects";
+import { moveScripts, buildTree } from "@/lib/pathUtils";
+import { getScriptsByProject, Project } from "@/services/projects";
+import { ProjectFinder } from "@/components/tp/ProjectFinder";
 import { toast } from "sonner";
 
 interface MoveScriptModalProps {
   open: boolean;
-  script: ScriptDoc | null;
+  /** Script(s) to move (all must belong to the same current project) */
+  scripts: ScriptDoc[];
   /** All scripts to build folder trees for different projects */
   allScripts: ScriptDoc[];
   /** All available projects */
@@ -48,7 +43,7 @@ const DEPTH_COLORS = [
 
 export function MoveScriptModal({
   open,
-  script,
+  scripts,
   allScripts,
   projects,
   currentProjectId,
@@ -59,39 +54,75 @@ export function MoveScriptModal({
   const [selectedProjectId, setSelectedProjectId] = useState(currentProjectId);
   const [selectedPath, setSelectedPath] = useState<string[]>([]);
   const [moving, setMoving] = useState(false);
+  const [projectScripts, setProjectScripts] = useState<ScriptDoc[]>([]);
+  const [loadingProjectScripts, setLoadingProjectScripts] = useState(false);
 
-  if (!script) return null;
+  // Load the destination project's scripts directly from Firestore so the full
+  // folder tree shows even when the dashboard list is paginated.
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    let cancelled = false;
+    setLoadingProjectScripts(true);
+    getScriptsByProject(selectedProjectId)
+      .then(s => {
+        if (!cancelled) setProjectScripts(s);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingProjectScripts(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProjectId]);
 
-  const selectedProjectScripts = allScripts.filter(s => {
-    const sp = s.projectId || projects.find(p => p.name === (s.projectName || s.project))?.id || "";
-    return sp === selectedProjectId;
-  });
-  const tree = buildTree(selectedProjectScripts);
+  if (scripts.length === 0) return null;
+
+  const isMultiple = scripts.length > 1;
+
+  const resolveProjectId = (s: ScriptDoc) =>
+    s.projectId || projects.find(p => p.name === (s.projectName || s.project))?.id || "";
+
+  // Merge the freshly fetched project scripts with the already loaded ones
+  // (covers legacy scripts that only carry projectName/project).
+  const seenIds = new Set<string>();
+  const mergedScripts: ScriptDoc[] = [];
+  for (const s of projectScripts) {
+    seenIds.add(s.id);
+    mergedScripts.push(s);
+  }
+  for (const s of allScripts) {
+    if (resolveProjectId(s) === selectedProjectId && !seenIds.has(s.id)) {
+      seenIds.add(s.id);
+      mergedScripts.push(s);
+    }
+  }
+  const tree = buildTree(mergedScripts);
 
   const selectedProjectName = projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId;
 
   const handleMove = async () => {
-    if (!script) return;
+    if (scripts.length === 0) return;
     setMoving(true);
     try {
       const targetProject = selectedProjectId !== currentProjectId
         ? { projectId: selectedProjectId, projectName: selectedProjectName }
         : undefined;
 
-      await moveScript(script.id, selectedPath, targetProject);
+      await moveScripts(scripts, selectedPath, targetProject);
 
       const projectSuffix = targetProject
         ? ` no projeto "${selectedProjectName}"`
         : "";
+      const verb = isMultiple ? "roteiros" : "Roteiro";
       toast.success(
         selectedPath.length > 0
-          ? `Roteiro movido para "${selectedPath.join(" › ")}"${projectSuffix}`
-          : `Roteiro movido para a raiz do projeto${projectSuffix}`
+          ? `${verb} movido${isMultiple ? "s" : ""} para "${selectedPath.join(" › ")}"${projectSuffix}`
+          : `${verb} movido${isMultiple ? "s" : ""} para a raiz do projeto${projectSuffix}`
       );
       onMoved();
       onClose();
     } catch {
-      toast.error("Erro ao mover roteiro.");
+      toast.error("Erro ao mover roteiro(s).");
     } finally {
       setMoving(false);
     }
@@ -102,33 +133,35 @@ export function MoveScriptModal({
       <DialogContent className="sm:max-w-md bg-white dark:bg-zinc-950 border-none rounded-2xl p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)]">
         <DialogHeader>
           <DialogTitle className="text-xl font-black uppercase tracking-widest text-center">
-            Mover Roteiro
+            {isMultiple ? "Mover Roteiros" : "Mover Roteiro"}
           </DialogTitle>
           <DialogDescription className="text-center text-zinc-500 text-sm">
             Selecione a pasta de destino no projeto atual para{" "}
-            <span className="font-bold text-zinc-700 dark:text-zinc-300">
-              &ldquo;{script.title}&rdquo;
-            </span>
+            {isMultiple ? (
+              <span className="font-bold text-zinc-700 dark:text-zinc-300">
+                {scripts.length} roteiros selecionados
+              </span>
+            ) : (
+              <span className="font-bold text-zinc-700 dark:text-zinc-300">
+                &ldquo;{scripts[0].title}&rdquo;
+              </span>
+            )}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Project selector */}
+        {/* Project selector + finder */}
         <div className="mt-4">
           <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1.5 block">
             Projeto destino
           </label>
-          <Select value={selectedProjectId} onValueChange={val => { setSelectedProjectId(val); setSelectedPath([]); }}>
-            <SelectTrigger className="w-full h-9 rounded-lg border-zinc-200 dark:border-zinc-800 text-[12px] font-bold">
-              <SelectValue placeholder="Selecione um projeto" />
-            </SelectTrigger>
-            <SelectContent className="rounded-xl border-zinc-200 dark:border-zinc-800">
-              {projects.map(p => (
-                <SelectItem key={p.id} value={p.id} className="text-[12px] font-bold">
-                  {p.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <ProjectFinder
+            projects={projects}
+            value={selectedProjectId}
+            onSelect={id => {
+              setSelectedProjectId(id);
+              setSelectedPath([]);
+            }}
+          />
         </div>
 
         <div className="mt-3 space-y-1 max-h-64 overflow-y-auto border border-zinc-100 dark:border-zinc-800 rounded-xl p-3">
@@ -142,12 +175,22 @@ export function MoveScriptModal({
           />
 
           {/* Tree options */}
-          <TreeOptions
-            nodes={tree}
-            selectedPath={selectedPath}
-            onSelect={setSelectedPath}
-            depth={0}
-          />
+          {loadingProjectScripts ? (
+            <div className="flex items-center justify-center gap-2 py-4 text-zinc-400 text-[12px] font-bold">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Carregando pastas...
+            </div>
+          ) : mergedScripts.length === 0 ? (
+            <p className="px-3 py-2.5 text-[12px] font-bold text-zinc-400">
+              Nenhuma pasta encontrada neste projeto.
+            </p>
+          ) : (
+            <TreeOptions
+              nodes={tree}
+              selectedPath={selectedPath}
+              onSelect={setSelectedPath}
+              depth={0}
+            />
+          )}
         </div>
 
         {/* Current selection breadcrumb */}

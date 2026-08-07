@@ -129,8 +129,12 @@ html[data-font-size="24"] { font-size: 24px; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
 .custom-scrollbar::-webkit-scrollbar {
-  height: 6px;
-  width: 6px;
+  height: 8px;
+  width: 8px;
+}
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(var(--ring)) transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
   background: transparent;

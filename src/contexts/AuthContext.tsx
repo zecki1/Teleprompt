@@ -11,7 +11,7 @@ import {
 } from "firebase/auth";
 import { doc, onSnapshot, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove, collection, query, where, getDocs, QuerySnapshot, DocumentData } from "firebase/firestore";
 import { auth, db, googleProvider } from "@/lib/firebase";
-import { ExtendedUser, ExtendedUserSchema, Workspace, Team, Role } from "@/services/schemas";
+import { ExtendedUser, ExtendedUserSchema, Workspace, Team, Role, UserStatus } from "@/services/schemas";
 import { getWorkspace, createWorkspace, joinWorkspaceByToken } from "@/services/workspaceService";
 import { toast } from "sonner";
 
@@ -43,13 +43,42 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const GHOST_EMAILS = ['zecki1@hotmail.com'];
 
-const sanitizeData = (data: Record<string, unknown>, fbEmail?: string | null) => {
+const sanitizeData = (data: Record<string, unknown>, fbEmail?: string | null): Record<string, unknown> => {
   const wsId = (data['workspaceId'] as string) || (data['workspaces'] as string[])?.[0] || "";
   const isSuperAdmin = (data['isSuperAdmin'] as boolean) || (fbEmail && GHOST_EMAILS.includes(fbEmail.toLowerCase()));
   return {
     ...data,
-    workspaceId: typeof wsId === 'string' ? wsId.toLowerCase() : wsId,
+    workspaceId: typeof wsId === 'string' ? wsId : wsId,
     isSuperAdmin,
+  };
+};
+
+const buildFallbackUser = (uid: string, data: Record<string, unknown>, fbEmail?: string | null): ExtendedUser => {
+  const safe = sanitizeData(data, fbEmail);
+  const wsId = (safe['workspaceId'] as string) || (safe['workspaces'] as string[])?.[0] || "";
+  return {
+    uid,
+    email: (safe['email'] as string) || "",
+    displayName: (safe['displayName'] as string) || (safe['name'] as string) || "Usuário",
+    name: (safe['name'] as string) || "",
+    role: (safe['role'] as Role) || "Estagiário",
+    isSuperAdmin: safe['isSuperAdmin'] === true,
+    canCollaborate: safe['canCollaborate'] === true,
+    isEditor: safe['isEditor'] === true,
+    isRevisor: safe['isRevisor'] === true,
+    canRevert: safe['canRevert'] === true,
+    canViewAdmin: safe['canViewAdmin'] === true,
+    canViewReports: safe['canViewReports'] === true,
+    canViewActivityHistory: safe['canViewActivityHistory'] === true,
+    canAssign: safe['canAssign'] === true,
+    requiresChecklist: typeof safe['requiresChecklist'] === 'boolean' ? (safe['requiresChecklist'] as boolean) : true,
+    status: (safe['status'] as UserStatus) || "active",
+    workspaceId: wsId,
+    workspaces: (safe['workspaces'] as string[]) || [],
+    avatarUrl: (safe['avatarUrl'] as string) || "",
+    photoURL: (safe['photoURL'] as string) || null,
+    createdAt: safe['createdAt'] as string | { toDate: () => Date } | null | undefined,
+    updatedAt: safe['updatedAt'] as string | { toDate: () => Date } | null | undefined,
   };
 };
 
@@ -74,6 +103,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let unsubscribeUser: () => void;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
+      if (unsubscribeUser) {
+        unsubscribeUser();
+      }
       if (fbUser) {
         setFirebaseUser(fbUser);
         addKnownAccount({
@@ -87,20 +119,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         unsubscribeUser = onSnapshot(userRef, 
           async (docSnap) => {
             if (docSnap.exists()) {
-              try {
-                const rawData = docSnap.data();
-                const safeData = sanitizeData(rawData as Record<string, unknown>, fbUser.email);
-                const userData = ExtendedUserSchema.parse({ uid: docSnap.id, ...safeData });
-                
-                setUser(userData);
-                addKnownAccount({
-                  uid: userData.uid,
-                  email: userData.email,
-                  displayName: userData.displayName || userData.name || null,
-                  photoURL: userData.photoURL || null,
-                });
-                
-                const loadWorkspaces = async () => {
+              const rawData = docSnap.data() as Record<string, unknown>;
+              const userData = buildFallbackUser(docSnap.id, rawData, fbUser.email);
+              
+              setUser(userData);
+              addKnownAccount({
+                uid: userData.uid,
+                email: userData.email,
+                displayName: userData.displayName || userData.name || null,
+                photoURL: userData.photoURL || null,
+              });
+              
+              const loadWorkspaces = async () => {
                   if (userData.isSuperAdmin) {
                     try {
                       const wsSnap = await getDocs(collection(db, "workspaces"));
@@ -150,10 +180,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 loadWorkspaces();
                 
                 setLoading(false);
-              } catch (err) {
-                console.error("[AuthContext] Error validating user data:", err);
-                setLoading(false);
-              }
             } else {
               console.warn("[AuthContext] User document not found for", fbUser.uid);
               setLoading(false);
@@ -208,6 +234,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             status: data.status || "active",
             workspaceId: data.workspaceId || "",
             workspaces: data.workspaces || [],
+            canCollaborate: data.canCollaborate || false,
             isEditor: data.isEditor || false,
             isRevisor: data.isRevisor || false,
             canRevert: data.canRevert || false,
@@ -239,7 +266,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       unsubUsers();
       unsubTeams();
     };
-  }, [user?.workspaceId]);
+  }, [user?.workspaceId, user?.isSuperAdmin, user?.canViewAdmin, user?.canViewReports, user?.canViewActivityHistory, user?.canAssign]);
 
   const signIn = async (email: string, password: string, inviteWorkspaceId?: string) => {
     setLoading(true);
@@ -402,8 +429,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const switchWorkspace = async (workspaceId: string) => {
     if (!user) return;
     try {
-      await updateDoc(doc(db, "users", user.uid), { workspaceId });
-      setUser(prev => prev ? { ...prev, workspaceId } : null);
+      await updateDoc(doc(db, "users", user.uid), {
+        workspaceId,
+        workspaces: arrayUnion(workspaceId),
+      });
+      setUser(prev => {
+        if (!prev) return null;
+        const workspaces = prev.workspaces?.includes(workspaceId)
+          ? prev.workspaces
+          : [...(prev.workspaces || []), workspaceId];
+        return { ...prev, workspaceId, workspaces };
+      });
       toast.success("Workspace alterado!");
     } catch {
       toast.error("Erro ao alterar workspace.");
@@ -457,6 +493,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         workspaceId: wsId,
         workspaces: arrayUnion(wsId),
         role: "Diretor",
+        canCollaborate: true,
         canViewAdmin: true,
         canViewReports: true,
         canViewActivityHistory: true,

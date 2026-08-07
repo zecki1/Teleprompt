@@ -181,10 +181,10 @@ function FolderNodeItem({
   const accentColor = DEPTH_COLORS[Math.min(depth, DEPTH_COLORS.length - 1)];
   const textColor = DEPTH_TEXT_COLORS[Math.min(depth, DEPTH_TEXT_COLORS.length - 1)];
 
-  // Build ancestor breadcrumb label
+  // Build ancestor breadcrumb label (slash-separated full path)
   const breadcrumb = node.fullPath.map((seg, i) => (
     <React.Fragment key={seg}>
-      {i > 0 && <ChevronRight className="w-3 h-3 text-zinc-400" />}
+      {i > 0 && <span className="text-zinc-400">/</span>}
       <span className={i === node.fullPath.length - 1 ? textColor : "text-zinc-400"}>
         {seg}
       </span>
@@ -289,7 +289,7 @@ function FolderNodeItem({
               </Button>
             </div>
           ) : (
-            <h3 className="text-[11px] font-black uppercase tracking-[0.18em] text-zinc-400 flex items-center gap-1 min-w-0 truncate">
+            <h3 className="text-[11px] font-black uppercase tracking-[0.18em] text-zinc-400 flex items-center gap-1 min-w-0 flex-wrap">
               {breadcrumb}
               <Badge
                 variant="outline"

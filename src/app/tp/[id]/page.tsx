@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, use, Suspense } from "react";
+import { useEffect, useState, useRef, use, useCallback, Suspense } from "react";
 import dynamic from "next/dynamic";
 import { doc, getDoc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, where, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -33,6 +33,7 @@ import {
   Check,
   Hourglass,
   RotateCcw,
+  HelpCircle,
 } from "lucide-react";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { Badge } from "@/components/ui/badge";
@@ -67,6 +68,7 @@ function TeleprompterContent({ id }: { id: string }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const [isCommentsVisible, setIsCommentsVisible] = useState(false);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const { user } = useAuth();
   
   // App State
@@ -84,6 +86,7 @@ function TeleprompterContent({ id }: { id: string }) {
   });
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const isEditingRef = useRef(false);
+  const editingActiveRef = useRef(false);
   const [speed, setSpeed] = useState(3);
   const [duration, setDuration] = useState(0);
   const [localProgress, setLocalProgress] = useState(0);
@@ -108,7 +111,14 @@ function TeleprompterContent({ id }: { id: string }) {
   const sceneRefs = useRef<(HTMLDivElement | null)[]>([]);
   const requestRef = useRef<number | null>(null);
   const bcRef = useRef<BroadcastChannel | null>(null);
-  const lastFirebaseUpdate = useRef<number>(0);
+  const progressRef = useRef(0);
+
+  // Grava o progresso no Firestore (apenas em pause/saída para reduzir writes)
+  const flushProgress = useCallback(() => {
+    try {
+      updateDoc(doc(db, "scripts", id), { progress: progressRef.current }).catch(() => {});
+    } catch {}
+  }, [id]);
   const lastProcessedReset = useRef<number>(0);
   const [showCountdown, setShowCountdown] = useState(false);
   const [countdownValue, setCountdownValue] = useState(3);
@@ -563,13 +573,14 @@ function TeleprompterContent({ id }: { id: string }) {
         if (d.workspaceId) setWorkspaceId(d.workspaceId);
         if (d.editorId) setEditorId(d.editorId);
 
-        // Estilos e velocidade vêm exclusivamente do tpPreferences do usuário no master.
+        // Estilos vêm exclusivamente do tpPreferences do usuário no master.
         // No mirror, aplicar do documento do roteiro (sync via Firestore).
+        // Velocidade: após o primeiro snapshot, seguir o documento em ambos (master e mirror)
+        if (!isFirstSnapshot && typeof d.speed === "number") {
+          setSpeed(d.speed);
+          speedRef.current = d.speed;
+        }
         if (isMirrorWindow) {
-          if (typeof d.speed === "number") {
-            setSpeed(d.speed);
-            speedRef.current = d.speed;
-          }
           if (d.fontSize) setFontSize(d.fontSize);
           if (d.textAlign) setTextAlign(d.textAlign);
           if (d.bgColor) setBgColor(d.bgColor);
@@ -611,6 +622,68 @@ function TeleprompterContent({ id }: { id: string }) {
       if (next) containerRef.current.scrollTo({ top: next.offsetTop, behavior: 'smooth' });
     };
 
+    const goHome = () => {
+      resetTimer();
+      if (countdownActiveRef.current) {
+        if (countdownRef.current) clearInterval(countdownRef.current);
+        countdownActiveRef.current = false;
+        setShowCountdown(false);
+        updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
+        if (bcRef.current) {
+          bcRef.current.postMessage({ type: 'countdown', value: 0 });
+        }
+      }
+      progressRef.current = 0;
+      setLocalProgress(0);
+      if (containerRef.current) containerRef.current.scrollTop = 0;
+      updateDoc(doc(db, "scripts", id), { resetRequest: Date.now(), isPlaying: false, progress: 0 }).catch(() => {});
+    };
+
+    const setSpeedValue = (value: number) => {
+      const newSpeed = Math.min(Math.max(value, 0), 30);
+      speedRef.current = newSpeed;
+      setSpeed(newSpeed);
+      updateDoc(doc(db, "scripts", id), { speed: newSpeed });
+      saveUserPreferences({ speed: newSpeed });
+    };
+
+    const changeSpeed = (delta: number) => {
+      setSpeedValue(speedRef.current + delta);
+    };
+
+    const togglePlay = () => {
+      if (countdownActiveRef.current) {
+        if (countdownRef.current) clearInterval(countdownRef.current);
+        countdownActiveRef.current = false;
+        setShowCountdown(false);
+        updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
+        if (bcRef.current) {
+          bcRef.current.postMessage({ type: 'countdown', value: 0 });
+        }
+        return;
+      }
+      if (isMirrorWindow) {
+        if (isPlayingRef.current) {
+          updateDoc(doc(db, "scripts", id), { isPlaying: false });
+        } else {
+          if (bcRef.current) {
+            bcRef.current.postMessage({ type: 'start-countdown' });
+          } else {
+            updateDoc(doc(db, "scripts", id), { isPlaying: true });
+          }
+        }
+      } else {
+        const needsChecklist = user?.requiresChecklist === true;
+        if (isPlayingRef.current) {
+          updateDoc(doc(db, "scripts", id), { isPlaying: false, progress: progressRef.current });
+        } else if (!checklistDone && needsChecklist) {
+          setShowChecklist(true);
+        } else {
+          startCountdownRef.current();
+        }
+      }
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       // Bloquear key-repeat (segurar tecla pressionada)
       if (e.repeat) return;
@@ -625,67 +698,50 @@ function TeleprompterContent({ id }: { id: string }) {
         return;
       }
       if (e.target instanceof HTMLElement && (
-        e.target.isContentEditable || 
+        (e.target.isContentEditable && editingActiveRef.current) || 
         e.target.tagName === 'INPUT' || 
         e.target.tagName === 'TEXTAREA' ||
         (isCommentsVisible && !containerRef.current?.contains(e.target))
       )) return;
 
+      // Se o foco estiver no texto mas sem edição ativa, sai do modo edição (salva) e aplica o atalho
+      if (e.target instanceof HTMLElement && e.target.isContentEditable) {
+        (e.target as HTMLElement).blur();
+      }
+
+      // Teclas por caractere: + - { } [ ] e Home
+      if (e.key === '+' || e.key === '=' || e.key === '}') { e.preventDefault(); changeSpeed(0.25); return; }
+      if (e.key === '-' || e.key === '{') { e.preventDefault(); changeSpeed(-0.25); return; }
+      if (e.key >= '0' && e.key <= '9') { e.preventDefault(); setSpeedValue(Number(e.key)); return; }
+      if (e.key === '[') { e.preventDefault(); goToPrev(); return; }
+      if (e.key === ']') { e.preventDefault(); goToNext(); return; }
+      if (e.key === 'Home') { e.preventDefault(); goHome(); return; }
+
       switch(e.code) {
         case 'Space':
         case 'F5':
         case 'KeyB':
+        case 'KeyP':
           e.preventDefault();
-          {
-            if (countdownActiveRef.current) {
-              if (countdownRef.current) clearInterval(countdownRef.current);
-              countdownActiveRef.current = false;
-              setShowCountdown(false);
-              updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
-              if (bcRef.current) {
-                bcRef.current.postMessage({ type: 'countdown', value: 0 });
-              }
-              break;
-            }
-            if (isMirrorWindow) {
-              if (isPlayingRef.current) {
-                updateDoc(doc(db, "scripts", id), { isPlaying: false });
-              } else {
-                if (bcRef.current) {
-                  bcRef.current.postMessage({ type: 'start-countdown' });
-                } else {
-                  updateDoc(doc(db, "scripts", id), { isPlaying: true });
-                }
-              }
-            } else {
-              const needsChecklist = user?.requiresChecklist === true;
-              if (isPlayingRef.current) {
-                updateDoc(doc(db, "scripts", id), { isPlaying: false });
-              } else if (!checklistDone && needsChecklist) {
-                setShowChecklist(true);
-              } else {
-                startCountdownRef.current();
-              }
-            }
-          }
+          togglePlay();
           break;
         case 'PageUp':
           e.preventDefault();
-          { const newSpeed = Math.max(speedRef.current - 0.5, -20); updateDoc(doc(db, "scripts", id), { speed: newSpeed }); saveUserPreferences({ speed: newSpeed }); }
+          changeSpeed(-0.25);
           break;
         case 'PageDown':
           e.preventDefault();
-          { const newSpeed = Math.min(speedRef.current + 0.5, 30); updateDoc(doc(db, "scripts", id), { speed: newSpeed }); saveUserPreferences({ speed: newSpeed }); }
+          changeSpeed(0.25);
           break;
         case 'ArrowRight':
         case 'KeyD':
           e.preventDefault();
-          { const newSpeed = Math.min(speedRef.current + 0.5, 30); updateDoc(doc(db, "scripts", id), { speed: newSpeed }); saveUserPreferences({ speed: newSpeed }); }
+          changeSpeed(0.25);
           break;
         case 'ArrowLeft':
         case 'KeyA':
           e.preventDefault();
-          { const newSpeed = Math.max(speedRef.current - 0.5, -20); updateDoc(doc(db, "scripts", id), { speed: newSpeed }); saveUserPreferences({ speed: newSpeed }); }
+          changeSpeed(-0.25);
           break;
         case 'ArrowUp':
         case 'KeyW':
@@ -717,6 +773,7 @@ function TeleprompterContent({ id }: { id: string }) {
         }
         const maxScroll = containerRef.current.scrollHeight - containerRef.current.clientHeight;
         const currentProgress = maxScroll > 0 ? containerRef.current.scrollTop / maxScroll : 0;
+        progressRef.current = currentProgress;
         setLocalProgress(currentProgress);
         if (bcRef.current) {
           bcRef.current.postMessage({ 
@@ -724,11 +781,6 @@ function TeleprompterContent({ id }: { id: string }) {
             scrollTop: containerRef.current.scrollTop,
             progress: currentProgress 
           });
-        }
-        const now = Date.now();
-        if (now - lastFirebaseUpdate.current > 1000) {
-          updateDoc(doc(db, "scripts", id), { progress: currentProgress }).catch(() => {});
-          lastFirebaseUpdate.current = now;
         }
       }
       requestRef.current = requestAnimationFrame(scrollFn);
@@ -845,6 +897,14 @@ function TeleprompterContent({ id }: { id: string }) {
     };
   }, [id, isMirrorWindow]);
 
+  // Persiste o progresso quando a aba do master é fechada/recarregada
+  useEffect(() => {
+    if (isMirrorWindow) return;
+    const onPageHide = () => { flushProgress(); };
+    window.addEventListener('pagehide', onPageHide);
+    return () => window.removeEventListener('pagehide', onPageHide);
+  }, [isMirrorWindow, flushProgress]);
+
   // Full sync na montagem (para quando der refresh na tela principal)
   useEffect(() => {
     if (isMirrorWindow || !bcRef.current) return;
@@ -913,6 +973,7 @@ function TeleprompterContent({ id }: { id: string }) {
       const updateData: Record<string, unknown> = {
         status: 'gravado',
         isPlaying: false,
+        progress: 1,
         updatedAt: serverTimestamp(),
         duration: calculateDuration(scenes),
         recordedDuration,
@@ -1115,10 +1176,15 @@ function TeleprompterContent({ id }: { id: string }) {
               onFocus={() => {
                 setFocusedId(s.id);
                 isEditingRef.current = true;
+                editingActiveRef.current = false;
+              }}
+              onInput={() => {
+                editingActiveRef.current = true;
               }}
               onBlur={(ev) => {
                 setFocusedId(null);
                 isEditingRef.current = false;
+                editingActiveRef.current = false;
                 const rawText = ev.currentTarget.innerText;
                 handleSceneBlur(s.id, rawText);
               }}
@@ -1371,7 +1437,7 @@ function TeleprompterContent({ id }: { id: string }) {
                               if (countdownRef.current) clearInterval(countdownRef.current);
                               countdownActiveRef.current = false;
                               setShowCountdown(false);
-                              updateDoc(doc(db, "scripts", id), { countdownStartedAt: null, isPlaying: false });
+                              updateDoc(doc(db, "scripts", id), { countdownStartedAt: null, isPlaying: false, progress: progressRef.current });
                             } else {
                               updateDoc(doc(db, "scripts", id), data);
                               if (typeof data.speed === "number") saveUserPreferences(data);
@@ -1384,7 +1450,11 @@ function TeleprompterContent({ id }: { id: string }) {
                           } else if (data.isPlaying === true) {
                             startCountdown();
                           } else {
-                            updateDoc(doc(db, "scripts", id), data);
+                            if (data.isPlaying === false) {
+                              updateDoc(doc(db, "scripts", id), { ...data, progress: progressRef.current });
+                            } else {
+                              updateDoc(doc(db, "scripts", id), data);
+                            }
                             if (typeof data.speed === "number") saveUserPreferences(data);
                           }
                         }}
@@ -1424,12 +1494,12 @@ function TeleprompterContent({ id }: { id: string }) {
              <div data-tour="tp-speed" className="flex flex-col">
                 <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">Velocidade</span>
                <div className="flex items-center gap-2">
-                  <button onClick={() => updateGlobalStyle({speed: Math.max(speed - 0.5, -20)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronDown size={14}/></button>
+                  <button onClick={() => updateGlobalStyle({speed: Math.max(speed - 0.25, 0)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronDown size={14}/></button>
                  <div className="flex items-baseline gap-1">
                    <span className="text-xl font-black text-white">{speed}</span>
                    <span className="text-[10px] font-bold text-zinc-600 uppercase">x</span>
                  </div>
-                 <button onClick={() => updateGlobalStyle({speed: Math.min(speed + 0.5, 30)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronUp size={14}/></button>
+                 <button onClick={() => updateGlobalStyle({speed: Math.min(speed + 0.25, 30)})} className="text-zinc-600 hover:text-white transition-colors"><ChevronUp size={14}/></button>
                </div>
              </div>
 
@@ -1473,7 +1543,7 @@ function TeleprompterContent({ id }: { id: string }) {
              {/* REINICIAR */}
              <button
                data-tour="tp-restart"
-               onClick={() => { resetTimer(); updateGlobalStyle({ resetRequest: Date.now(), isPlaying: false, progress: 0 }); }}
+               onClick={() => { resetTimer(); progressRef.current = 0; updateGlobalStyle({ resetRequest: Date.now(), isPlaying: false, progress: 0 }); updateDoc(doc(db, "scripts", id), { progress: 0 }).catch(() => {}); }}
                className="flex flex-col items-center justify-center hover:text-white text-zinc-500 transition-colors"
                title="Reiniciar roteiro"
              >
@@ -1492,6 +1562,13 @@ function TeleprompterContent({ id }: { id: string }) {
 
           {/* 4. MARCAR COMO GRAVADO */}
           <div className="flex items-center gap-4">
+             <button 
+               onClick={() => setShowShortcutsHelp(true)}
+               className="p-2 text-zinc-500 hover:text-white transition-colors"
+               title="Atalhos de teclado"
+             >
+               <HelpCircle size={20} />
+             </button>
              <button 
                onClick={() => setIsCommentsVisible(!isCommentsVisible)}
                className={`p-2 transition-colors ${isCommentsVisible ? 'text-blue-500 bg-blue-500/10 text-white rounded-lg' : 'text-zinc-500 hover:text-white'}`}
@@ -1536,7 +1613,7 @@ function TeleprompterContent({ id }: { id: string }) {
             {nextScript ? (
               <div className="space-y-4">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Sugestão de Próximo</p>
-                <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-2xl group hover:border-blue-500/50 transition-all cursor-pointer" onClick={() => { navigatingAwayRef.current = true; router.push(`/tp/${nextScript.id}`); }}>
+                <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-2xl group hover:border-blue-500/50 transition-all cursor-pointer" onClick={() => { navigatingAwayRef.current = true; flushProgress(); router.push(`/tp/${nextScript.id}`); }}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-1">
                       <h4 className="text-lg font-black text-white group-hover:text-blue-400 transition-colors">{nextScript.title}</h4>
@@ -1567,14 +1644,14 @@ function TeleprompterContent({ id }: { id: string }) {
             <div className={nextScript ? "grid grid-cols-2 gap-4 pt-4" : "pt-2"}>
               <Button 
                 variant="outline" 
-                onClick={() => { navigatingAwayRef.current = true; router.push('/dashboard'); }}
+                onClick={() => { navigatingAwayRef.current = true; flushProgress(); router.push('/dashboard'); }}
                 className={nextScript ? "h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest border-zinc-800 text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all" : "h-14 w-full rounded-2xl font-black text-[10px] uppercase tracking-widest border-zinc-800 text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all"}
               >
                 <X size={16} className="mr-2" /> Sair
               </Button>
               {nextScript && (
                 <Button 
-                  onClick={() => { navigatingAwayRef.current = true; router.push(`/tp/${nextScript.id}`); }}
+                  onClick={() => { navigatingAwayRef.current = true; flushProgress(); router.push(`/tp/${nextScript.id}`); }}
                   className="h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest bg-blue-600 hover:bg-blue-500 text-white shadow-xl shadow-blue-600/20 transition-all gap-2"
                 >
                   Continuar <ChevronRight size={16} />
@@ -1671,6 +1748,49 @@ function TeleprompterContent({ id }: { id: string }) {
               className="flex-[2] h-14 rounded-2xl font-black text-[10px] uppercase tracking-widest bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-600/20 disabled:opacity-50"
             >
               {isSavingChecklist ? "Salvando..." : "Estou ciente, gravar!"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ATALHOS DE TECLADO */}
+      <Dialog open={showShortcutsHelp} onOpenChange={setShowShortcutsHelp}>
+        <DialogContent className="sm:max-w-md bg-zinc-950 border-zinc-800 rounded-3xl p-6 max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-black text-white uppercase tracking-widest flex items-center gap-2">
+              <HelpCircle size={18} /> Atalhos de teclado
+            </DialogTitle>
+            <DialogDescription className="text-zinc-400 text-sm">
+              Controle o teleprompter sem tocar na tela.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            {[
+              { title: "Velocidade", items: [["0 a 9", "Definir velocidade (ex.: 2 = 2x)"], ["+ / = / }", "Aumentar (+0.25)"], ["- / {", "Diminuir (-0.25)"], ["PageDown / → / D", "Aumentar (+0.25)"], ["PageUp / ← / A", "Diminuir (-0.25)"]] },
+              { title: "Reprodução", items: [["Space / F5 / B / P", "Play / Pausar"], ["Home", "Voltar ao início"]] },
+              { title: "Navegação", items: [["↓ / S / ]", "Próxima cena"], ["↑ / W / [", "Cena anterior"]] },
+              { title: "Extras", items: [["Ctrl / Cmd / Alt + P", "Próxima cena (bloqueia print)"]] },
+            ].map(group => (
+              <div key={group.title}>
+                <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-2">{group.title}</h4>
+                <div className="space-y-1.5">
+                  {group.items.map(([keys, label]) => (
+                    <div key={keys} className="flex items-center justify-between gap-4">
+                      <span className="text-xs text-zinc-400">{label}</span>
+                      <span className="text-[10px] font-black text-blue-400 bg-blue-500/10 border border-blue-500/20 rounded px-2 py-1 whitespace-nowrap">{keys}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter className="pt-2">
+            <Button
+              variant="ghost"
+              onClick={() => setShowShortcutsHelp(false)}
+              className="w-full h-11 rounded-xl font-bold text-sm text-zinc-400"
+            >
+              Fechar
             </Button>
           </DialogFooter>
         </DialogContent>

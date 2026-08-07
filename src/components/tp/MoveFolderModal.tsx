@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Folder, FolderOpen, Check } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Folder, FolderOpen, Check, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -10,17 +10,11 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FolderNode, ScriptDoc } from "@/types/script";
 import { moveFolder, buildTree } from "@/lib/pathUtils";
-import { Project } from "@/services/projects";
+import { getScriptsByProject, Project } from "@/services/projects";
+import { ProjectFinder } from "@/components/tp/ProjectFinder";
 import { toast } from "sonner";
 
 interface MoveFolderModalProps {
@@ -59,14 +53,47 @@ export function MoveFolderModal({
   const [selectedProjectId, setSelectedProjectId] = useState(currentProjectId);
   const [selectedDestPath, setSelectedDestPath] = useState<string[]>([]);
   const [moving, setMoving] = useState(false);
+  const [projectScripts, setProjectScripts] = useState<ScriptDoc[]>([]);
+  const [loadingProjectScripts, setLoadingProjectScripts] = useState(false);
+
+  // Load the destination project's scripts directly from Firestore so the full
+  // folder tree shows even when the dashboard list is paginated.
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    let cancelled = false;
+    setLoadingProjectScripts(true);
+    getScriptsByProject(selectedProjectId)
+      .then(s => {
+        if (!cancelled) setProjectScripts(s);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingProjectScripts(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProjectId]);
 
   if (!folderPath) return null;
 
-  const selectedProjectScripts = allScripts.filter(s => {
-    const sp = s.projectId || projects.find(p => p.name === (s.projectName || s.project))?.id || "";
-    return sp === selectedProjectId;
-  });
-  const tree = buildTree(selectedProjectScripts);
+  const resolveProjectId = (s: ScriptDoc) =>
+    s.projectId || projects.find(p => p.name === (s.projectName || s.project))?.id || "";
+
+  // Merge the freshly fetched project scripts with the already loaded ones
+  // (covers legacy scripts that only carry projectName/project).
+  const seenIds = new Set<string>();
+  const mergedScripts: ScriptDoc[] = [];
+  for (const s of projectScripts) {
+    seenIds.add(s.id);
+    mergedScripts.push(s);
+  }
+  for (const s of allScripts) {
+    if (resolveProjectId(s) === selectedProjectId && !seenIds.has(s.id)) {
+      seenIds.add(s.id);
+      mergedScripts.push(s);
+    }
+  }
+  const tree = buildTree(mergedScripts);
 
   const selectedProjectName = projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId;
 
@@ -123,23 +150,19 @@ export function MoveFolderModal({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Project selector */}
+        {/* Project selector + finder */}
         <div className="mt-4">
           <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1.5 block">
             Projeto destino
           </label>
-          <Select value={selectedProjectId} onValueChange={val => { setSelectedProjectId(val); setSelectedDestPath([]); }}>
-            <SelectTrigger className="w-full h-9 rounded-lg border-zinc-200 dark:border-zinc-800 text-[12px] font-bold">
-              <SelectValue placeholder="Selecione um projeto" />
-            </SelectTrigger>
-            <SelectContent className="rounded-xl border-zinc-200 dark:border-zinc-800">
-              {projects.map(p => (
-                <SelectItem key={p.id} value={p.id} className="text-[12px] font-bold">
-                  {p.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <ProjectFinder
+            projects={projects}
+            value={selectedProjectId}
+            onSelect={id => {
+              setSelectedProjectId(id);
+              setSelectedDestPath([]);
+            }}
+          />
         </div>
 
         <div className="mt-3 space-y-1 max-h-64 overflow-y-auto border border-zinc-100 dark:border-zinc-800 rounded-xl p-3">
@@ -153,13 +176,23 @@ export function MoveFolderModal({
           />
 
           {/* Tree options */}
-          <TreeOptions
-            nodes={tree}
-            selectedPath={selectedDestPath}
-            onSelect={setSelectedDestPath}
-            depth={0}
-            sourcePath={folderPath}
-          />
+          {loadingProjectScripts ? (
+            <div className="flex items-center justify-center gap-2 py-4 text-zinc-400 text-[12px] font-bold">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Carregando pastas...
+            </div>
+          ) : mergedScripts.length === 0 ? (
+            <p className="px-3 py-2.5 text-[12px] font-bold text-zinc-400">
+              Nenhuma pasta encontrada neste projeto.
+            </p>
+          ) : (
+            <TreeOptions
+              nodes={tree}
+              selectedPath={selectedDestPath}
+              onSelect={setSelectedDestPath}
+              depth={0}
+              sourcePath={folderPath}
+            />
+          )}
         </div>
 
         {/* Current selection breadcrumb */}

@@ -1,6 +1,6 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentSingleTabManager } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -19,7 +19,19 @@ setPersistence(auth, browserLocalPersistence).catch((error) => {
   console.error("Error setting auth persistence:", error);
 });
 
-const db = getFirestore(app);
+// Cache persistente reduz o custo de re-consultas e leituras repetidas,
+// importante em máquinas com 4GB e conexões instáveis.
+// initializeFirestore só pode rodar 1x por app; no HMR cai no getFirestore.
+let db: import("firebase/firestore").Firestore;
+try {
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+      tabManager: persistentSingleTabManager({ forceOwnership: false }),
+    }),
+  });
+} catch {
+  db = getFirestore(app);
+}
 const googleProvider = new GoogleAuthProvider();
 
 export { app, auth, db, googleProvider };

@@ -1,18 +1,6 @@
-import { 
-  Document, 
-  Packer, 
-  Paragraph, 
-  Table, 
-  TableCell, 
-  TableRow, 
-  TextRun, 
-  WidthType, 
-  AlignmentType,
-  HeadingLevel,
-  VerticalAlign
-} from "docx";
 import { saveAs } from "file-saver";
 import { Scene } from "./parser";
+import type { Paragraph } from "docx";
 
 interface ExportScriptData {
   title: string;
@@ -28,6 +16,8 @@ interface ExportScriptData {
 }
 
 export const exportToWord = async (script: ExportScriptData, scenes: Scene[]) => {
+  const docx = await import("docx");
+  const { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType, AlignmentType, HeadingLevel, VerticalAlign } = docx;
   const doc = new Document({
     sections: [
       {
@@ -76,9 +66,9 @@ export const exportToWord = async (script: ExportScriptData, scenes: Scene[]) =>
               // Cabeçalho da Tabela
               new TableRow({
                 children: [
-                   createHeaderCell("CENA", 10),
-                   createHeaderCell("LOCUÇÃO / TEXTO FALADO", 60),
-                   createHeaderCell("LETTERING / OBS", 30),
+                   createHeaderCell("CENA", 10, docx),
+                   createHeaderCell("LOCUÇÃO / TEXTO FALADO", 60, docx),
+                   createHeaderCell("LETTERING / OBS", 30, docx),
                 ],
               }),
               // Linhas das Cenas
@@ -179,7 +169,8 @@ export const exportToWord = async (script: ExportScriptData, scenes: Scene[]) =>
   saveAs(blob, `roteiro_${safeTitle}.docx`);
 };
 
-function createHeaderCell(text: string, widthPercent: number) {
+function createHeaderCell(text: string, widthPercent: number, docx: typeof import("docx")) {
+  const { TableCell, Paragraph, TextRun, WidthType, AlignmentType } = docx;
   return new TableCell({
     width: {
       size: widthPercent,
