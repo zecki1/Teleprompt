@@ -47,6 +47,7 @@ export const mapUserDoc = (doc: FirestoreDocLike): ExtendedUser | null => {
       canViewAdmin: data.canViewAdmin || false,
       canViewReports: data.canViewReports || false,
       canViewActivityHistory: data.canViewActivityHistory || false,
+      canViewDebugLogs: data.canViewDebugLogs || false,
       canAssign: data.canAssign || false,
       requiresChecklist: data.requiresChecklist ?? true,
       createdAt: data.createdAt,
@@ -98,7 +99,7 @@ export const updateUserWorkspace = async (uid: string, workspaceId: string): Pro
   });
 };
 
-export const updateUserPermissions = async (uid: string, permissions: { canCollaborate?: boolean; isEditor?: boolean; isRevisor?: boolean; canRevert?: boolean; canAssign?: boolean; canViewAdmin?: boolean; canViewReports?: boolean; canViewActivityHistory?: boolean; requiresChecklist?: boolean }): Promise<void> => {
+export const updateUserPermissions = async (uid: string, permissions: { canCollaborate?: boolean; isEditor?: boolean; isRevisor?: boolean; canRevert?: boolean; canAssign?: boolean; canViewAdmin?: boolean; canViewReports?: boolean; canViewActivityHistory?: boolean; canViewDebugLogs?: boolean; requiresChecklist?: boolean }): Promise<void> => {
   const docRef = doc(db, "users", uid);
   await updateDoc(docRef, {
     ...permissions,

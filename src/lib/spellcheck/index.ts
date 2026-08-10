@@ -11,28 +11,39 @@ const MIN_WORD_LENGTH = 2;
 
 let typoInstance: Typo | null = null;
 let supplementalSet: Set<string> | null = null;
-const loadingPromise: Promise<void> | null = null;
+let loadingPromise: Promise<void> | null = null;
 let listeners: Array<() => void> = [];
 
 async function loadDictionaries(): Promise<void> {
   if (typoInstance) return;
+  if (loadingPromise) return loadingPromise;
 
-  const [affRes, dicRes, supRes] = await Promise.all([
-    fetch("/dictionaries/pt_BR/pt_BR.aff"),
-    fetch("/dictionaries/pt_BR/pt_BR.dic"),
-    fetch("/dictionaries/pt_BR/supplemental.dic"),
-  ]);
+  loadingPromise = (async () => {
+    const [affRes, dicRes, supRes] = await Promise.all([
+      fetch("/dictionaries/pt_BR/pt_BR.aff"),
+      fetch("/dictionaries/pt_BR/pt_BR.dic"),
+      fetch("/dictionaries/pt_BR/supplemental.dic"),
+    ]);
 
-  const [affData, dicData, supData] = await Promise.all([
-    affRes.text(),
-    dicRes.text(),
-    supRes.text(),
-  ]);
+    const [affData, dicData, supData] = await Promise.all([
+      affRes.text(),
+      dicRes.text(),
+      supRes.text(),
+    ]);
 
-  typoInstance = new Typo("pt_BR", affData, dicData);
-  supplementalSet = new Set(supData.split("\n").map((w) => w.trim().toLowerCase()).filter(Boolean));
-  listeners.forEach((fn) => fn());
-  listeners = [];
+    // Cede ao event loop antes do parse síncrono do Typo para não travar a UI
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    typoInstance = new Typo("pt_BR", affData, dicData);
+    supplementalSet = new Set(supData.split("\n").map((w) => w.trim().toLowerCase()).filter(Boolean));
+    listeners.forEach((fn) => fn());
+    listeners = [];
+  })().catch((err) => {
+    loadingPromise = null;
+    throw err;
+  });
+
+  return loadingPromise;
 }
 
 export function isSpellCheckReady(): boolean {
@@ -62,11 +73,17 @@ function checkWord(word: string, typo: Typo, supplemental: Set<string>): boolean
   return false;
 }
 
-export function checkText(text: string): SpellCheckResult[] {
+/**
+ * Núcleo puro da verificação ortográfica. Recebe uma instância Typo já
+ * carregada e o conjunto suplementar — permite testes unitários com os
+ * dicionários reais sem depender de `fetch`.
+ */
+export function checkTextWith(
+  typo: Typo,
+  supplemental: Set<string>,
+  text: string
+): SpellCheckResult[] {
   if (!text) return [];
-  const typo = typoInstance;
-  const supplemental = supplementalSet;
-  if (!typo || !supplemental) return [];
 
   const results: SpellCheckResult[] = [];
 
@@ -88,4 +105,12 @@ export function checkText(text: string): SpellCheckResult[] {
   }
 
   return results;
+}
+
+export function checkText(text: string): SpellCheckResult[] {
+  if (!text) return [];
+  const typo = typoInstance;
+  const supplemental = supplementalSet;
+  if (!typo || !supplemental) return [];
+  return checkTextWith(typo, supplemental, text);
 }

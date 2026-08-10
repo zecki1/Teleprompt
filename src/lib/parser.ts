@@ -83,10 +83,11 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
     return match ? match[1].trim() : null;
   }
 
-  function extractSceneData(content: string): { images: string[]; sources: string[]; lettering: string[]; opening: string | null; closing: string | null; spokenText: string; time: string | null } {
+  function extractSceneData(content: string): { images: string[]; sources: string[]; lettering: string[]; pronunciation: string[]; opening: string | null; closing: string | null; spokenText: string; time: string | null } {
     const images: string[] = [];
     const sources: string[] = [];
     const lettering: string[] = [];
+    const pronunciation: string[] = [];
     let opening: string | null = null;
     let closing: string | null = null;
     let time: string | null = null;
@@ -107,6 +108,11 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
       const val = m[2].trim();
       if (lettering[idx] === undefined) lettering[idx] = val.includes('<') ? stripHtml(val) : val;
     }
+    for (const m of content.matchAll(/^\s*\[pron(\d+)\]\s*[:\-]\s*(.+)/img)) {
+      const idx = parseInt(m[1]) - 1;
+      const val = m[2].trim();
+      if (pronunciation[idx] === undefined) pronunciation[idx] = val.includes('<') ? stripHtml(val) : val;
+    }
     opening = extractFirst(content, /^\s*\[abe\]\s*[:\-]\s*(.+)/im);
     closing = extractFirst(content, /^\s*\[enc\]\s*[:\-]\s*(.+)/im);
     time = extractFirst(content, /^\s*(?:Tempo|Duração)\s*[:\-]\s*(.+)/im);
@@ -117,7 +123,7 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
 
     // Remove todas as linhas de metadados estruturados para obter o spoken text
     const spokenTextRaw = content
-      .replace(/^\s*\[(?:img|url|let)\d+\]\s*[:\-]\s*.+/img, '')
+      .replace(/^\s*\[(?:img|url|let|pron)\d+\]\s*[:\-]\s*.+/img, '')
       .replace(/^\s*\[(?:abe|enc)\]\s*[:\-]\s*.+/img, '')
       .replace(/^\s*(?:Tempo|Duração)\s*[:\-]\s*.+/img, '')
       .replace(/^\s*\[?(?:Locução|Legenda)\]?\s*[:\-]\s*/img, '')
@@ -126,20 +132,20 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
     // Strip HTML tags if content contains them (e.g. pasted from Word)
     const spokenText = spokenTextRaw.includes('<') ? stripHtml(spokenTextRaw) : spokenTextRaw;
 
-    return { images, sources, lettering, opening, closing, spokenText, time };
+    return { images, sources, lettering, pronunciation, opening, closing, spokenText, time };
   }
   
   // Divide o texto pelo delimitador "Cena" (apenas no início da linha)
   // Nota: (?:^|\n) evita falsos positivos como "cena" no meio do texto
   // Agora também aceita "CENA", "Cena:" (com dois-pontos opcional) e "Cena1" (sem espaço)
-  const parts = normalized.split(/(?:^|\n)\s*Cena\b\s*:?\s*(?:\[)?([0-9]+(?:-[a-zA-Z0-9]+)*)(?:\])?\s*/i);
+  const parts = normalized.split(/(?:^|\n)\s*Cena(?:\s*:?\s*|(?=[0-9]))(?:\[)?([0-9]+(?:-[a-zA-Z0-9]+)*)(?:\])?\s*/i);
   
   for (let i = 1; i < parts.length; i += 2) {
     const sceneNumber = parts[i] ? parts[i].trim() : String(Math.floor(i / 2) + 1);
     const rawContent = parts[i + 1] || "";
     
     // Usa a nova função de extração
-    const { images, sources, lettering, opening, closing, spokenText, time } = extractSceneData(rawContent);
+    const { images, sources, lettering, pronunciation, opening, closing, spokenText, time } = extractSceneData(rawContent);
     
     scenes.push({
       id: crypto.randomUUID(),
@@ -150,12 +156,12 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
       sourceUrl: sources[0] || null,
       sources: sources.length > 1 ? sources.slice(1) : undefined,
       lettering: lettering.length > 0 ? lettering.join('\n') : null,
+      pronunciation: pronunciation.length > 0 ? pronunciation.join('\n') : null,
       opening,
       closing,
       spokenText: spokenText || null,
       description: null,
       onScreenText: null,
-      pronunciation: null,
     });
   }
   
@@ -172,7 +178,7 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
         groups.push(paragraphs.slice(i, i + n).join('\n\n'));
       }
       for (let g = 0; g < groups.length; g++) {
-        const { images, sources, lettering, opening, closing, spokenText, time } = extractSceneData(groups[g]);
+        const { images, sources, lettering, pronunciation, opening, closing, spokenText, time } = extractSceneData(groups[g]);
         scenes.push({
           id: crypto.randomUUID(),
           sceneNumber: String(g + 1),
@@ -182,16 +188,16 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
           sourceUrl: sources[0] || null,
           sources: sources.length > 1 ? sources.slice(1) : undefined,
           lettering: lettering.length > 0 ? lettering.join('\n') : null,
+          pronunciation: pronunciation.length > 0 ? pronunciation.join('\n') : null,
           opening,
           closing,
           spokenText: spokenText || null,
           description: null,
           onScreenText: null,
-          pronunciation: null,
         });
       }
     } else {
-      const { images, sources, lettering, opening, closing, spokenText, time } = extractSceneData(normalized);
+      const { images, sources, lettering, pronunciation, opening, closing, spokenText, time } = extractSceneData(normalized);
       const sceneObj: Scene = { 
         id: crypto.randomUUID(), 
         sceneNumber: "1", 
@@ -201,12 +207,12 @@ export function parseScript(text: string, options?: ParseScriptOptions): Scene[]
         sourceUrl: sources[0] || null,
         sources: sources.length > 1 ? sources.slice(1) : undefined,
         lettering: lettering.length > 0 ? lettering.join('\n') : null,
+        pronunciation: pronunciation.length > 0 ? pronunciation.join('\n') : null,
         opening,
         closing,
         spokenText: spokenText || null,
         description: null,
         onScreenText: null,
-        pronunciation: null,
       };
       scenes.push(sceneObj);
     }

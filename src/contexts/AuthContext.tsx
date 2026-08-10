@@ -17,6 +17,7 @@ import { toast } from "sonner";
 
 import { logActivity } from "@/lib/activity";
 import { addKnownAccount } from "@/lib/account-storage";
+import { setDebugUserContext } from "@/lib/debug-log";
 
 interface AuthContextType {
   user: ExtendedUser | null;
@@ -70,6 +71,7 @@ const buildFallbackUser = (uid: string, data: Record<string, unknown>, fbEmail?:
     canViewAdmin: safe['canViewAdmin'] === true,
     canViewReports: safe['canViewReports'] === true,
     canViewActivityHistory: safe['canViewActivityHistory'] === true,
+    canViewDebugLogs: safe['canViewDebugLogs'] === true,
     canAssign: safe['canAssign'] === true,
     requiresChecklist: typeof safe['requiresChecklist'] === 'boolean' ? (safe['requiresChecklist'] as boolean) : true,
     status: (safe['status'] as UserStatus) || "active",
@@ -123,6 +125,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               const userData = buildFallbackUser(docSnap.id, rawData, fbUser.email);
               
               setUser(userData);
+              setDebugUserContext({
+                uid: userData.uid,
+                email: userData.email || undefined,
+                name: userData.displayName || userData.name || undefined,
+                role: userData.role,
+                workspaceId: userData.workspaceId || undefined,
+                isSuperAdmin: userData.isSuperAdmin,
+                permissions: [
+                  ...(userData.canCollaborate ? ["collaborate"] : []),
+                  ...(userData.isEditor ? ["editor"] : []),
+                  ...(userData.isRevisor ? ["revisor"] : []),
+                  ...(userData.canRevert ? ["revert"] : []),
+                  ...(userData.canAssign ? ["assign"] : []),
+                  ...(userData.canViewAdmin ? ["admin"] : []),
+                  ...(userData.canViewReports ? ["reports"] : []),
+                  ...(userData.canViewActivityHistory ? ["history"] : []),
+                  ...(userData.canViewDebugLogs ? ["debuglogs"] : []),
+                  ...(userData.isSuperAdmin ? ["superadmin"] : []),
+                ],
+              });
               addKnownAccount({
                 uid: userData.uid,
                 email: userData.email,
@@ -200,6 +222,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUserWorkspacesDetailed([]);
         setAllUsers([]);
         setTeams([]);
+        setDebugUserContext(null);
         setLoading(false);
       }
     });
@@ -241,6 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             canViewAdmin: data.canViewAdmin || false,
             canViewReports: data.canViewReports || false,
             canViewActivityHistory: data.canViewActivityHistory || false,
+            canViewDebugLogs: data.canViewDebugLogs || false,
             canAssign: data.canAssign || false,
             requiresChecklist: data.requiresChecklist ?? true,
             createdAt: data.createdAt,
@@ -266,7 +290,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       unsubUsers();
       unsubTeams();
     };
-  }, [user?.workspaceId, user?.isSuperAdmin, user?.canViewAdmin, user?.canViewReports, user?.canViewActivityHistory, user?.canAssign]);
+  }, [user?.workspaceId, user?.isSuperAdmin, user?.canViewAdmin, user?.canViewReports, user?.canViewActivityHistory, user?.canViewDebugLogs, user?.canAssign]);
 
   const signIn = async (email: string, password: string, inviteWorkspaceId?: string) => {
     setLoading(true);

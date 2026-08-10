@@ -1,8 +1,8 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from "firebase/auth";
-import { getFirestore, initializeFirestore, persistentLocalCache, persistentSingleTabManager } from "firebase/firestore";
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
@@ -21,12 +21,15 @@ setPersistence(auth, browserLocalPersistence).catch((error) => {
 
 // Cache persistente reduz o custo de re-consultas e leituras repetidas,
 // importante em máquinas com 4GB e conexões instáveis.
+// Multi-tab é essencial aqui: o TP abre master + tela de retorno (mirror)
+// simultaneamente — com single-tab o segundo painel perdia acesso ao cache
+// e caía em memory cache (mensagens de erro e leituras lentas).
 // initializeFirestore só pode rodar 1x por app; no HMR cai no getFirestore.
 let db: import("firebase/firestore").Firestore;
 try {
   db = initializeFirestore(app, {
     localCache: persistentLocalCache({
-      tabManager: persistentSingleTabManager({ forceOwnership: false }),
+      tabManager: persistentMultipleTabManager(),
     }),
   });
 } catch {

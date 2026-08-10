@@ -436,7 +436,7 @@ function FolderNodeItem({
       {!collapsed && (
         <div className="space-y-6 animate-in fade-in slide-in-from-top-1 duration-200">
           {/* Scripts at this level */}
-          {node.scripts.length > 0 && (
+          {node.scripts.some(s => !s.isPlaceholder) && (
             <div className="relative">
               <div className={
                 viewMode === 'scroll'

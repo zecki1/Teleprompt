@@ -1,17 +1,30 @@
 "use client";
 
-import { useEffect, useState, useRef, use, useCallback, Suspense } from "react";
+import { useEffect, useState, useRef, use, useCallback, useMemo, Suspense } from "react";
 import dynamic from "next/dynamic";
 import { doc, getDoc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, where, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
+import { debugLog, debugInfo, debugWarn, debugError, debugPerf } from "@/lib/debug-log";
 import { Scene, stripHtml } from "@/lib/parser";
 import { ScriptDoc } from "@/types/script";
 import { RemoteControlUI } from "@/components/tp/RemoteControlUI";
+import { RecordingOrderPanel, getRecordingOrder } from "@/components/tp/RecordingOrderPanel";
+import { PronunciationPanel } from "@/components/tp/PronunciationPanel";
+import { ShortcutSettingsDialog } from "@/components/tp/ShortcutSettingsDialog";
+import {
+  TPScrollMode,
+  TPActionId,
+  TPBindings,
+  getEffectiveBindings,
+  findActionForEvent,
+} from "@/lib/tp-controls";
 import DOMPurify from "dompurify";
+import { toast as sonnerToast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { 
   Monitor, 
+  MonitorX,
   ChevronLeft, 
   ChevronDown,
   ChevronUp,
@@ -34,6 +47,8 @@ import {
   Hourglass,
   RotateCcw,
   HelpCircle,
+  Keyboard,
+  Pencil,
 } from "lucide-react";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { Badge } from "@/components/ui/badge";
@@ -64,11 +79,14 @@ function TeleprompterContent({ id }: { id: string }) {
   
   const isMirrorWindow = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('mirror') === 'true' : false;
   const [isMirrored] = useState(isMirrorWindow);
-  const [showRemote, setShowRemote] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<"style" | "remote" | "order" | "pron">("style");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const [isCommentsVisible, setIsCommentsVisible] = useState(false);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const [showShortcutSettings, setShowShortcutSettings] = useState(false);
+  const [scrollMode, setScrollMode] = useState<TPScrollMode>("scene");
+  const [userShortcuts, setUserShortcuts] = useState<Partial<Record<TPActionId, string>>>({});
   const { user } = useAuth();
   
   // App State
@@ -102,6 +120,7 @@ function TeleprompterContent({ id }: { id: string }) {
   const [showNextModal, setShowNextModal] = useState(false);
   const [editorId, setEditorId] = useState<string | null>(null);
   const [isSavingChecklist, setIsSavingChecklist] = useState(false);
+  const [recordingOrder, setRecordingOrder] = useState<string[] | null>(null);
   const router = useRouter();
 
   // Refs para Motor de Scroll (Evita lag de estado)
@@ -112,6 +131,73 @@ function TeleprompterContent({ id }: { id: string }) {
   const requestRef = useRef<number | null>(null);
   const bcRef = useRef<BroadcastChannel | null>(null);
   const progressRef = useRef(0);
+  const scrollModeRef = useRef<TPScrollMode>("scene");
+  useEffect(() => { scrollModeRef.current = scrollMode; }, [scrollMode]);
+
+  // Binds efetivos de atalho (padrão de fábrica + personalização por usuário)
+  const effectiveBindings = useMemo<TPBindings>(
+    () => getEffectiveBindings(userShortcuts),
+    [userShortcuts]
+  );
+
+  // --- Navegação por modo de scroll (parágrafo / cena / meio / tudo) ---
+  const currentSceneIndex = useCallback((): number => {
+    const c = containerRef.current;
+    if (!c) return 0;
+    const mid = c.scrollTop + c.clientHeight / 2;
+    const idx = sceneRefs.current.findIndex((ref) => {
+      if (!ref) return false;
+      return mid >= ref.offsetTop && mid < ref.offsetTop + ref.offsetHeight;
+    });
+    return idx === -1 ? 0 : idx;
+  }, []);
+
+  const goToPrevScene = useCallback(() => {
+    const c = containerRef.current;
+    if (!c) return;
+    const currentScroll = c.scrollTop;
+    const prev = [...sceneRefs.current].reverse().find(ref => ref && ref.offsetTop < currentScroll - 150);
+    c.scrollTo({ top: prev?.offsetTop || 0, behavior: 'smooth' });
+  }, []);
+
+  const goToNextScene = useCallback(() => {
+    const c = containerRef.current;
+    if (!c) return;
+    const currentScroll = c.scrollTop;
+    const next = sceneRefs.current.find(ref => ref && ref.offsetTop > currentScroll + 150);
+    if (next) c.scrollTo({ top: next.offsetTop, behavior: 'smooth' });
+  }, []);
+
+  const goToMiddleOfScene = useCallback((direction: -1 | 1) => {
+    const c = containerRef.current;
+    if (!c) return;
+    const idx = currentSceneIndex();
+    const targetIdx = Math.min(Math.max(idx + direction, 0), sceneRefs.current.length - 1);
+    const el = sceneRefs.current[targetIdx];
+    if (!el) return;
+    const top = el.offsetTop + el.offsetHeight / 2 - c.clientHeight / 2;
+    c.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
+  }, [currentSceneIndex]);
+
+  const navigatePrev = useCallback(() => {
+    const c = containerRef.current;
+    if (!c) return;
+    const mode = scrollModeRef.current;
+    if (mode === "scene") { goToPrevScene(); return; }
+    if (mode === "middle") { goToMiddleOfScene(-1); return; }
+    const step = mode === "paragraph" ? c.clientHeight * 0.5 : c.clientHeight * 0.2;
+    c.scrollBy({ top: -step, behavior: 'smooth' });
+  }, [goToPrevScene, goToMiddleOfScene]);
+
+  const navigateNext = useCallback(() => {
+    const c = containerRef.current;
+    if (!c) return;
+    const mode = scrollModeRef.current;
+    if (mode === "scene") { goToNextScene(); return; }
+    if (mode === "middle") { goToMiddleOfScene(1); return; }
+    const step = mode === "paragraph" ? c.clientHeight * 0.5 : c.clientHeight * 0.2;
+    c.scrollBy({ top: step, behavior: 'smooth' });
+  }, [goToNextScene, goToMiddleOfScene]);
 
   // Grava o progresso no Firestore (apenas em pause/saída para reduzir writes)
   const flushProgress = useCallback(() => {
@@ -126,6 +212,14 @@ function TeleprompterContent({ id }: { id: string }) {
   const countdownActiveRef = useRef(false);
   const startCountdownRef = useRef<() => void>(() => {});
   const mirrorCountRef = useRef(0);
+  const [mirrorCount, setMirrorCount] = useState(0);
+  // Modo de edição: permite editar o texto do roteiro direto no TP e
+  // desabilita os atalhos de teclado enquanto edita.
+  const [editMode, setEditMode] = useState(false);
+  const editModeRef = useRef(false);
+  useEffect(() => {
+    editModeRef.current = editMode;
+  }, [editMode]);
   const mirrorIdRef = useRef<string>(isMirrorWindow ? Math.random().toString(36).substring(2, 9) : "");
   const activeMirrorsRef = useRef<Set<string>>(new Set());
   const countdownJustFinishedRef = useRef(false);
@@ -225,6 +319,10 @@ function TeleprompterContent({ id }: { id: string }) {
       if (typeof prefs.referenceInches === "number") setReferenceInches(prefs.referenceInches);
       if (typeof prefs.operatorInches === "number") setOperatorInches(prefs.operatorInches);
       if (typeof prefs.speed === "number") { setSpeed(prefs.speed); speedRef.current = prefs.speed; }
+      if (prefs.scrollMode) setScrollMode(prefs.scrollMode);
+      if (prefs.tpShortcuts && typeof prefs.tpShortcuts === "object") {
+        setUserShortcuts(prefs.tpShortcuts as Partial<Record<TPActionId, string>>);
+      }
     }).catch(() => {});
   }, [user?.uid, isMirrorWindow]);
 
@@ -232,8 +330,15 @@ function TeleprompterContent({ id }: { id: string }) {
     if (!user?.uid || isMirrorWindow) return;
     try {
       await setDoc(doc(db, "users", user.uid), { tpPreferences: data }, { merge: true });
-    } catch (e) { console.error("Erro ao salvar preferências:", e); }
+    } catch (e) { debugWarn("tp.preferences", "Falha ao salvar preferências", undefined, e); }
   };
+
+  const handleScrollModeChange = useCallback((mode: TPScrollMode) => {
+    setScrollMode(mode);
+    saveUserPreferences({ scrollMode: mode });
+    updateDoc(doc(db, "scripts", id), { scrollMode: mode }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   // CSS para ocultar marcadores no TP e garantir estabilidade na edição
   useEffect(() => {
@@ -264,6 +369,20 @@ function TeleprompterContent({ id }: { id: string }) {
     document.addEventListener("fullscreenchange", handleFsChange);
     return () => document.removeEventListener("fullscreenchange", handleFsChange);
   }, []);
+
+  // Best-effort: janela de retorno tenta entrar em fullscreen no load.
+  // Navegadores exigem gesto do usuário dentro da própria janela, então se
+  // for bloqueado a overlay "Clique para ativar" continua como fallback.
+  useEffect(() => {
+    if (!isMirrorWindow) return;
+    const attempt = () => {
+      const opts: FullscreenOptions = {};
+      if ("getScreenDetails" in window) opts.screen = window.screen;
+      document.documentElement.requestFullscreen(opts).catch(() => {});
+    };
+    const t = window.setTimeout(attempt, 250);
+    return () => window.clearTimeout(t);
+  }, [isMirrorWindow]);
 
   // Cleanup countdown on unmount
   useEffect(() => {
@@ -328,11 +447,48 @@ function TeleprompterContent({ id }: { id: string }) {
   const toggleFullscreen = async () => {
     try {
       if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen();
+        const opts: FullscreenOptions = {};
+        if ("getScreenDetails" in window) {
+          opts.screen = window.screen;
+        }
+        await document.documentElement.requestFullscreen(opts);
       } else {
         if (document.exitFullscreen) await document.exitFullscreen();
       }
     } catch { console.error("Fullscreen error"); }
+  };
+
+  // Tenta abrir a janela de retorno no segundo monitor (Chrome/Edge via Window Management API).
+  // Fallback: janela centralizada no tamanho padrão.
+  const openMirrorWindow = async () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("mirror", "true");
+    let w = 1200;
+    let h = 900;
+    let left: number | null = null;
+    let top: number | null = null;
+    try {
+      if ("getScreenDetails" in window) {
+        const details = await window.getScreenDetails();
+        const target = details.screens.find((s) => !s.isPrimary) ?? details.screens[0];
+        if (target) {
+          w = Math.round(Math.min(target.availWidth * 0.98, 1920));
+          h = Math.round(Math.min(target.availHeight * 0.98, 1080));
+          left = Math.round(target.availLeft + (target.availWidth - w) / 2);
+          top = Math.round(target.availTop + (target.availHeight - h) / 2);
+        }
+      }
+    } catch {}
+    const features = [`width=${w}`, `height=${h}`, "menubar=no"];
+    if (left !== null && top !== null) {
+      features.push(`left=${left}`, `top=${top}`);
+    }
+    window.open(url.toString(), "TPMirror", features.join(","));
+  };
+
+  // Fecha a(s) janela(s) de retorno a partir do master via BroadcastChannel.
+  const closeMirrors = () => {
+    try { bcRef.current?.postMessage({ type: "close-mirror" }); } catch {}
   };
 
   const calculateDuration = (scenesList: Scene[]) => {
@@ -340,57 +496,46 @@ function TeleprompterContent({ id }: { id: string }) {
     return Math.max(10, Math.floor((wordCount / 130) * 60));
   };
 
-  const handleSceneBlur = async (sceneId: string, newText: string) => {
-    const updatedScenes = scenes.map(scene => {
-      if (scene.id === sceneId) {
-        // Extract opening/closing if they were manually typed
-        let opening = scene.opening;
-        let closing = scene.closing;
-        let spoken = newText;
+  const applySceneEdit = (sceneId: string, newText: string): Scene[] => {
+    return scenes.map(scene => {
+      if (scene.id !== sceneId) return scene;
+      // Extract opening/closing if they were manually typed
+      let opening = scene.opening;
+      let closing = scene.closing;
+      let spoken = newText;
 
-        const abeMatch = newText.match(/\[abe\]\s*(.*)/i);
-        if (abeMatch) {
-          opening = abeMatch[1].split('\n')[0].trim();
-          spoken = spoken.replace(/\[abe\].*/i, "").trim();
-        }
-        const encMatch = newText.match(/\[enc\]\s*(.*)/i);
-        if (encMatch) {
-          closing = encMatch[1].split('\n')[0].trim();
-          spoken = spoken.replace(/\[enc\].*/i, "").trim();
-        }
-
-        const cleanNewText = spoken
-          .replace(/^\[?Locução\]?|^\[?Legenda\]?|^(Tempo|Cena|Descrição|GC|Texto em tela|Link|url|img|let)\s*[:\-]?\s*/gim, '')
-          .trim();
-        
-        return { ...scene, spokenText: cleanNewText, opening, closing };
+      const abeMatch = newText.match(/\[abe\]\s*(.*)/i);
+      if (abeMatch) {
+        opening = abeMatch[1].split('\n')[0].trim();
+        spoken = spoken.replace(/\[abe\].*/i, "").trim();
       }
-      return scene;
+      const encMatch = newText.match(/\[enc\]\s*(.*)/i);
+      if (encMatch) {
+        closing = encMatch[1].split('\n')[0].trim();
+        spoken = spoken.replace(/\[enc\].*/i, "").trim();
+      }
+
+      const cleanNewText = spoken
+        .replace(/^\[?Locução\]?|^\[?Legenda\]?|^(Tempo|Cena|Descrição|GC|Texto em tela|Link|url|img|let|pron)\s*[:\-]?\s*/gim, '')
+        .trim();
+
+      return { ...scene, spokenText: cleanNewText, opening, closing };
     });
-    
+  };
+
+  const handleSceneBlur = async (sceneId: string, newText: string) => {
+    const updatedScenes = applySceneEdit(sceneId, newText);
     setScenes(updatedScenes);
-    if (versionId) {
-      try {
-        const rawContent = reconstructRawText(updatedScenes);
-        await updateDoc(doc(db, "scripts", id, "versions", versionId), { scenes: updatedScenes, content: rawContent });
-        await updateDoc(doc(db, "scripts", id), { 
-          duration: calculateDuration(updatedScenes),
-          updatedAt: serverTimestamp()
-        });
-        setSaveStatus('saved');
-        setTimeout(() => setSaveStatus(null), 2000);
-      } catch (e) {
-        console.error("Erro ao salvar:", e);
-      }
-    }
+    await persistScenes(updatedScenes);
   };
 
   // Texto para TP com marcadores ocultos mas preservados
   const getTPDisplay = (text: string | null) => {
     if (!text) return "";
-    // Oculta [let], [img] e marcadores numéricos, mas mantém [abe] e [enc]
+    // Oculta [let], [pron], [img] e marcadores numéricos, mas mantém [abe] e [enc]
     return text
       .replace(/\[let(\d+)\]/g, '')
+      .replace(/\[pron(\d+)\]/g, '')
       .replace(/\[img(\d+)\]/g, '')
       .replace(/\[(\d+)\]/g, '')
       .replace(/\[abe\]/g, '<span class="bg-emerald-600 text-white px-2 py-0.5 rounded-lg mx-1 font-black text-[0.4em] align-middle shadow-[0_0_15px_rgba(16,185,129,0.5)]">ABERTURA</span>')
@@ -421,6 +566,14 @@ function TeleprompterContent({ id }: { id: string }) {
         });
       }
 
+      // Pronúncia - cada anotação em uma linha
+      if (s.pronunciation) {
+        const pronLines = s.pronunciation.split('\n').filter(l => l.trim());
+        pronLines.forEach((pronText, i) => {
+          sceneText += `[pron${i + 1}]: ${pronText.trim()}\n`;
+        });
+      }
+
       // Abertura e Encerramento
       if (s.opening) sceneText += `[abe]: ${s.opening}\n`;
       if (s.closing) sceneText += `[enc]: ${s.closing}\n`;
@@ -433,6 +586,23 @@ function TeleprompterContent({ id }: { id: string }) {
       if (spokenText.trim()) sceneText += `[Locução]: ${spokenText}`;
       return sceneText;
     }).join('\n\n');
+  };
+
+  // Persiste a lista de cenas na versão atual do roteiro
+  const persistScenes = async (list: Scene[]) => {
+    if (!versionId) return;
+    try {
+      const rawContent = reconstructRawText(list);
+      await updateDoc(doc(db, "scripts", id, "versions", versionId), { scenes: list, content: rawContent });
+      await updateDoc(doc(db, "scripts", id), {
+        duration: calculateDuration(list),
+        updatedAt: serverTimestamp()
+      });
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus(null), 2000);
+    } catch (e) {
+      debugError("tp.scene", "Falha ao salvar edição da cena", e, { versionId });
+    }
   };
 
   const updateGlobalStyle = async (data: Record<string, string | number | boolean>) => {
@@ -456,27 +626,39 @@ function TeleprompterContent({ id }: { id: string }) {
     try {
       await updateDoc(doc(db, "scripts", id), data);
       saveUserPreferences(data);
-    } catch (e) { console.error(e); }
+    } catch (e) { debugWarn("tp.styles", "Falha ao aplicar estilos", { fields: Object.keys(data) }, e); }
   };
 
   // --- 2. CARREGAMENTO E SYNC FIRESTORE ---
 
   useEffect(() => {
-    async function loadScenes() {
-      try {
-        const q = query(collection(db, "scripts", id, "versions"), orderBy("createdAt", "desc"), limit(1));
-        const snapshot = await getDocs(q);
+    const loadStartedAt = performance.now();
+    debugInfo("tp.load", "Iniciando carregamento das cenas", { scriptId: id, mirror: isMirrorWindow });
+    // onSnapshot responde primeiro do cache local (abre instantâneo) e depois
+    // sincroniza em tempo real — evita esperar round-trip lento do servidor.
+    const q = query(collection(db, "scripts", id, "versions"), orderBy("createdAt", "desc"), limit(1));
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
         if (!snapshot.empty) {
           const docData = snapshot.docs[0].data();
           setVersionId(snapshot.docs[0].id);
           const loadedScenes = docData.scenes || [];
           setScenes(loadedScenes);
           setDuration(calculateDuration(loadedScenes));
+        } else {
+          debugWarn("tp.load", "Nenhuma versão encontrada para o roteiro", { scriptId: id });
         }
-      } catch (e) { console.error(e); }
-      setLoading(false);
-    }
-    loadScenes();
+        setLoading(false);
+        debugPerf("tp.load", "Cenas carregadas", loadStartedAt, { sceneCount: snapshot.size });
+      },
+      (e) => {
+        debugError("tp.load", "Falha ao carregar cenas", e, { scriptId: id });
+        setLoading(false);
+      }
+    );
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // Limpar countdownStartedAt obsoleto ao carregar (se não estiver tocando)
@@ -605,23 +787,9 @@ function TeleprompterContent({ id }: { id: string }) {
     return () => unsub();
   }, [id, user?.uid, isMirrorWindow]);
 
-  // --- 3. ATALHOS DE TECLADO (POWERPOINT / CONTROLE) ---
+  // --- 3. ATALHOS DE TECLADO (BINDS PERSONALIZÁVEIS POR USUÁRIO) ---
 
   useEffect(() => {
-    const goToPrev = () => {
-      if (!containerRef.current) return;
-      const currentScroll = containerRef.current.scrollTop;
-      const prev = [...sceneRefs.current].reverse().find(ref => ref && ref.offsetTop < currentScroll - 150);
-      containerRef.current.scrollTo({ top: prev?.offsetTop || 0, behavior: 'smooth' });
-    };
-
-    const goToNext = () => {
-      if (!containerRef.current) return;
-      const currentScroll = containerRef.current.scrollTop;
-      const next = sceneRefs.current.find(ref => ref && ref.offsetTop > currentScroll + 150);
-      if (next) containerRef.current.scrollTo({ top: next.offsetTop, behavior: 'smooth' });
-    };
-
     const goHome = () => {
       resetTimer();
       if (countdownActiveRef.current) {
@@ -687,10 +855,21 @@ function TeleprompterContent({ id }: { id: string }) {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Bloquear key-repeat (segurar tecla pressionada)
       if (e.repeat) return;
-      // Impedir print e mapear para próxima cena (Cmd+P / Ctrl+P / Alt+P)
+      // No modo de edição os atalhos de teclado ficam desabilitados.
+      // Esc volta ao modo de roteiro (atalhos reativados).
+      if (editModeRef.current && !isMirrorWindow) {
+        if (e.key === 'Escape') {
+          const el = document.activeElement as HTMLElement | null;
+          if (el && el.isContentEditable) el.blur();
+          setEditMode(false);
+          sonnerToast.info("Modo de roteiro — atalhos de teclado ativados.");
+        }
+        return;
+      }
+      // Impedir print e mapear para próxima navegação (Cmd+P / Ctrl+P / Alt+P)
       if ((e.metaKey || e.ctrlKey || e.altKey) && e.code === 'KeyP') {
         e.preventDefault();
-        goToNext();
+        navigateNext();
         return;
       }
 
@@ -698,66 +877,58 @@ function TeleprompterContent({ id }: { id: string }) {
         return;
       }
       if (e.target instanceof HTMLElement && (
-        (e.target.isContentEditable && editingActiveRef.current) || 
         e.target.tagName === 'INPUT' || 
         e.target.tagName === 'TEXTAREA' ||
         (isCommentsVisible && !containerRef.current?.contains(e.target))
       )) return;
+
+      // Texto editável do roteiro: priorizar digitação.
+      // A primeira tecla chega antes do onInput ligar editingActiveRef, então
+      // trata teclas imprimíveis sobre o texto editável como edição (não atalho).
+      if (e.target instanceof HTMLElement && e.target.isContentEditable) {
+        if (editingActiveRef.current) return;
+        const isPrintable = e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey;
+        if (isPrintable) return;
+      }
 
       // Se o foco estiver no texto mas sem edição ativa, sai do modo edição (salva) e aplica o atalho
       if (e.target instanceof HTMLElement && e.target.isContentEditable) {
         (e.target as HTMLElement).blur();
       }
 
-      // Teclas por caractere: + - { } [ ] e Home
-      if (e.key === '+' || e.key === '=' || e.key === '}') { e.preventDefault(); changeSpeed(0.25); return; }
-      if (e.key === '-' || e.key === '{') { e.preventDefault(); changeSpeed(-0.25); return; }
-      if (e.key >= '0' && e.key <= '9') { e.preventDefault(); setSpeedValue(Number(e.key)); return; }
-      if (e.key === '[') { e.preventDefault(); goToPrev(); return; }
-      if (e.key === ']') { e.preventDefault(); goToNext(); return; }
-      if (e.key === 'Home') { e.preventDefault(); goHome(); return; }
+      const action = findActionForEvent(effectiveBindings, e);
+      if (!action) return;
 
-      switch(e.code) {
-        case 'Space':
-        case 'F5':
-        case 'KeyB':
-        case 'KeyP':
-          e.preventDefault();
-          togglePlay();
-          break;
-        case 'PageUp':
-          e.preventDefault();
-          changeSpeed(-0.25);
-          break;
-        case 'PageDown':
-          e.preventDefault();
-          changeSpeed(0.25);
-          break;
-        case 'ArrowRight':
-        case 'KeyD':
-          e.preventDefault();
-          changeSpeed(0.25);
-          break;
-        case 'ArrowLeft':
-        case 'KeyA':
-          e.preventDefault();
-          changeSpeed(-0.25);
-          break;
-        case 'ArrowUp':
-        case 'KeyW':
-          e.preventDefault();
-          goToPrev();
-          break;
-        case 'ArrowDown':
-        case 'KeyS':
-          e.preventDefault();
-          goToNext();
-          break;
+      // Velocidade numérica (0-9) é fixa e universal
+      if (e.key >= '0' && e.key <= '9') {
+        e.preventDefault();
+        setSpeedValue(Number(e.key));
+        return;
+      }
+
+      e.preventDefault();
+      debugLog("debug", "tp.keydown", "Atalho de teclado aplicado", {
+        key: e.key,
+        code: e.code,
+        action,
+        scrollMode: scrollModeRef.current,
+      });
+
+      switch (action) {
+        case 'playPause': togglePlay(); break;
+        case 'prevScene': navigatePrev(); break;
+        case 'nextScene': navigateNext(); break;
+        case 'prevParagraph': navigatePrev(); break;
+        case 'nextParagraph': navigateNext(); break;
+        case 'middleScene': goToMiddleOfScene(1); break;
+        case 'home': goHome(); break;
+        case 'speedUp': changeSpeed(0.25); break;
+        case 'speedDown': changeSpeed(-0.25); break;
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [id, isCommentsVisible, user?.requiresChecklist, checklistDone]);
+  }, [id, isCommentsVisible, user?.requiresChecklist, checklistDone, effectiveBindings, navigatePrev, navigateNext, goToMiddleOfScene]);
 
   // --- 4. MOTOR DE SCROLL E BROADCAST ---
   useEffect(() => {
@@ -866,6 +1037,10 @@ function TeleprompterContent({ id }: { id: string }) {
         if (ev.data.type === 'master-navigating') {
           window.close();
         }
+        // Master pediu explicitamente o fechamento
+        if (ev.data.type === 'close-mirror') {
+          window.close();
+        }
       };
       return () => {
         window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -877,10 +1052,12 @@ function TeleprompterContent({ id }: { id: string }) {
         if (ev.data.type === 'mirror-connect' && ev.data.mirrorId) {
           activeMirrorsRef.current.add(ev.data.mirrorId);
           mirrorCountRef.current = activeMirrorsRef.current.size;
+          setMirrorCount(mirrorCountRef.current);
         }
         if (ev.data.type === 'mirror-disconnect' && ev.data.mirrorId) {
           activeMirrorsRef.current.delete(ev.data.mirrorId);
           mirrorCountRef.current = activeMirrorsRef.current.size;
+          setMirrorCount(mirrorCountRef.current);
         }
         if (ev.data.type === 'start-countdown') {
           startCountdownRef.current();
@@ -945,27 +1122,36 @@ function TeleprompterContent({ id }: { id: string }) {
       });
     }
   }, [fontSize, textAlign, fontFamily, fontWeight, lineHeight, maxWidth, bgColor, textColor, sceneGap, referenceInches, operatorInches, showReadingStrip, countdownEnabled, isMirrorWindow]);
+
+  // Escreve o conteúdo sanitizado das cenas apenas quando o texto muda,
+  // evitando re-sanitizar todas as cenas a cada tick do timer de gravação.
+  useEffect(() => {
+    scenes.forEach((s, idx) => {
+      const el = sceneRefs.current[idx];
+      if (!el || focusedId === s.id) return;
+      const raw = getTPDisplay(
+        (s.opening ? `[abe] ${s.opening}\n` : '') +
+        (s.spokenText || '') +
+        (s.closing ? `\n[enc] ${s.closing}` : '')
+      );
+      const sanitized = DOMPurify.sanitize(raw);
+      if (el.innerHTML !== sanitized) el.innerHTML = sanitized;
+    });
+  }, [scenes, focusedId]);
   
   if (loading) return <LoadingScreen />;
 
-  const goToPrevScene = () => {
-    if (!containerRef.current) return;
-    const currentScroll = containerRef.current.scrollTop;
-    const prev = [...sceneRefs.current].reverse().find(ref => ref && ref.offsetTop < currentScroll - 150);
-    containerRef.current.scrollTo({ top: prev?.offsetTop || 0, behavior: 'smooth' });
-  };
-
-  const goToNextScene = () => {
-    if (!containerRef.current) return;
-    const currentScroll = containerRef.current.scrollTop;
-    const next = sceneRefs.current.find(ref => ref && ref.offsetTop > currentScroll + 150);
-    if (next) containerRef.current.scrollTo({ top: next.offsetTop, behavior: 'smooth' });
-  };
-
   const handleSetRecorded = async () => {
     try {
-      const rawContent = reconstructRawText(scenes);
-      await updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes, content: rawContent });
+      // Commit da edição de texto pendente (cena ainda focada) antes de salvar
+      let currentScenes = scenes;
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (activeEl && activeEl.isContentEditable && activeEl.getAttribute('data-scene-id')) {
+        currentScenes = applySceneEdit(activeEl.getAttribute('data-scene-id')!, activeEl.innerText);
+        setScenes(currentScenes);
+      }
+      const rawContent = reconstructRawText(currentScenes);
+      await updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes: currentScenes, content: rawContent });
       
       pauseTimer();
       const recordedDuration = accumulatedTimeRef.current;
@@ -975,7 +1161,7 @@ function TeleprompterContent({ id }: { id: string }) {
         isPlaying: false,
         progress: 1,
         updatedAt: serverTimestamp(),
-        duration: calculateDuration(scenes),
+        duration: calculateDuration(currentScenes),
         recordedDuration,
         recordedAt: serverTimestamp(),
         videomakerId: user?.uid || null,
@@ -1027,6 +1213,18 @@ function TeleprompterContent({ id }: { id: string }) {
     }
   };
 
+  // Salva as edições de texto feitas no modo de edição (sem marcar como gravado)
+  const handleSaveEdits = async () => {
+    let list = scenes;
+    const activeEl = document.activeElement as HTMLElement | null;
+    if (activeEl && activeEl.isContentEditable && activeEl.getAttribute('data-scene-id')) {
+      list = applySceneEdit(activeEl.getAttribute('data-scene-id')!, activeEl.innerText);
+      setScenes(list);
+    }
+    await persistScenes(list);
+    sonnerToast.success("Roteiro editado salvo com sucesso!");
+  };
+
   const findNextScript = async () => {
     try {
       const activeWorkspaceId = workspaceId || "senai";
@@ -1054,14 +1252,25 @@ function TeleprompterContent({ id }: { id: string }) {
         return sPath.every((seg, i) => seg === currentPath[i]);
       });
 
-      // Ordena por título dentro da mesma pasta
-      sameFolder.sort((a, b) =>
-        (a.title || "").localeCompare(b.title || "", undefined, { numeric: true, sensitivity: 'base' })
-      );
+      // Se houver ordem personalizada salva para esta pasta, respeita-a.
+      // Caso contrário, ordena por título (ordem alfabética padrão).
+      const customOrder = recordingOrder ?? (await getRecordingOrder(projectId, path));
+      let ordered = sameFolder;
+      if (customOrder && customOrder.length > 0) {
+        const pos = new Map(customOrder.map((scriptId, i) => [scriptId, i]));
+        ordered = [...sameFolder].sort((a, b) => {
+          const pa = pos.get(a.id);
+          const pb = pos.get(b.id);
+          if (pa === undefined && pb === undefined) return 0;
+          if (pa === undefined) return 1;
+          if (pb === undefined) return -1;
+          return pa - pb;
+        });
+      }
 
-      const currentIndex = sameFolder.findIndex(s => s.id === id);
+      const currentIndex = ordered.findIndex(s => s.id === id);
       const next = currentIndex !== -1
-        ? sameFolder.slice(currentIndex + 1).find(s =>
+        ? ordered.slice(currentIndex + 1).find(s =>
             s.status === "revisao_realizada" || s.status === "aguardando_gravacao"
           )
         : null;
@@ -1142,8 +1351,55 @@ function TeleprompterContent({ id }: { id: string }) {
         </div>
       )}
 
+      {/* SELETOR DE MODO: Roteiro (atalhos) / Edição (texto editável) */}
+      {!isMirrorWindow && (
+        <div className="absolute left-4 top-4 z-[60] flex items-center gap-2">
+          <button
+            onClick={() => {
+              if (editModeRef.current) {
+                const el = document.activeElement as HTMLElement | null;
+                if (el && el.isContentEditable) el.blur();
+                setEditMode(false);
+                sonnerToast.info("Modo de roteiro — atalhos de teclado ativados.");
+              } else {
+                setEditMode(true);
+                sonnerToast.info("Modo de edição ativado — edite o texto e depois use Salvar ou Marcar como Gravado.", { duration: 5000 });
+              }
+            }}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg backdrop-blur border font-black text-[10px] uppercase tracking-widest transition-all ${
+              editMode
+                ? "bg-emerald-600/90 border-emerald-500/50 text-white shadow-lg shadow-emerald-900/30"
+                : "bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-white"
+            }`}
+            title={editMode ? "Voltar ao modo de roteiro (atalhos de teclado ativos)" : "Ativar modo de edição de texto"}
+          >
+            {editMode ? <Pencil size={14}/> : <Play size={14}/>}
+            {editMode ? "Modo de Edição" : "Modo de Roteiro"}
+          </button>
+          {editMode && (
+            <button
+              onClick={handleSaveEdits}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600/90 border border-blue-500/50 text-white font-black text-[10px] uppercase tracking-widest shadow-lg shadow-blue-900/30 hover:bg-blue-500 transition-all"
+              title="Salvar o roteiro editado"
+            >
+              <Save size={14}/> Salvar
+            </button>
+          )}
+        </div>
+      )}
+
       {/* ÁREA DO TEXTO */}
-      <div data-tour="tp-text" className="flex-1 h-full overflow-y-auto relative no-scrollbar" ref={containerRef}>
+      <div data-tour="tp-text" className="flex-1 h-full overflow-y-auto relative no-scrollbar" ref={containerRef} onClick={(e) => {
+        if (isMirrorWindow || editModeRef.current) return;
+        const sceneEl = (e.target as HTMLElement).closest('[data-scene-id]');
+        if (!sceneEl) return;
+        setEditMode(true);
+        sonnerToast.info("Modo de edição ativado — edite o texto e depois use Salvar ou Marcar como Gravado.", { duration: 5000 });
+        requestAnimationFrame(() => {
+          const el = sceneEl as HTMLElement;
+          if (el.isContentEditable) el.focus();
+        });
+      }}>
         {showReadingStrip && (
           <div className="fixed top-1/2 left-0 w-full h-32 bg-white/5 pointer-events-none -translate-y-1/2 z-10 border-y border-white/10 shadow-2xl" />
         )}
@@ -1158,20 +1414,10 @@ function TeleprompterContent({ id }: { id: string }) {
           {scenes.map((s, idx) => (
             <div 
               key={s.id} 
-              ref={el => { 
-                sceneRefs.current[idx] = el; 
-                if (el && focusedId !== s.id) {
-                  const raw = getTPDisplay(
-                    (s.opening ? `[abe] ${s.opening}\n` : '') + 
-                    (s.spokenText || '') + 
-                    (s.closing ? `\n[enc] ${s.closing}` : '')
-                  );
-                  const sanitized = DOMPurify.sanitize(raw);
-                  if (el.innerHTML !== sanitized) el.innerHTML = sanitized;
-                }
-              }}
+              ref={el => { sceneRefs.current[idx] = el; }}
               className={`${sceneGap} break-words outline-none whitespace-pre-wrap transition-all duration-700 ${textAlign} ${fontWeight} ${fontSize} ${lineHeight}`} 
-              contentEditable={!isMirrorWindow} 
+              data-scene-id={s.id}
+              contentEditable={!isMirrorWindow && editMode} 
               suppressContentEditableWarning={true}
               onFocus={() => {
                 setFocusedId(s.id);
@@ -1224,15 +1470,35 @@ function TeleprompterContent({ id }: { id: string }) {
           </div>
 
           <div className="flex p-1.5 bg-zinc-900 m-4 rounded-xl gap-1 border border-zinc-800">
-            <button onClick={() => setShowRemote(false)} className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase transition-all ${!showRemote ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}>Estilo</button>
-            <button onClick={() => setShowRemote(true)} className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase transition-all ${showRemote ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}>Remoto</button>
+            {([
+              { key: "style", label: "Estilo" },
+              { key: "remote", label: "Remoto" },
+              { key: "order", label: "Ordem Roteiros" },
+              { key: "pron", label: "Pronúncia" },
+            ] as const).map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setSidebarTab(tab.key)}
+                className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase transition-all ${sidebarTab === tab.key ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
 
           <div className="flex-1 overflow-y-auto px-6 pb-6 no-scrollbar text-zinc-100">
-            {!showRemote ? (
+            {sidebarTab === "order" ? (
+              <RecordingOrderPanel
+                projectId={projectId}
+                folderPath={path}
+                onOrderSaved={(order) => setRecordingOrder(order)}
+              />
+            ) : sidebarTab === "pron" ? (
+              <PronunciationPanel scenes={scenes} />
+            ) : sidebarTab === "style" ? (
               <div className="space-y-8 py-4 animate-in fade-in slide-in-from-left-4 duration-300">
-                <button onClick={() => window.open(window.location.href + "?mirror=true", "TPMirror", "width=1200,height=900,menubar=no")} className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-3 transition-all shadow-xl shadow-blue-900/20">
-                  <Monitor size={18} /> Abrir Tela de Retorno
+                <button onClick={() => (mirrorCount > 0 ? closeMirrors() : openMirrorWindow())} className={`w-full py-3.5 rounded-xl font-bold text-xs flex items-center justify-center gap-3 transition-all shadow-xl ${mirrorCount > 0 ? "bg-zinc-800 hover:bg-red-600/20 text-zinc-300 hover:text-red-400 shadow-black/20" : "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/20"}`}>
+                  {mirrorCount > 0 ? <MonitorX size={18} /> : <Monitor size={18} />} {mirrorCount > 0 ? "Fechar Tela de Retorno" : "Abrir Tela de Retorno"}
                 </button>
 
                 <div className="space-y-6 pt-4 border-t border-zinc-900">
@@ -1362,7 +1628,7 @@ function TeleprompterContent({ id }: { id: string }) {
                           <input type="number" min={1} max={100} step={0.5} value={referenceInches}
                             onChange={(e) => { const v = Number(e.target.value); if (v > 0) { setReferenceInches(v); updateGlobalStyle({ referenceInches: v }); } }}
                             className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs font-bold text-white text-center" />
-                          <span className="text-[10px] text-zinc-600 font-bold">"</span>
+                          <span className="text-[10px] text-zinc-600 font-bold">&quot;</span>
                         </div>
                       </div>
                       <div className="space-y-1.5">
@@ -1371,7 +1637,7 @@ function TeleprompterContent({ id }: { id: string }) {
                           <input type="number" min={1} max={100} step={0.5} value={operatorInches}
                             onChange={(e) => { const v = Number(e.target.value); if (v > 0) { setOperatorInches(v); updateGlobalStyle({ operatorInches: v }); } }}
                             className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs font-bold text-white text-center" />
-                          <span className="text-[10px] text-zinc-600 font-bold">"</span>
+                          <span className="text-[10px] text-zinc-600 font-bold">&quot;</span>
                         </div>
                       </div>
                     </div>
@@ -1393,11 +1659,7 @@ function TeleprompterContent({ id }: { id: string }) {
                         if (isPlaying || localProgress > 0.05) {
                           await handleSetRecorded();
                         } else {
-                          const rawContent = reconstructRawText(scenes);
-                          await updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes, content: rawContent });
-                          await updateDoc(doc(db, "scripts", id), { duration: calculateDuration(scenes) });
-                          setSaveStatus('saved');
-                          setTimeout(() => setSaveStatus(null), 2000);
+                          await handleSaveEdits();
                         }
                       }}
                       className={`w-full py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg ${
@@ -1459,8 +1721,10 @@ function TeleprompterContent({ id }: { id: string }) {
                           }
                         }}
                       manualScroll={(amt) => { if (containerRef.current) containerRef.current.scrollBy({ top: amt, behavior: 'smooth' }); }}
-                      goToPrevScene={goToPrevScene}
-                      goToNextScene={goToNextScene}
+                      goPrev={navigatePrev}
+                      goNext={navigateNext}
+                      scrollMode={scrollMode}
+                      onScrollModeChange={handleScrollModeChange}
                        isCommentsVisible={isCommentsVisible}
                        setIsCommentsVisible={setIsCommentsVisible}
                    />
@@ -1569,6 +1833,22 @@ function TeleprompterContent({ id }: { id: string }) {
              >
                <HelpCircle size={20} />
              </button>
+             <button 
+               onClick={() => setShowShortcutSettings(true)}
+               className="p-2 text-zinc-500 hover:text-white transition-colors"
+               title="Personalizar atalhos"
+             >
+               <Keyboard size={20} />
+             </button>
+             {mirrorCount > 0 && (
+               <button 
+                 onClick={closeMirrors}
+                 className="p-2 text-red-500/80 hover:text-red-400 transition-colors"
+                 title="Fechar Tela de Retorno"
+               >
+                 <MonitorX size={20} />
+               </button>
+             )}
              <button 
                onClick={() => setIsCommentsVisible(!isCommentsVisible)}
                className={`p-2 transition-colors ${isCommentsVisible ? 'text-blue-500 bg-blue-500/10 text-white rounded-lg' : 'text-zinc-500 hover:text-white'}`}
@@ -1795,6 +2075,18 @@ function TeleprompterContent({ id }: { id: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* PERSONALIZAR ATALHOS POR USUÁRIO */}
+      <ShortcutSettingsDialog
+        key={`sc-${showShortcutSettings}-${JSON.stringify(userShortcuts)}`}
+        open={showShortcutSettings}
+        onOpenChange={setShowShortcutSettings}
+        userShortcuts={userShortcuts}
+        onSave={(shortcuts) => {
+          setUserShortcuts(shortcuts);
+          saveUserPreferences({ tpShortcuts: shortcuts });
+        }}
+      />
     </div>
   );
 }

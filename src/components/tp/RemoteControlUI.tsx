@@ -9,9 +9,13 @@ import {
   RotateCcw, 
   ChevronUp, 
   ChevronDown,
-  Clock,
-  MessageSquare
+  MessageSquare,
+  ArrowBigDown,
+  AlignCenterVertical,
+  ListOrdered,
+  List
 } from "lucide-react";
+import { TP_SCROLL_MODES, TPScrollMode } from "@/lib/tp-controls";
 
 interface RemoteControlUIProps {
   isPlaying: boolean;
@@ -20,11 +24,20 @@ interface RemoteControlUIProps {
   progress: number;
   update: (data: Record<string, unknown>) => void;
   manualScroll: (amount: number) => void;
-  goToPrevScene: () => void;
-  goToNextScene: () => void;
+  goPrev: () => void;
+  goNext: () => void;
+  scrollMode: TPScrollMode;
+  onScrollModeChange: (mode: TPScrollMode) => void;
   isCommentsVisible: boolean;
   setIsCommentsVisible: (visible: boolean) => void;
 }
+
+const SCROLL_MODE_ICONS: Record<TPScrollMode, typeof List> = {
+  paragraph: List,
+  scene: ArrowBigDown,
+  middle: AlignCenterVertical,
+  all: ListOrdered,
+};
 
 export function RemoteControlUI({
   isPlaying,
@@ -33,8 +46,10 @@ export function RemoteControlUI({
   progress,
   update,
   manualScroll,
-  goToPrevScene,
-  goToNextScene,
+  goPrev,
+  goNext,
+  scrollMode,
+  onScrollModeChange,
   isCommentsVisible,
   setIsCommentsVisible
 }: RemoteControlUIProps) {
@@ -100,27 +115,47 @@ export function RemoteControlUI({
       {/* CONTROLES PRINCIPAIS */}
       <div className="flex-1 flex flex-col items-center justify-between py-2 w-full gap-6">
         
-        {/* NAVEGAÇÃO ENTRE CENAS */}
+        {/* NAVEGAÇÃO ENTRE CENAS (modo de scroll configurável) */}
         <div className="flex justify-between w-full px-4 items-center">
             <button 
-              onClick={goToPrevScene} 
+              onClick={goPrev} 
               className="w-16 h-16 rounded-2xl bg-zinc-900 flex items-center justify-center hover:bg-zinc-800 active:scale-90 transition-all border border-zinc-800 shadow-lg group"
-              title="Cena anterior"
+              title="Anterior"
             >
               <ChevronUp className="w-8 h-8 text-zinc-500 group-hover:text-white transition-colors" />
             </button>
             
-            <div className="flex flex-col items-center">
-              <div className="p-2 bg-zinc-900 rounded-full mb-1">
-                <ChevronUp size={14} className="text-zinc-600" />
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-[9px] uppercase text-zinc-500 font-black tracking-widest">Navegação</span>
+              {/* Seletor do tipo de scroll */}
+              <div className="flex rounded-xl bg-zinc-900 border border-zinc-800 p-1 gap-0.5">
+                {TP_SCROLL_MODES.map((mode) => {
+                  const Icon = SCROLL_MODE_ICONS[mode.value];
+                  return (
+                    <button
+                      key={mode.value}
+                      onClick={() => onScrollModeChange(mode.value)}
+                      title={mode.hint}
+                      className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${
+                        scrollMode === mode.value
+                          ? "bg-blue-600 text-white shadow-lg"
+                          : "text-zinc-500 hover:text-white"
+                      }`}
+                    >
+                      <Icon size={15} />
+                    </button>
+                  );
+                })}
               </div>
-              <span className="text-[9px] uppercase text-zinc-500 font-black tracking-widest">Cenas</span>
+              <span className="text-[8px] uppercase text-blue-400 font-black tracking-widest">
+                {TP_SCROLL_MODES.find((m) => m.value === scrollMode)?.label}
+              </span>
             </div>
 
             <button 
-              onClick={goToNextScene} 
+              onClick={goNext} 
               className="w-16 h-16 rounded-2xl bg-zinc-900 flex items-center justify-center hover:bg-zinc-800 active:scale-90 transition-all border border-zinc-800 shadow-lg group"
-              title="Próxima cena"
+              title="Próximo"
             >
               <ChevronDown className="w-8 h-8 text-zinc-500 group-hover:text-white transition-colors" />
             </button>

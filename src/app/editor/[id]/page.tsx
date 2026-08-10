@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, use, Suspense, useRef, useMemo, useCallback } from "react";
+import React, { useEffect, useState, use, Suspense, useRef, useMemo, useCallback, memo } from "react";
 import dynamic from "next/dynamic";
-import Image from "next/image";
 import { Scene, parseScript, stripHtml } from "@/lib/parser";
 import DOMPurify from "dompurify";
 import { sanitizeData } from "@/lib/firebase-utils";
@@ -49,6 +48,7 @@ import {
   ChevronRight,
   ChevronDown,
   X,
+  Ear,
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
@@ -66,6 +66,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { logActivity } from "@/lib/activity";
+import { debugInfo, debugWarn, debugError, debugPerf } from "@/lib/debug-log";
 import { fetchProjects, Project, createProject } from "@/services/projects";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -78,6 +79,79 @@ import {
 } from "@/components/ui/select";
 import { toast as sonnerToast } from "sonner";
 import { SpellCheckWord } from "@/components/tp/SpellCheckPopover";
+
+function isPermissionError(e: unknown): boolean {
+  return e instanceof Error && /permission.?denied|unauthorized|insufficient/i.test(e.message);
+}
+
+function isValidImageUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function ImageThumb({ src, alt }: { src: string; alt: string }) {
+  const [thumb, setThumb] = useState<string>(src);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!src || !isValidImageUrl(src)) {
+      setThumb("");
+      setFailed(false);
+      return;
+    }
+    let cancelled = false;
+    setThumb(src);
+    setFailed(false);
+    const timer = setTimeout(() => {
+      const apiUrl = `/api/thumbnail?raw=1&url=${encodeURIComponent(src)}`;
+      const probe = new Image();
+      probe.onload = () => { if (!cancelled) setThumb(apiUrl); };
+      probe.onerror = () => { if (!cancelled) setFailed(true); };
+      probe.src = apiUrl;
+    }, 500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [src]);
+
+  if (!src || !isValidImageUrl(src)) return null;
+
+  let host = "";
+  try {
+    host = new URL(src).hostname;
+  } catch {
+    host = "";
+  }
+  const isAdobeRef = /(^|\.)adobe\.com$/i.test(host) || host.endsWith("ftcdn.net");
+
+  return (
+    <div className="space-y-1">
+      <div className="h-16 w-16 relative rounded border overflow-hidden bg-black shrink-0 shadow-lg">
+        {!failed && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={thumb}
+            alt={alt}
+            className="w-full h-full object-contain"
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={() => setFailed(true)}
+          />
+        )}
+      </div>
+      {failed && isAdobeRef && (
+        <span className="block max-w-[180px] text-[9px] leading-tight text-zinc-400 italic">
+          Adobe bloqueia acesso automático. Cole a URL direta da imagem (ftcdn.net).
+        </span>
+      )}
+    </div>
+  );
+}
+
+type SceneFieldName = 'spokenText' | 'opening' | 'closing';
+type SceneBlockType = 'spokenText' | 'imageUrl' | 'lettering' | 'pronunciation' | 'observation' | 'opening' | 'closing';
 
 const CommentsPanel = dynamic(
   () => import("@/components/tp/CommentsPanel").then((m) => ({ default: m.CommentsPanel })),
@@ -150,6 +224,9 @@ function HighlightedSpokenText({
   onSpellCheckApply,
   contentEditableRef,
   disableSpellCheck = false,
+  fieldName = 'spokenText',
+  sceneId,
+  onFocusChange,
 }: { 
   text: string; 
   onChange: (value: string) => void;
@@ -161,10 +238,15 @@ function HighlightedSpokenText({
   onSpellCheckApply?: (word: string, replacement: string) => void;
   contentEditableRef?: (el: HTMLDivElement | null) => void;
   disableSpellCheck?: boolean;
+  fieldName?: 'spokenText' | 'opening' | 'closing';
+  sceneId?: string;
+  onFocusChange?: (sceneId: string, fieldName: 'spokenText' | 'opening' | 'closing') => void;
 }) {
   const [typoReady, setTypoReady] = useState(false);
   const [debouncedText, setDebouncedText] = useState(text);
+  const [isVisible, setIsVisible] = useState(false);
   const ceRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const isUserEditing = useRef(false);
   const lastExternalText = useRef(text);
 
@@ -172,9 +254,9 @@ function HighlightedSpokenText({
 
   // Spellcheck sob demanda: só baixa os dicionários quando o usuário começa a digitar
   useEffect(() => {
-    if (!debouncedText || disableSpellCheck) return;
+    if (!debouncedText || disableSpellCheck || isEditing) return;
     return onSpellCheckReady(() => setTypoReady(true));
-  }, [debouncedText, disableSpellCheck]);
+  }, [debouncedText, disableSpellCheck, isEditing]);
 
   // Debounce spellcheck para não travar a UI a cada tecla
   useEffect(() => {
@@ -182,10 +264,27 @@ function HighlightedSpokenText({
     return () => clearTimeout(timer);
   }, [text]);
 
+  // Só processa o spellcheck de cenas que estão na tela (evita travar a página
+  // em roteiros longos verificando tudo de uma vez)
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      entries => {
+        entries.forEach(en => setIsVisible(en.isIntersecting));
+      },
+      { rootMargin: "400px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
   const spellErrors = useMemo(() => {
-    if (disableSpellCheck || !debouncedText || !typoReady) return null;
+    // Não verifica no modo edição (o preview que usa os erros não é renderizado)
+    // nem para cenas fora da tela.
+    if (disableSpellCheck || !debouncedText || !typoReady || isEditing || !isVisible) return null;
     return checkText(debouncedText);
-  }, [debouncedText, typoReady, disableSpellCheck]);
+  }, [debouncedText, typoReady, disableSpellCheck, isEditing, isVisible]);
 
   const highlights = useMemo(() => {
     if (!text || isEditing) return null;
@@ -327,7 +426,7 @@ function HighlightedSpokenText({
   }, [isEditing]);
 
   return (
-    <div className="relative w-full group/textarea">
+    <div ref={rootRef} className="relative w-full group/textarea">
       {!isEditing && (
         <div className="absolute inset-0 pointer-events-none p-4 font-medium text-[14px] leading-relaxed whitespace-pre-wrap break-words z-20 bg-zinc-50 dark:bg-zinc-950 rounded border border-zinc-200 dark:border-zinc-800 overflow-y-auto">
           {typoReady ? highlights : (
@@ -346,7 +445,7 @@ function HighlightedSpokenText({
           suppressContentEditableWarning={true}
           onPaste={handlePaste}
           onInput={handleInput}
-          onFocus={handleFocus}
+          onFocus={() => { if (sceneId && fieldName && onFocusChange) onFocusChange(sceneId, fieldName); handleFocus(); }}
           onBlur={handleBlur}
           data-placeholder={placeholder}
           className="text-[14px] font-medium leading-relaxed min-h-[120px] p-4 resize-none w-full rounded focus-visible:ring-2 focus-visible:ring-blue-500 bg-zinc-50/50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 outline-none whitespace-pre-wrap break-words empty:before:content-[attr(data-placeholder)] empty:before:text-zinc-400 empty:before:opacity-40"
@@ -367,6 +466,350 @@ function HighlightedSpokenText({
     </div>
   );
 }
+
+function RawTextModal({
+  open,
+  initialText,
+  busy,
+  onClose,
+  onImport,
+}: {
+  open: boolean;
+  initialText: string;
+  busy: boolean;
+  onClose: () => void;
+  onImport: (text: string) => void;
+}) {
+  const [text, setText] = useState(initialText);
+
+  return (
+    <Dialog open={open} onOpenChange={o => !o && onClose()}>
+      <DialogContent className="sm:max-w-3xl bg-white dark:bg-zinc-950 border-none rounded p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)] max-h-[90vh]">
+        <DialogHeader>
+          <DialogTitle className="text-2xl font-black">Roteiro Bruto</DialogTitle>
+          <DialogDescription className="text-zinc-500 font-medium pt-2">
+            Visualize ou edite o texto bruto. Ao importar, o texto será processado em cenas.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="py-6 overflow-y-auto px-2">
+          <Textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            className="min-h-[400px] font-mono text-xs bg-zinc-50 dark:bg-zinc-900 rounded p-6 border-zinc-200 dark:border-zinc-800 max-h-[40vh] overflow-y-auto"
+            placeholder="Cena 1&#10;..."
+          />
+        </div>
+        <DialogFooter className="sm:justify-center">
+          <Button
+            onClick={() => onImport(text)}
+            disabled={busy}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-black rounded px-12 h-14 text-xs uppercase tracking-widest shadow-xl disabled:opacity-50"
+          >
+            {busy ? "PROCESSANDO..." : "PROCESSAR E IMPORTAR"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const SceneCard = memo(function SceneCard({
+  scene,
+  index,
+  isEditingMode,
+  canEdit,
+  commentCounts,
+  comments,
+  updateScene,
+  addBlockToScene,
+  removeBlockFromScene,
+  insertTagAtCursor,
+  splitScene,
+  deleteScene,
+  addEmptyScene,
+  copyToClipboard,
+  handleSpellCheckApply,
+  handleFocusChange,
+  registerTextarea,
+  registerContentEditable,
+}: {
+  scene: Scene;
+  index: number;
+  isEditingMode: boolean;
+  canEdit: boolean;
+  commentCounts: Record<number, number>;
+  comments: Comment[];
+  updateScene: (index: number, data: Partial<Scene>) => void;
+  addBlockToScene: (index: number, type: SceneBlockType) => void;
+  removeBlockFromScene: (index: number, type: SceneBlockType, subIndex?: number) => void;
+  insertTagAtCursor: (index: number, tag: string) => void;
+  splitScene: (index: number) => void;
+  deleteScene: (index: number) => void;
+  addEmptyScene: (index?: number) => void;
+  copyToClipboard: (text: string, label: string) => void;
+  handleSpellCheckApply: (sceneIndex: number, field: keyof Scene, word: string, replacement: string) => void;
+  handleFocusChange: (sceneId: string, fieldName: SceneFieldName) => void;
+  registerTextarea: (key: string, el: HTMLTextAreaElement | null) => void;
+  registerContentEditable: (key: string, el: HTMLDivElement | null) => void;
+}) {
+  return (
+    <div className="relative group/scene">
+      <Card className="transition-all duration-500 border-zinc-200 dark:border-zinc-800 shadow-2xl rounded overflow-hidden py-0">
+        <div className="bg-zinc-50/50 dark:bg-zinc-800/20 px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <span className="bg-zinc-900 dark:bg-blue-600 text-white text-[11px] px-4 py-1.5 rounded font-black tracking-tighter shadow-md">
+              {isNaN(Number(scene.sceneNumber)) ? scene.sceneNumber.toUpperCase() : `CENA ${scene.sceneNumber}`}
+            </span>
+            {isEditingMode && <Input placeholder="Tempo" value={scene.time || ""} onChange={(e) => updateScene(index, { time: e.target.value })} className="h-7 w-20 text-[10px] border-zinc-300 py-0" />}
+
+            {isEditingMode && (
+              <div data-tour="editor-toolbar" className="flex items-center gap-1 border-l pl-4 ml-2 border-zinc-200 dark:border-zinc-800">
+                <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'spokenText')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-blue-500 transition-colors">
+                   <MessageSquare size={14} className="text-blue-500" /> Loc
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'lettering')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-amber-500 transition-colors">
+                   <Type size={14} className="text-amber-500" /> Let
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'pronunciation')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-cyan-500 transition-colors">
+                   <Ear size={14} className="text-cyan-500" /> Pron
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'imageUrl')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-purple-500 transition-colors">
+                   <ImageIcon size={14} className="text-purple-500" /> Img
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'opening')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-emerald-500 transition-colors">
+                   <Pin size={14} className="text-emerald-500" /> Abe
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'closing')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-rose-500 transition-colors">
+                   <Pin size={14} className="text-rose-500" /> Enc
+                </Button>
+              </div>
+            )}
+          </div>
+          {isEditingMode && (
+            <div className="flex items-center gap-1 opacity-0 group-hover/scene:opacity-100 transition-opacity">
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded" onClick={() => splitScene(index)}><Scissors size={14} /></Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded text-red-500" onClick={() => deleteScene(index)}><Trash2 size={14} /></Button>
+            </div>
+          )}
+        </div>
+        <CardContent className="px-6 md:px-8 py-0 space-y-8">
+          {scene.spokenText != null && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                 <Label className="text-[10px] uppercase font-black text-blue-500 tracking-widest flex items-center gap-2"><MessageSquare size={16} /> Locução</Label>
+                 <div className="flex gap-2">
+                    <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100" onClick={() => copyToClipboard(scene.spokenText || "", "Locução")}><Copy size={12} /></Button>
+                    {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'spokenText')}><Trash2 size={12} /></Button>}
+                 </div>
+              </div>
+              <HighlightedSpokenText 
+                text={scene.spokenText || ""} 
+                onChange={(value) => updateScene(index, { spokenText: value })} 
+                textareaRef={(el) => registerTextarea(`${scene.id}-spokenText`, el)} 
+                contentEditableRef={(el) => registerContentEditable(`${scene.id}-spokenText`, el)}
+                disabled={!canEdit} 
+                isEditing={isEditingMode} 
+                commentCounts={commentCounts}
+                onSpellCheckApply={(word, replacement) => handleSpellCheckApply(index, 'spokenText', word, replacement)}
+                fieldName="spokenText"
+                sceneId={scene.id}
+                onFocusChange={handleFocusChange}
+              />
+            </div>
+          )}
+
+          {/* ABERTURA */}
+          {(scene.opening != null) && (
+            <div className="space-y-3  dark:border-zinc-800">
+              <div className="flex items-center justify-between">
+                 <Label className="text-[10px] uppercase font-black text-emerald-600 tracking-widest flex items-center gap-2"><Pin size={16} /> Abertura</Label>
+                 <div className="flex gap-2">
+                    <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100" onClick={() => copyToClipboard(scene.opening || "", "Abertura")}><Copy size={12} /></Button>
+                    {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'opening')}><Trash2 size={12} /></Button>}
+                 </div>
+              </div>
+              <HighlightedSpokenText 
+                text={scene.opening || ""} 
+                onChange={(value) => updateScene(index, { opening: value })} 
+                textareaRef={(el) => registerTextarea(`${scene.id}-opening`, el)} 
+                contentEditableRef={(el) => registerContentEditable(`${scene.id}-opening`, el)}
+                disabled={!canEdit} 
+                isEditing={isEditingMode} 
+                commentCounts={commentCounts}
+                placeholder="Texto da abertura..."
+                onSpellCheckApply={(word, replacement) => handleSpellCheckApply(index, 'opening', word, replacement)}
+                fieldName="opening"
+                sceneId={scene.id}
+                onFocusChange={handleFocusChange}
+              />
+            </div>
+          )}
+
+          {/* ENCERRAMENTO */}
+          {(scene.closing != null) && (
+            <div className="space-y-3 dark:border-zinc-800">
+              <div className="flex items-center justify-between">
+                 <Label className="text-[10px] uppercase font-black text-rose-600 tracking-widest flex items-center gap-2"><Pin size={16} /> Encerramento</Label>
+                 <div className="flex gap-2">
+                    <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100" onClick={() => copyToClipboard(scene.closing || "", "Encerramento")}><Copy size={12} /></Button>
+                    {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'closing')}><Trash2 size={12} /></Button>}
+                 </div>
+              </div>
+              <HighlightedSpokenText 
+                text={scene.closing || ""} 
+                onChange={(value) => updateScene(index, { closing: value })} 
+                textareaRef={(el) => registerTextarea(`${scene.id}-closing`, el)} 
+                contentEditableRef={(el) => registerContentEditable(`${scene.id}-closing`, el)}
+                disabled={!canEdit} 
+                isEditing={isEditingMode} 
+                commentCounts={commentCounts}
+                placeholder="Texto do encerramento..."
+                onSpellCheckApply={(word, replacement) => handleSpellCheckApply(index, 'closing', word, replacement)}
+                fieldName="closing"
+                sceneId={scene.id}
+                onFocusChange={handleFocusChange}
+              />
+            </div>
+          )}
+
+          {/* LETTERINGS */}
+          {(scene.lettering != null) && (
+            <div className="space-y-4 pt-6 border-t border-zinc-100 dark:border-zinc-800">
+              <Label className="text-[10px] uppercase font-black text-amber-600 tracking-widest flex items-center gap-2"><Type size={16} /> Letterings</Label>
+              <div className="grid gap-3">
+                {scene.lettering.split('\n').map((letLine, lIdx) => (
+                  <div key={lIdx} className="bg-amber-50/30 dark:bg-amber-950/5 p-4 rounded border border-amber-100 dark:border-amber-900/20 group/let flex items-center gap-4 transition-all hover:shadow-md">
+                    <span className="text-[9px] font-black text-amber-600 bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 rounded shrink-0">let{lIdx+1}</span>
+                    <div className="flex-1">
+                      {isEditingMode ? (
+                        <Input value={letLine} onChange={(e) => { const letters = scene.lettering?.split('\n') || []; letters[lIdx] = e.target.value; updateScene(index, { lettering: letters.join('\n') }); }} className="text-[12px] font-bold border-none bg-transparent p-0 focus-visible:ring-0 shadow-none h-auto" placeholder="Texto do lettering..." />
+                      ) : (
+                        <p className="text-[13px] font-bold text-amber-800 dark:text-amber-400">{letLine}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2 opacity-0 group-hover/let:opacity-100 transition-opacity">
+                       <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600" onClick={() => copyToClipboard(letLine, `Let ${lIdx+1}`)}><Copy size={12} /></Button>
+                       {isEditingMode && (
+                         <><Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600" onClick={() => insertTagAtCursor(index, `let${lIdx+1}`)}><Pin size={12} /></Button><Button variant="ghost" size="icon" className="h-6 w-6 text-red-500" onClick={() => removeBlockFromScene(index, 'lettering', lIdx)}><Trash2 size={12} /></Button></>
+                       )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* PRONÚNCIA */}
+          {(scene.pronunciation != null) && (
+            <div className="space-y-4 pt-6 border-t border-zinc-100 dark:border-zinc-800">
+              <Label className="text-[10px] uppercase font-black text-cyan-600 tracking-widest flex items-center gap-2"><Ear size={16} /> Pronúncia</Label>
+              <div className="grid gap-3">
+                {scene.pronunciation.split('\n').map((pronLine, pIdx) => (
+                  <div key={pIdx} className="bg-cyan-50/30 dark:bg-cyan-950/5 p-4 rounded border border-cyan-100 dark:border-cyan-900/20 group/pron flex items-center gap-4 transition-all hover:shadow-md">
+                    <span className="text-[9px] font-black text-cyan-600 bg-cyan-100 dark:bg-cyan-900/50 px-2 py-0.5 rounded shrink-0">pron{pIdx+1}</span>
+                    <div className="flex-1">
+                      {isEditingMode ? (
+                        <Input value={pronLine} onChange={(e) => { const prons = scene.pronunciation?.split('\n') || []; prons[pIdx] = e.target.value; updateScene(index, { pronunciation: prons.join('\n') }); }} className="text-[12px] font-bold border-none bg-transparent p-0 focus-visible:ring-0 shadow-none h-auto" placeholder="Como escrever / falar..." />
+                      ) : (
+                        <p className="text-[13px] font-bold text-cyan-800 dark:text-cyan-400">{pronLine}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2 opacity-0 group-hover/pron:opacity-100 transition-opacity">
+                       <Button variant="ghost" size="icon" className="h-6 w-6 text-cyan-600" onClick={() => copyToClipboard(pronLine, `Pron ${pIdx+1}`)}><Copy size={12} /></Button>
+                       {isEditingMode && (
+                         <><Button variant="ghost" size="icon" className="h-6 w-6 text-cyan-600" onClick={() => insertTagAtCursor(index, `pron${pIdx+1}`)}><Pin size={12} /></Button><Button variant="ghost" size="icon" className="h-6 w-6 text-red-500" onClick={() => removeBlockFromScene(index, 'pronunciation', pIdx)}><Trash2 size={12} /></Button></>
+                       )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* IMAGENS */}
+          {(scene.imageUrl != null) && (
+            <div className="space-y-4 pt-6 border-t border-zinc-100 dark:border-zinc-800">
+               <Label className="text-[10px] uppercase font-black text-purple-500 tracking-widest flex items-center gap-2"><ImageIcon size={16} /> Imagens</Label>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-zinc-100/30 dark:bg-zinc-950/20 p-4 rounded border border-zinc-200 dark:border-zinc-800 group/img space-y-3">
+                     <div className="flex justify-between items-center">
+                       <span className="text-[9px] font-black text-purple-500 bg-purple-50/50 px-2 py-0.5 rounded">img1</span>
+                       {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover/img:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'imageUrl')}><Trash2 size={12} /></Button>}
+                     </div>
+                     {isEditingMode && <Input value={scene.imageUrl || ""} onChange={(e) => updateScene(index, { imageUrl: e.target.value })} className="h-8 text-[11px] bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800" placeholder="URL da imagem..." />}
+                     <div className="flex items-center gap-3">
+                        {isEditingMode && <Button onClick={() => insertTagAtCursor(index, `img1`)} variant="outline" size="sm" className="h-7 text-[10px] font-black flex-1 border-2">MARCAR</Button>}
+                        {isValidImageUrl(scene.imageUrl) && (
+                          <ImageThumb src={scene.imageUrl} alt="Cena" />
+                        )}
+                     </div>
+                  </div>
+                  {scene.images?.map((extraImg, eiIdx) => (
+                    <div key={eiIdx} className="bg-zinc-100/30 dark:bg-zinc-950/20 p-4 rounded border border-zinc-200 dark:border-zinc-800 group/img space-y-3">
+                       <div className="flex justify-between items-center"><span className="text-[9px] font-black text-purple-500 bg-purple-50/50 px-2 py-0.5 rounded">img{eiIdx+2}</span>{isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover/img:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'imageUrl', eiIdx)}><Trash2 size={12} /></Button>}</div>
+                       {isEditingMode && <Input value={extraImg} onChange={(e) => { const extra = [...(scene.images || [])]; extra[eiIdx] = e.target.value; updateScene(index, { images: extra }); }} className="h-8 text-[11px] bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800" placeholder="URL da imagem..." />}
+                       <div className="flex items-center gap-3">
+                         {isEditingMode && <Button onClick={() => insertTagAtCursor(index, `img${eiIdx+2}`)} variant="outline" size="sm" className="h-7 text-[10px] font-black flex-1 border-2">MARCAR</Button>}
+                         {isValidImageUrl(extraImg) && (
+                           <ImageThumb src={extraImg} alt="Cena Extra" />
+                         )}
+                       </div>
+                    </div>
+                  ))}
+               </div>
+            </div>
+          )}
+
+          <div className="pt-6 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
+            <Label className="text-[10px] uppercase font-black text-zinc-500 tracking-widest flex items-center gap-2">Notas do Editor</Label>
+            {isEditingMode ? (
+              <Textarea value={scene.observation || ""} onChange={(e) => updateScene(index, { observation: e.target.value })} placeholder="Adicione observações..." lang="pt-BR" spellCheck="true" className="text-[12px] bg-zinc-50/50 dark:bg-zinc-950/30 border-none italic min-h-[60px] resize-none focus-visible:ring-0" />
+            ) : (
+              <p className="text-[12px] italic text-zinc-600 dark:text-zinc-400 p-3 bg-zinc-100/50 dark:bg-zinc-800/30 rounded">{scene.observation || "Nenhuma observação."}</p>
+            )}
+
+            {/* Scene-linked Comments */}
+            {(() => {
+              const sceneMarkers = Array.from(scene.spokenText?.matchAll(/\[([1-5])\]/g) || []).map(m => parseInt(m[1]));
+              const uniqueMarkers = Array.from(new Set(sceneMarkers));
+              const relevantComments = comments.filter(c => c.marker !== undefined && uniqueMarkers.includes(c.marker));
+              
+              if (relevantComments.length === 0) return null;
+
+              return (
+                <div className="mt-4 space-y-2">
+                  <p className="text-[9px] font-black uppercase text-amber-500 tracking-widest flex items-center gap-2">
+                    <MessageSquare size={10} /> Notas da Equipe
+                  </p>
+                  <div className="space-y-1.5">
+                    {relevantComments.sort((a, b) => a.marker! - b.marker!).map(comment => (
+                      <div key={comment.id} className="bg-amber-50/50 dark:bg-amber-900/10 border border-amber-100/50 dark:border-amber-900/30 rounded p-2 text-[11px]">
+                        <div className="flex justify-between items-start mb-1">
+                          <span className="font-black text-[9px] text-amber-600 bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 rounded">
+                            MARCADOR [{comment.marker}]
+                          </span>
+                          <span className="text-[9px] text-zinc-400 font-bold">{comment.userName}</span>
+                        </div>
+                        <p className="text-zinc-700 dark:text-zinc-300 leading-relaxed italic">&ldquo;{comment.text}&rdquo;</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Adicionar Cena entre cenas */}
+      {isEditingMode && (
+        <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 z-10 opacity-0 group-hover/scene:opacity-100 transition-all">
+          <Button onClick={() => addEmptyScene(index)} className="h-10 w-10 rounded bg-blue-600 hover:bg-blue-700 text-white shadow-xl p-0 hover:scale-110"><Plus size={20} /></Button>
+        </div>
+      )}
+    </div>
+  );
+});
 
 function EditorContent({ id }: { id: string }) {
   const searchParams = useSearchParams();
@@ -423,9 +866,9 @@ function EditorContent({ id }: { id: string }) {
 
   const [commentCounts, setCommentCounts] = useState<Record<number, number>>({});
   const [comments, setComments] = useState<Comment[]>([]);
-  const [focusedField, setFocusedField] = useState<Record<string, 'spokenText' | 'opening' | 'closing'>>({});
   const textareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const contentEditableRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const focusedFieldRef = useRef<Record<string, SceneFieldName>>({});
 
   // Timer de edição ativo — mede tempo real gasto editando o roteiro
   const editingStartRef = useRef<number | null>(null);
@@ -492,13 +935,15 @@ function EditorContent({ id }: { id: string }) {
   const renumberScenes = useCallback((sceneList: Scene[]) => {
     let count = 1;
     return sceneList.map((scene) => {
+      let num: string;
       if (scene.opening && !scene.spokenText) {
-        return { ...scene, sceneNumber: "Abertura" };
+        num = "Abertura";
+      } else if (scene.closing && !scene.spokenText) {
+        num = "Encerramento";
+      } else {
+        num = String(count++).padStart(2, '0');
       }
-      if (scene.closing && !scene.spokenText) {
-        return { ...scene, sceneNumber: "Encerramento" };
-      }
-      const num = String(count++).padStart(2, '0');
+      if (scene.sceneNumber === num) return scene;
       return { ...scene, sceneNumber: num };
     });
   }, []);
@@ -511,10 +956,10 @@ function EditorContent({ id }: { id: string }) {
     }
   }, [renumberScenes]);
 
-  const showToast = (message: string) => {
+  const showToast = useCallback((message: string) => {
     setToast({ message, visible: true });
     setTimeout(() => setToast({ message: "", visible: false }), 3000);
-  };
+  }, []);
 
   useEffect(() => {
     if (user?.workspaceId) {
@@ -526,6 +971,20 @@ function EditorContent({ id }: { id: string }) {
   searchParamsRef.current = searchParams;
   const userRef = useRef(user);
   userRef.current = user;
+  const scenesRef = useRef(scenes);
+  scenesRef.current = scenes;
+
+  const handleFocusChange = useCallback((sceneId: string, fieldName: SceneFieldName) => {
+    focusedFieldRef.current[sceneId] = fieldName;
+  }, []);
+
+  const registerTextarea = useCallback((key: string, el: HTMLTextAreaElement | null) => {
+    textareaRefs.current[key] = el;
+  }, []);
+
+  const registerContentEditable = useCallback((key: string, el: HTMLDivElement | null) => {
+    contentEditableRefs.current[key] = el;
+  }, []);
 
   useEffect(() => {
     if (isNew) {
@@ -570,6 +1029,8 @@ function EditorContent({ id }: { id: string }) {
     let cancelled = false;
 
     async function loadScript() {
+      const loadStartedAt = performance.now();
+      debugInfo("editor.load", "Iniciando carregamento do roteiro", { scriptId: id });
       try {
         const scriptRef = doc(db, "scripts", id);
         const vQ = query(
@@ -627,10 +1088,23 @@ function EditorContent({ id }: { id: string }) {
             }
             const finalScenes = loadedScenes.map((s: Scene) => ({ ...s, observation: s.observation || "" }));
             setScenesWithRenumbering(finalScenes);
+            debugPerf("editor.load", "Roteiro carregado com sucesso", loadStartedAt, {
+              scriptId: id,
+              sceneCount: finalScenes.length,
+              hasVersion: true,
+            });
+          } else {
+            debugPerf("editor.load", "Roteiro carregado sem versão", loadStartedAt, { scriptId: id });
           }
+        } else {
+          debugWarn("editor.load", "Documento do roteiro não encontrado", { scriptId: id });
         }
       } catch (e) {
         if (!cancelled) {
+          debugError("editor.load", "Falha ao carregar roteiro", e, {
+            scriptId: id,
+            permissionDenied: isPermissionError(e),
+          });
           setLoadingError(e instanceof Error ? e.message : "Erro ao carregar roteiro.");
         }
       } finally {
@@ -675,8 +1149,8 @@ function EditorContent({ id }: { id: string }) {
           }
         });
         setExistingFolders(Array.from(folders).sort());
-      } catch {
-        // Silently fail - folder list is non-critical
+      } catch (e) {
+        debugWarn("editor.folders", "Falha ao carregar lista de pastas", { project }, e);
       }
     }
 
@@ -696,30 +1170,36 @@ function EditorContent({ id }: { id: string }) {
 
 
   const generateRawTextFromBlocks = (currentScenes: Scene[]) => {
-    let newText = "";
+    const parts: string[] = [];
     currentScenes.forEach((scene) => {
-      newText += `Cena ${scene.sceneNumber}\n`;
-      if (scene.time) newText += `Tempo: ${scene.time}\n`;
-      if (scene.imageUrl) newText += `[img1]: ${scene.imageUrl}\n`;
+      parts.push(`Cena ${scene.sceneNumber}`);
+      if (scene.time) parts.push(`Tempo: ${scene.time}`);
+      if (scene.imageUrl) parts.push(`[img1]: ${scene.imageUrl}`);
       if (scene.images) {
         scene.images.forEach((img, idx) => {
-          if (img) newText += `[img${idx + 2}]: ${img}\n`;
+          if (img) parts.push(`[img${idx + 2}]: ${img}`);
         });
       }
       if (scene.lettering != null) {
         const letters = scene.lettering.split('\n');
         letters.forEach((l, idx) => {
-          if (l.trim()) newText += `[let${idx + 1}]: ${l.trim()}\n`;
+          if (l.trim()) parts.push(`[let${idx + 1}]: ${l.trim()}`);
         });
       }
-      if (scene.opening) newText += `[abe]: ${scene.opening}\n`;
-      if (scene.closing) newText += `[enc]: ${scene.closing}\n`;
-      if (scene.sourceUrl) newText += `[url1]: ${scene.sourceUrl}\n`;
-      if (scene.observation) newText += `OBS: ${scene.observation}\n`;
-      if (scene.spokenText) newText += `Locução: ${scene.spokenText}\n`;
-      newText += "\n";
+      if (scene.pronunciation != null) {
+        const prons = scene.pronunciation.split('\n');
+        prons.forEach((l, idx) => {
+          if (l.trim()) parts.push(`[pron${idx + 1}]: ${l.trim()}`);
+        });
+      }
+      if (scene.opening) parts.push(`[abe]: ${scene.opening}`);
+      if (scene.closing) parts.push(`[enc]: ${scene.closing}`);
+      if (scene.sourceUrl) parts.push(`[url1]: ${scene.sourceUrl}`);
+      if (scene.observation) parts.push(`OBS: ${scene.observation}`);
+      if (scene.spokenText) parts.push(`Locução: ${scene.spokenText}`);
+      parts.push("");
     });
-    return newText.trim();
+    return parts.join("\n").trim();
   };
 
   const handleSaveClick = () => {
@@ -728,8 +1208,10 @@ function EditorContent({ id }: { id: string }) {
   };
 
   const handleSave = async (saveStatus: ScriptStatus) => {
+    const saveStartedAt = performance.now();
     setShowSaveModal(false);
     setIsSaving(true);
+    debugInfo("editor.save", "Iniciando salvamento", { status: saveStatus, sceneCount: scenes.length });
     const safetyTimer = setTimeout(() => {
       setIsSaving(false);
       sonnerToast.error("O salvamento demorou demais. Verifique sua conexão.");
@@ -831,6 +1313,11 @@ function EditorContent({ id }: { id: string }) {
       setIsSaving(false);
       setShowSaveModal(false);
       clearTimeout(safetyTimer);
+      debugPerf("editor.save", "Roteiro salvo com sucesso", saveStartedAt, {
+        status: saveStatus,
+        scriptId: currentScriptId,
+        sceneCount: scenes.length,
+      });
       // Resetar timer de edição após salvar
       accumulatedEditingRef.current = 0;
       editingStartRef.current = Date.now();
@@ -842,6 +1329,10 @@ function EditorContent({ id }: { id: string }) {
       const msg = err instanceof Error && err.message.includes("quota")
         ? "Cota do Firestore excedida. Aguarde alguns minutos e tente novamente."
         : "Falha ao salvar roteiro.";
+      debugError("editor.save", "Falha ao salvar roteiro", err, {
+        status: saveStatus,
+        permissionDenied: isPermissionError(err),
+      });
       sonnerToast.error(msg);
     } finally {
       clearTimeout(safetyTimer);
@@ -849,81 +1340,124 @@ function EditorContent({ id }: { id: string }) {
     }
   };
 
-  const updateScene = (index: number, data: Partial<Scene>) => {
-    const ns = [...scenes];
-    ns[index] = { ...ns[index], ...data };
-    setScenesWithRenumbering(ns);
-  };
+  const updateScene = useCallback((index: number, data: Partial<Scene>) => {
+    setScenes(prev => {
+      const ns = [...prev];
+      ns[index] = { ...ns[index], ...data };
+      return renumberScenes(ns);
+    });
+  }, [renumberScenes]);
 
-  const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
+  const copyToClipboard = useCallback((text: string, label: string) => {
+    navigator.clipboard.writeText(text).catch(() => {});
     showToast(`${label} copiado!`);
-  };
+  }, [showToast]);
 
-  const addBlockToScene = (index: number, type: 'spokenText' | 'imageUrl' | 'lettering' | 'observation' | 'opening' | 'closing') => {
-    const ns = [...scenes];
-    const scene = ns[index];
-    
-    if (type === 'spokenText') {
-      scene.spokenText = "";
-      scene.opening = null;
-      scene.closing = null;
-    }
-    if (type === 'opening') {
-      scene.opening = "";
-      scene.spokenText = null;
-      scene.closing = null;
-    }
-    if (type === 'closing') {
-      scene.closing = "";
-      scene.spokenText = null;
-      scene.opening = null;
-    }
-    
-    if (type === 'imageUrl') {
-       if (!scene.imageUrl) scene.imageUrl = "";
-       else scene.images = [...(scene.images || []), ""];
-    }
-    if (type === 'lettering') {
-       if (scene.lettering == null) scene.lettering = "";
-       else scene.lettering += "\n";
-    }
-    if (type === 'observation') scene.observation = "";
-    setScenesWithRenumbering(ns);
-  };
+  const addBlockToScene = useCallback((index: number, type: SceneBlockType) => {
+    setScenes(prev => {
+      const ns = [...prev];
+      if (!ns[index]) return prev;
+      const scene = { ...ns[index] };
+      ns[index] = scene;
 
-  const removeBlockFromScene = (index: number, type: 'spokenText' | 'imageUrl' | 'lettering' | 'observation' | 'opening' | 'closing', subIndex?: number) => {
-    const ns = [...scenes];
-    const scene = ns[index];
-    if (type === 'spokenText') scene.spokenText = null;
-    if (type === 'imageUrl') {
-      if (subIndex === undefined) {
-        if (scene.images && scene.images.length > 0) { scene.imageUrl = scene.images[0]; scene.images = scene.images.slice(1); }
-        else { scene.imageUrl = null; }
-      } else { scene.images = scene.images?.filter((_, i) => i !== subIndex); }
-    }
-    if (type === 'lettering') {
-      const letters = scene.lettering?.split('\n') || [];
-      if (subIndex !== undefined) {
-        const filtered = letters.filter((_, i) => i !== subIndex);
-        scene.lettering = filtered.length > 0 ? filtered.join('\n') : null;
-      } else { scene.lettering = null; }
-    }
-    if (type === 'opening') scene.opening = null;
-    if (type === 'closing') scene.closing = null;
-    if (type === 'observation') scene.observation = null;
-    setScenesWithRenumbering(ns);
-  };
+      if (type === 'spokenText') {
+        let spokenText = "";
+        if (scene.lettering) {
+          const letters = scene.lettering.split('\n');
+          letters.forEach((_, i) => { spokenText += `[let${i + 1}] `; });
+        }
+        if (scene.pronunciation) {
+          const prons = scene.pronunciation.split('\n');
+          prons.forEach((_, i) => { spokenText += `[pron${i + 1}] `; });
+        }
+        if (scene.imageUrl) {
+          spokenText += `[img1] `;
+          if (scene.images && scene.images.length > 0) {
+            scene.images.forEach((_, i) => { spokenText += `[img${i + 2}] `; });
+          }
+        }
+        scene.spokenText = spokenText.trim();
+        scene.opening = null;
+        scene.closing = null;
+      }
+      if (type === 'opening') {
+        scene.opening = "";
+        scene.spokenText = null;
+        scene.closing = null;
+      }
+      if (type === 'closing') {
+        scene.closing = "";
+        scene.spokenText = null;
+        scene.opening = null;
+      }
 
-  const insertTagAtCursor = (sceneIndex: number, tag: string) => {
-    const scene = scenes[sceneIndex];
-    const field = focusedField[scene.id] || 'spokenText';
+      if (type === 'imageUrl') {
+        if (!scene.imageUrl) scene.imageUrl = "";
+        else scene.images = [...(scene.images || []), ""];
+      }
+      if (type === 'lettering') {
+        if (scene.lettering == null) scene.lettering = "";
+        else scene.lettering += "\n";
+      }
+      if (type === 'pronunciation') {
+        if (scene.pronunciation == null) scene.pronunciation = "";
+        else scene.pronunciation += "\n";
+      }
+      if (type === 'observation') scene.observation = "";
+      return renumberScenes(ns);
+    });
+  }, [renumberScenes]);
+
+  const removeBlockFromScene = useCallback((index: number, type: SceneBlockType, subIndex?: number) => {
+    setScenes(prev => {
+      const ns = [...prev];
+      if (!ns[index]) return prev;
+      const scene = { ...ns[index] };
+      ns[index] = scene;
+      if (type === 'spokenText') scene.spokenText = null;
+      if (type === 'imageUrl') {
+        if (subIndex === undefined) {
+          if (scene.images && scene.images.length > 0) { scene.imageUrl = scene.images[0]; scene.images = scene.images.slice(1); }
+          else { scene.imageUrl = null; }
+        } else { scene.images = scene.images?.filter((_, i) => i !== subIndex); }
+      }
+      if (type === 'lettering') {
+        const letters = scene.lettering?.split('\n') || [];
+        if (subIndex !== undefined) {
+          const filtered = letters.filter((_, i) => i !== subIndex);
+          scene.lettering = filtered.length > 0 ? filtered.join('\n') : null;
+        } else { scene.lettering = null; }
+      }
+      if (type === 'pronunciation') {
+        const prons = scene.pronunciation?.split('\n') || [];
+        if (subIndex !== undefined) {
+          const filtered = prons.filter((_, i) => i !== subIndex);
+          scene.pronunciation = filtered.length > 0 ? filtered.join('\n') : null;
+        } else { scene.pronunciation = null; }
+      }
+      if (type === 'opening') scene.opening = null;
+      if (type === 'closing') scene.closing = null;
+      if (type === 'observation') scene.observation = null;
+      return renumberScenes(ns);
+    });
+  }, [renumberScenes]);
+
+  const insertTagAtCursor = useCallback((sceneIndex: number, tag: string) => {
+    const scene = scenesRef.current[sceneIndex];
+    if (!scene) return;
+    const field = focusedFieldRef.current[scene.id] || 'spokenText';
     const refId = `${scene.id}-${field}`;
     const ce = contentEditableRefs.current[refId];
-    if (ce && document.activeElement === ce) {
+    if (ce) {
+      // Focus the element first to ensure it's active
+      ce.focus();
+      // Use execCommand for contentEditable
       document.execCommand('insertText', false, `[${tag}]`);
-      const currentText = (scene[field] as string) || "";
-      updateScene(sceneIndex, { [field]: currentText + `[${tag}]` });
+      // Get updated content
+      setTimeout(() => {
+        const newText = ce.innerHTML;
+        updateScene(sceneIndex, { [field]: newText });
+      }, 0);
     } else {
       const textarea = textareaRefs.current[refId];
       if (!textarea) return;
@@ -932,20 +1466,26 @@ function EditorContent({ id }: { id: string }) {
       const currentText = (scene[field] as string) || "";
       const newText = currentText.substring(0, start) + `[${tag}]` + currentText.substring(end);
       updateScene(sceneIndex, { [field]: newText });
-      setTimeout(() => { 
-        textarea.focus(); 
-        const newPos = start + tag.length + 2; 
-        textarea.setSelectionRange(newPos, newPos); 
+      setTimeout(() => {
+        textarea.focus();
+        const newPos = start + tag.length + 2;
+        textarea.setSelectionRange(newPos, newPos);
       }, 0);
     }
-  };
+  }, [updateScene]);
 
-  const handleImport = () => {
-    if (!importText.trim() || isImporting) return;
+  const handleImport = (text: string) => {
+    if (!text.trim() || isImporting) return;
     setIsImporting(true);
+    debugInfo("editor.import", "Iniciando processamento do texto bruto", { chars: text.length });
 
     setTimeout(() => {
-      const importedScenes = parseScript(importText).map(s => ({ ...s, observation: s.observation || "" }));
+      const parseStartedAt = performance.now();
+      const importedScenes = parseScript(text).map(s => ({ ...s, observation: s.observation || "" }));
+      debugPerf("editor.import", "Texto processado em cenas", parseStartedAt, {
+        chars: text.length,
+        sceneCount: importedScenes.length,
+      });
 
       if (scenes.length > 0) {
         setImportedScenesPending(importedScenes);
@@ -954,28 +1494,28 @@ function EditorContent({ id }: { id: string }) {
       } else {
         setScenesWithRenumbering(importedScenes);
         setShowImportModal(false);
-        setImportText("");
         setIsImporting(false);
         showToast("Roteiro processado!");
       }
     }, 50);
   };
 
-  const addEmptyScene = (index?: number) => {
+  const addEmptyScene = useCallback((index?: number) => {
     const newScene: Scene = { id: crypto.randomUUID(), sceneNumber: "", spokenText: "", observation: "" };
-    if (index !== undefined) { 
-      const ns = [...scenes]; 
-      ns.splice(index + 1, 0, newScene); 
-      setScenesWithRenumbering(ns); 
-    }
-    else { 
-      setScenesWithRenumbering([...scenes, newScene]); 
-    }
-  };
+    setScenes(prev => {
+      if (index !== undefined) {
+        const ns = [...prev];
+        ns.splice(index + 1, 0, newScene);
+        return renumberScenes(ns);
+      }
+      return renumberScenes([...prev, newScene]);
+    });
+  }, [renumberScenes]);
 
-  const splitScene = (index: number) => {
-    const scene = scenes[index];
-    const ce = contentEditableRefs.current[scene.id];
+  const splitScene = useCallback((index: number) => {
+    const scene = scenesRef.current[index];
+    if (!scene) return;
+    const ce = contentEditableRefs.current[`${scene.id}-spokenText`];
     let cursor = 0;
     if (ce) {
       const sel = window.getSelection();
@@ -987,16 +1527,21 @@ function EditorContent({ id }: { id: string }) {
         cursor = preRange.toString().length;
       }
     } else {
-      const textarea = textareaRefs.current[scene.id];
-      if (!textarea) return;
-      cursor = textarea.selectionStart;
+      const textarea = textareaRefs.current[`${scene.id}-spokenText`];
+      if (textarea) cursor = textarea.selectionStart;
     }
     const fullText = stripHtml(scene.spokenText || "");
-    const ns = [...scenes];
-    ns[index] = { ...scene, spokenText: fullText.substring(0, cursor) };
-    ns.splice(index + 1, 0, { id: crypto.randomUUID(), sceneNumber: "", spokenText: fullText.substring(cursor), lettering: null, imageUrl: null, observation: "" });
-    setScenesWithRenumbering(ns);
-  };
+    setScenes(prev => {
+      const ns = [...prev];
+      ns[index] = { ...ns[index], spokenText: fullText.substring(0, cursor) };
+      ns.splice(index + 1, 0, { id: crypto.randomUUID(), sceneNumber: "", spokenText: fullText.substring(cursor), lettering: null, imageUrl: null, observation: "" });
+      return renumberScenes(ns);
+    });
+  }, [renumberScenes]);
+
+  const deleteScene = useCallback((index: number) => {
+    setScenes(prev => renumberScenes(prev.filter((_, i) => i !== index)));
+  }, [renumberScenes]);
 
   const handleSpellCheckApply = useCallback((sceneIndex: number, field: keyof Scene, word: string, replacement: string) => {
     setScenesWithRenumbering(prev => {
@@ -1343,238 +1888,27 @@ function EditorContent({ id }: { id: string }) {
           </div>
         ) : (
           scenes.map((scene, index) => (
-            <div key={scene.id} className="relative group/scene">
-              <Card className="transition-all duration-500 border-zinc-200 dark:border-zinc-800 shadow-2xl rounded overflow-hidden">
-                <div className="bg-zinc-50/50 dark:bg-zinc-800/20 px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 flex justify-between items-center">
-                  <div className="flex items-center gap-4">
-                    <span className="bg-zinc-900 dark:bg-blue-600 text-white text-[11px] px-4 py-1.5 rounded font-black tracking-tighter shadow-md">
-                      {isNaN(Number(scene.sceneNumber)) ? scene.sceneNumber.toUpperCase() : `CENA ${scene.sceneNumber}`}
-                    </span>
-                    {isEditingMode && <Input placeholder="Tempo" value={scene.time || ""} onChange={(e) => updateScene(index, { time: e.target.value })} className="h-7 w-20 text-[10px] border-zinc-300 py-0" />}
-
-                    {isEditingMode && (
-                      <div data-tour="editor-toolbar" className="flex items-center gap-1 border-l pl-4 ml-2 border-zinc-200 dark:border-zinc-800">
-                        <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'spokenText')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-blue-500 transition-colors">
-                           <MessageSquare size={14} className="text-blue-500" /> Loc
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'lettering')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-amber-500 transition-colors">
-                           <Type size={14} className="text-amber-500" /> Let
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'imageUrl')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-purple-500 transition-colors">
-                           <ImageIcon size={14} className="text-purple-500" /> Img
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'opening')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-emerald-500 transition-colors">
-                           <Pin size={14} className="text-emerald-500" /> Abe
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => addBlockToScene(index, 'closing')} className="h-8 text-[9px] font-black uppercase tracking-tighter gap-1.5 hover:text-rose-500 transition-colors">
-                           <Pin size={14} className="text-rose-500" /> Enc
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                  {isEditingMode && (
-                    <div className="flex items-center gap-1 opacity-0 group-hover/scene:opacity-100 transition-opacity">
-                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded" onClick={() => splitScene(index)}><Scissors size={14} /></Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded text-red-500" onClick={() => setScenesWithRenumbering(scenes.filter((_, i) => i !== index))}><Trash2 size={14} /></Button>
-                    </div>
-                  )}
-                </div>
-                <CardContent className="p-6 md:p-8 space-y-8">
-                  {scene.spokenText != null && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                         <Label className="text-[10px] uppercase font-black text-blue-500 tracking-widest flex items-center gap-2"><MessageSquare size={16} /> Locução</Label>
-                         <div className="flex gap-2">
-                            <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100" onClick={() => copyToClipboard(scene.spokenText || "", "Locução")}><Copy size={12} /></Button>
-                            {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'spokenText')}><Trash2 size={12} /></Button>}
-                         </div>
-                      </div>
-                      <HighlightedSpokenText 
-                        text={scene.spokenText || ""} 
-                        onChange={(value) => updateScene(index, { spokenText: value })} 
-                        textareaRef={(el) => { if (el) { textareaRefs.current[`${scene.id}-spokenText`] = el; el.onfocus = () => setFocusedField(prev => ({...prev, [scene.id]: 'spokenText'})); } }} 
-                        contentEditableRef={(el) => { contentEditableRefs.current[scene.id] = el; }}
-                        disabled={!canEdit} 
-                        isEditing={isEditingMode} 
-                        commentCounts={commentCounts}
-                        onSpellCheckApply={(word, replacement) => handleSpellCheckApply(index, 'spokenText', word, replacement)}
-                      />
-                    </div>
-                  )}
-
-                  {/* ABERTURA */}
-                  {(scene.opening != null) && (
-                    <div className="space-y-3  dark:border-zinc-800">
-                      <div className="flex items-center justify-between">
-                         <Label className="text-[10px] uppercase font-black text-emerald-600 tracking-widest flex items-center gap-2"><Pin size={16} /> Abertura</Label>
-                         <div className="flex gap-2">
-                            <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100" onClick={() => copyToClipboard(scene.opening || "", "Abertura")}><Copy size={12} /></Button>
-                            {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'opening')}><Trash2 size={12} /></Button>}
-                         </div>
-                      </div>
-                      <HighlightedSpokenText 
-                        text={scene.opening || ""} 
-                        onChange={(value) => updateScene(index, { opening: value })} 
-                        textareaRef={(el) => { if (el) { textareaRefs.current[`${scene.id}-opening`] = el; el.onfocus = () => setFocusedField(prev => ({...prev, [scene.id]: 'opening'})); } }} 
-                        contentEditableRef={(el) => { contentEditableRefs.current[`${scene.id}-opening`] = el; }}
-                        disabled={!canEdit} 
-                        isEditing={isEditingMode} 
-                        commentCounts={commentCounts}
-                        placeholder="Texto da abertura..."
-                        onSpellCheckApply={(word, replacement) => handleSpellCheckApply(index, 'opening', word, replacement)}
-                      />
-                    </div>
-                  )}
-
-                  {/* ENCERRAMENTO */}
-                  {(scene.closing != null) && (
-                    <div className="space-y-3 dark:border-zinc-800">
-                      <div className="flex items-center justify-between">
-                         <Label className="text-[10px] uppercase font-black text-rose-600 tracking-widest flex items-center gap-2"><Pin size={16} /> Encerramento</Label>
-                         <div className="flex gap-2">
-                            <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100" onClick={() => copyToClipboard(scene.closing || "", "Encerramento")}><Copy size={12} /></Button>
-                            {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-40 hover:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'closing')}><Trash2 size={12} /></Button>}
-                         </div>
-                      </div>
-                      <HighlightedSpokenText 
-                        text={scene.closing || ""} 
-                        onChange={(value) => updateScene(index, { closing: value })} 
-                        textareaRef={(el) => { if (el) { textareaRefs.current[`${scene.id}-closing`] = el; el.onfocus = () => setFocusedField(prev => ({...prev, [scene.id]: 'closing'})); } }} 
-                        contentEditableRef={(el) => { contentEditableRefs.current[`${scene.id}-closing`] = el; }}
-                        disabled={!canEdit} 
-                        isEditing={isEditingMode} 
-                        commentCounts={commentCounts}
-                        placeholder="Texto do encerramento..."
-                        onSpellCheckApply={(word, replacement) => handleSpellCheckApply(index, 'closing', word, replacement)}
-                      />
-                    </div>
-                  )}
-
-                  {/* LETTERINGS */}
-                  {(scene.lettering != null) && (
-                    <div className="space-y-4 pt-6 border-t border-zinc-100 dark:border-zinc-800">
-                      <Label className="text-[10px] uppercase font-black text-amber-600 tracking-widest flex items-center gap-2"><Type size={16} /> Letterings</Label>
-                      <div className="grid gap-3">
-                        {scene.lettering.split('\n').map((letLine, lIdx) => (
-                          <div key={lIdx} className="bg-amber-50/30 dark:bg-amber-950/5 p-4 rounded border border-amber-100 dark:border-amber-900/20 group/let flex items-center gap-4 transition-all hover:shadow-md">
-                            <span className="text-[9px] font-black text-amber-600 bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 rounded shrink-0">let{lIdx+1}</span>
-                            <div className="flex-1">
-                              {isEditingMode ? (
-                                <Input value={letLine} onChange={(e) => { const letters = scene.lettering?.split('\n') || []; letters[lIdx] = e.target.value; updateScene(index, { lettering: letters.join('\n') }); }} className="text-[12px] font-bold border-none bg-transparent p-0 focus-visible:ring-0 shadow-none h-auto" placeholder="Texto do lettering..." />
-                              ) : (
-                                <p className="text-[13px] font-bold text-amber-800 dark:text-amber-400">{letLine}</p>
-                              )}
-                            </div>
-                            <div className="flex gap-2 opacity-0 group-hover/let:opacity-100 transition-opacity">
-                               <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600" onClick={() => copyToClipboard(letLine, `Let ${lIdx+1}`)}><Copy size={12} /></Button>
-                               {isEditingMode && (
-                                 <><Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600" onClick={() => insertTagAtCursor(index, `let${lIdx+1}`)}><Pin size={12} /></Button><Button variant="ghost" size="icon" className="h-6 w-6 text-red-500" onClick={() => removeBlockFromScene(index, 'lettering', lIdx)}><Trash2 size={12} /></Button></>
-                               )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* IMAGENS */}
-                  {(scene.imageUrl != null) && (
-                    <div className="space-y-4 pt-6 border-t border-zinc-100 dark:border-zinc-800">
-                       <Label className="text-[10px] uppercase font-black text-purple-500 tracking-widest flex items-center gap-2"><ImageIcon size={16} /> Imagens</Label>
-                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="bg-zinc-100/30 dark:bg-zinc-950/20 p-4 rounded border border-zinc-200 dark:border-zinc-800 group/img space-y-3">
-                             <div className="flex justify-between items-center">
-                               <span className="text-[9px] font-black text-purple-500 bg-purple-50/50 px-2 py-0.5 rounded">img1</span>
-                               {isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover/img:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'imageUrl')}><Trash2 size={12} /></Button>}
-                             </div>
-                             {isEditingMode && <Input value={scene.imageUrl || ""} onChange={(e) => updateScene(index, { imageUrl: e.target.value })} className="h-8 text-[11px] bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800" placeholder="URL da imagem..." />}
-                             <div className="flex items-center gap-3">
-                                {isEditingMode && <Button onClick={() => insertTagAtCursor(index, `img1`)} variant="outline" size="sm" className="h-7 text-[10px] font-black flex-1 border-2">MARCAR</Button>}
-                                {scene.imageUrl && (
-                                  <div className="h-16 w-16 relative rounded border overflow-hidden bg-black shrink-0 shadow-lg">
-                                    <Image 
-                                      src={scene.imageUrl} 
-                                      fill 
-                                      className="object-contain" 
-                                      alt="Cena" 
-                                      unoptimized={scene.imageUrl.startsWith('http')}
-                                    />
-                                  </div>
-                                )}
-                             </div>
-                          </div>
-                          {scene.images?.map((extraImg, eiIdx) => (
-                            <div key={eiIdx} className="bg-zinc-100/30 dark:bg-zinc-950/20 p-4 rounded border border-zinc-200 dark:border-zinc-800 group/img space-y-3">
-                               <div className="flex justify-between items-center"><span className="text-[9px] font-black text-purple-500 bg-purple-50/50 px-2 py-0.5 rounded">img{eiIdx+2}</span>{isEditingMode && <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover/img:opacity-100 text-red-500" onClick={() => removeBlockFromScene(index, 'imageUrl', eiIdx)}><Trash2 size={12} /></Button>}</div>
-                               {isEditingMode && <Input value={extraImg} onChange={(e) => { const extra = [...(scene.images || [])]; extra[eiIdx] = e.target.value; updateScene(index, { images: extra }); }} className="h-8 text-[11px] bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800" placeholder="URL da imagem..." />}
-                               <div className="flex items-center gap-3">
-                                 {isEditingMode && <Button onClick={() => insertTagAtCursor(index, `img${eiIdx+2}`)} variant="outline" size="sm" className="h-7 text-[10px] font-black flex-1 border-2">MARCAR</Button>}
-                                 {extraImg && (
-                                   <div className="h-16 w-16 relative rounded border overflow-hidden bg-black shrink-0 shadow-lg">
-                                     <Image 
-                                       src={extraImg} 
-                                       fill 
-                                       className="object-contain" 
-                                       alt="Cena Extra" 
-                                       unoptimized={extraImg.startsWith('http')}
-                                     />
-                                   </div>
-                                 )}
-                               </div>
-                            </div>
-                          ))}
-                       </div>
-                    </div>
-                  )}
-
-                  <div className="pt-6 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
-                    <Label className="text-[10px] uppercase font-black text-zinc-500 tracking-widest flex items-center gap-2">Notas do Editor</Label>
-                    {isEditingMode ? (
-                      <Textarea value={scene.observation || ""} onChange={(e) => updateScene(index, { observation: e.target.value })} placeholder="Adicione observações..." lang="pt-BR" spellCheck="true" className="text-[12px] bg-zinc-50/50 dark:bg-zinc-950/30 border-none italic min-h-[60px] resize-none focus-visible:ring-0" />
-                    ) : (
-                      <p className="text-[12px] italic text-zinc-600 dark:text-zinc-400 p-3 bg-zinc-100/50 dark:bg-zinc-800/30 rounded">{scene.observation || "Nenhuma observação."}</p>
-                    )}
-
-                    {/* Scene-linked Comments */}
-                    {(() => {
-                      const sceneMarkers = Array.from(scene.spokenText?.matchAll(/\[([1-5])\]/g) || []).map(m => parseInt(m[1]));
-                      const uniqueMarkers = Array.from(new Set(sceneMarkers));
-                      const relevantComments = comments.filter(c => c.marker !== undefined && uniqueMarkers.includes(c.marker));
-                      
-                      if (relevantComments.length === 0) return null;
-
-                      return (
-                        <div className="mt-4 space-y-2">
-                          <p className="text-[9px] font-black uppercase text-amber-500 tracking-widest flex items-center gap-2">
-                            <MessageSquare size={10} /> Notas da Equipe
-                          </p>
-                          <div className="space-y-1.5">
-                            {relevantComments.sort((a, b) => a.marker! - b.marker!).map(comment => (
-                              <div key={comment.id} className="bg-amber-50/50 dark:bg-amber-900/10 border border-amber-100/50 dark:border-amber-900/30 rounded p-2 text-[11px]">
-                                <div className="flex justify-between items-start mb-1">
-                                  <span className="font-black text-[9px] text-amber-600 bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 rounded">
-                                    MARCADOR [{comment.marker}]
-                                  </span>
-                                  <span className="text-[9px] text-zinc-400 font-bold">{comment.userName}</span>
-                                </div>
-                                <p className="text-zinc-700 dark:text-zinc-300 leading-relaxed italic">&ldquo;{comment.text}&rdquo;</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Adicionar Cena entre cenas */}
-              {isEditingMode && (
-                <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 z-10 opacity-0 group-hover/scene:opacity-100 transition-all">
-                  <Button onClick={() => addEmptyScene(index)} className="h-10 w-10 rounded bg-blue-600 hover:bg-blue-700 text-white shadow-xl p-0 hover:scale-110"><Plus size={20} /></Button>
-                </div>
-              )}
-            </div>
+            <SceneCard
+              key={scene.id}
+              scene={scene}
+              index={index}
+              isEditingMode={isEditingMode}
+              canEdit={canEdit}
+              commentCounts={commentCounts}
+              comments={comments}
+              updateScene={updateScene}
+              addBlockToScene={addBlockToScene}
+              removeBlockFromScene={removeBlockFromScene}
+              insertTagAtCursor={insertTagAtCursor}
+              splitScene={splitScene}
+              deleteScene={deleteScene}
+              addEmptyScene={addEmptyScene}
+              copyToClipboard={copyToClipboard}
+              handleSpellCheckApply={handleSpellCheckApply}
+              handleFocusChange={handleFocusChange}
+              registerTextarea={registerTextarea}
+              registerContentEditable={registerContentEditable}
+            />
           ))
         )}
 
@@ -1588,7 +1922,13 @@ function EditorContent({ id }: { id: string }) {
       {/* FOOTER FIXO */}
       {isEditingMode && (
         <div className="fixed left-1/2 -translate-x-1/2 z-50 flex items-center gap-3" style={{ bottom: '3.5rem' }}>
-          <Button onClick={() => { setImportText(generateRawTextFromBlocks(scenes)); setShowImportModal(true); }} variant="outline" className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl shadow-2xl rounded h-12 px-6 border-2 font-black text-[10px] tracking-widest uppercase"><Import size={18} className="mr-2" /> Texto Bruto</Button>
+          <Button onClick={() => {
+            const genStartedAt = performance.now();
+            const raw = generateRawTextFromBlocks(scenes);
+            debugPerf("editor.rawtext", "Roteiro bruto gerado", genStartedAt, { sceneCount: scenes.length, chars: raw.length });
+            setImportText(raw);
+            setShowImportModal(true);
+          }} variant="outline" className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl shadow-2xl rounded h-12 px-6 border-2 font-black text-[10px] tracking-widest uppercase"><Import size={18} className="mr-2" /> Texto Bruto</Button>
           <Button onClick={handleSaveClick} className="bg-zinc-900 border-2 dark:bg-zinc-100 text-white dark:text-black shadow-2xl rounded h-12 px-8 font-black text-[10px] tracking-widest uppercase hover:scale-105 transition-all"><Save size={18} className="mr-2" /> Salvar Tudo</Button>
         </div>
       )}
@@ -1623,21 +1963,15 @@ function EditorContent({ id }: { id: string }) {
           </div>
         </DialogContent>
       </Dialog>
-      
-      <Dialog open={showImportModal} onOpenChange={setShowImportModal}>
-        <DialogContent className="sm:max-w-3xl bg-white dark:bg-zinc-950 border-none rounded p-8 shadow-[0_0_100px_rgba(0,0,0,0.2)] max-h-[90vh]">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-black">Roteiro Bruto</DialogTitle>
-            <DialogDescription className="text-zinc-500 font-medium pt-2">Visualize ou edite o texto bruto. Ao importar, o texto será processado em cenas.</DialogDescription>
-          </DialogHeader>
-          <div className="py-6 overflow-y-auto px-2">
-            <Textarea value={importText} onChange={(e) => setImportText(e.target.value)} className="min-h-[400px] font-mono text-xs bg-zinc-50 dark:bg-zinc-900 rounded p-6 border-zinc-200 dark:border-zinc-800 max-h-[40vh] overflow-y-auto" placeholder="Cena 1&#10;..." />
-          </div>
-          <DialogFooter className="sm:justify-center">
-            <Button onClick={handleImport} disabled={isImporting} className="bg-blue-600 hover:bg-blue-700 text-white font-black rounded px-12 h-14 text-xs uppercase tracking-widest shadow-xl disabled:opacity-50">{isImporting ? "PROCESSANDO..." : "PROCESSAR E IMPORTAR"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+
+      <RawTextModal
+        key={showImportModal ? "open" : "closed"}
+        open={showImportModal}
+        initialText={importText}
+        busy={isImporting}
+        onClose={() => setShowImportModal(false)}
+        onImport={handleImport}
+      />
 
       {/* DIALOG CRIAR PROJETO */}
       <Dialog open={isCreateProjectOpen} onOpenChange={setIsCreateProjectOpen}>

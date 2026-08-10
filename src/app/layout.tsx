@@ -6,6 +6,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { ThemeProvider } from "next-themes";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { AppErrorHandler } from "@/components/AppErrorHandler";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
@@ -80,6 +81,7 @@ export default function RootLayout({
               <SiteFooter />
               <VlibrasWidget />
               <Toaster />
+              <AppErrorHandler />
             </PreferencesProvider>
           </AuthProvider>
         </ThemeProvider>

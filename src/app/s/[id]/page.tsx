@@ -19,7 +19,8 @@ import {
   XCircle, 
   Clock,
   ChevronLeft,
-  FileText
+  FileText,
+  Ear
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
@@ -50,7 +51,7 @@ const statusConfig: Record<string, { label: string; color: string }> = {
 
 function formatEditorMarkers(spokenText: string | null | undefined): React.ReactNode {
   if (!spokenText) return null;
-  const regex = /(\[(?:let|img)\d+\]|\[\d+\])/g;
+  const regex = /(\[(?:let|pron|img)\d+\]|\[\d+\])/g;
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
   let match;
@@ -267,6 +268,18 @@ export default function PublicScriptPage({
                       <div className="flex flex-col gap-1.5">
                         {scene.lettering.split("\n").filter(l => l.trim()).map((line, i) => (
                           <div key={i} className="bg-amber-100/30 text-amber-800 p-3 rounded-xl border border-amber-200 text-sm font-bold">
+                            <span className="opacity-40 mr-2 text-xs">{i+1}</span>{line}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {scene.pronunciation && (
+                    <div className="pt-4 border-t border-zinc-100">
+                      <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3 flex items-center gap-2"><Ear size={14} /> Pronúncia</h3>
+                      <div className="flex flex-col gap-1.5">
+                        {scene.pronunciation.split("\n").filter(l => l.trim()).map((line, i) => (
+                          <div key={i} className="bg-cyan-100/30 text-cyan-800 p-3 rounded-xl border border-cyan-200 text-sm font-bold">
                             <span className="opacity-40 mr-2 text-xs">{i+1}</span>{line}
                           </div>
                         ))}

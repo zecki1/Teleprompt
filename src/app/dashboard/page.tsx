@@ -97,7 +97,7 @@ export default function DashboardPage() {
 }
 
 function DashboardContent() {
-  const { user, allUsers } = useAuth();
+  const { user, allUsers, loading: authLoading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   
@@ -477,7 +477,9 @@ function DashboardContent() {
     useEffect(() => {
     const activeWorkspaceId = user?.workspaceId || "";
     const isSuper = user?.isSuperAdmin;
-    
+
+    if (authLoading) return;
+
     if (!user?.uid) {
       router.push("/login");
       return;
@@ -546,7 +548,7 @@ function DashboardContent() {
     });
 
     return () => unsub();
-  }, [user?.workspaceId, user?.isSuperAdmin, router, loadProjects, projectIdFilter]);
+  }, [user?.workspaceId, user?.isSuperAdmin, router, loadProjects, projectIdFilter, authLoading]);
 
   const loadMoreScripts = async () => {
     if (projectIdFilter || loadingMoreScripts || !hasMoreScripts) return;
@@ -588,7 +590,7 @@ function DashboardContent() {
     }
   };
 
-  const filteredScripts = scripts.filter(s => {
+  const filteredScripts = useMemo(() => scripts.filter(s => {
     const matchesStatus = statusFilter === "all" || s.status === statusFilter;
     const matchesProject = !projectIdFilter || s.projectId === projectIdFilter;
     const matchesCommenter = filterCommenter === "all" || (s.commentAuthors && s.commentAuthors.includes(filterCommenter));
@@ -597,17 +599,17 @@ function DashboardContent() {
       || (s.projectName || s.project || "").toLowerCase().includes(searchQuery)
       || (s.path || []).join(" ").toLowerCase().includes(searchQuery);
     return matchesStatus && matchesProject && matchesCommenter && matchesQuery;
-  });
+  }), [scripts, statusFilter, projectIdFilter, filterCommenter, searchQuery]);
 
-  const statusCounts = {
+  const statusCounts = useMemo(() => ({
     all: scripts.length,
     rascunho: scripts.filter(s => s.status === "rascunho").length,
     em_revisao: scripts.filter(s => s.status === "em_revisao").length,
     revisao_realizada: scripts.filter(s => s.status === "revisao_realizada").length,
     aguardando_gravacao: scripts.filter(s => s.status === "aguardando_gravacao").length,
     gravado: scripts.filter(s => s.status === "gravado").length,
-    rejeitado: scripts.filter(s => s.status === "rejeitado").length,    
-  };
+    rejeitado: scripts.filter(s => s.status === "rejeitado").length,
+  }), [scripts]);
 
   const handleDeleteProject = async (e: React.MouseEvent, projectId: string) => {
     e.stopPropagation();
@@ -947,25 +949,35 @@ function DashboardContent() {
   const allCommenters = Array.from(new Set(scripts.flatMap(s => s.commentAuthors || [])));
 
   // Group filtered scripts by project name
-  const scriptsByProject = filteredScripts.reduce((acc, script) => {
+  const scriptsByProject = useMemo(() => filteredScripts.reduce((acc, script) => {
     const projectName = script.projectName || script.project || "Geral";
     if (!acc[projectName]) acc[projectName] = [];
     acc[projectName].push(script);
     return acc;
-  }, {} as Record<string, ScriptDoc[]>);
+  }, {} as Record<string, ScriptDoc[]>), [filteredScripts]);
 
-  const terminalStatuses = new Set(["gravado", "rejeitado"]);
-  const concludedProjects = new Set<string>();
-  Object.entries(scriptsByProject).forEach(([name, projectScripts]) => {
-    const allTerminal = projectScripts.every(s => terminalStatuses.has(s.status));
-    if (allTerminal) concludedProjects.add(name);
-  });
+  const { concludedProjects, visibleProjects } = useMemo(() => {
+    const terminalStatuses = new Set(["gravado", "rejeitado"]);
+    const concluded = new Set<string>();
+    Object.entries(scriptsByProject).forEach(([name, projectScripts]) => {
+      const allTerminal = projectScripts.every(s => terminalStatuses.has(s.status));
+      if (allTerminal) concluded.add(name);
+    });
+    const visible = showConcluded
+      ? scriptsByProject
+      : Object.fromEntries(
+          Object.entries(scriptsByProject).filter(([name]) => !concluded.has(name))
+        );
+    return { concludedProjects: concluded, visibleProjects: visible };
+  }, [scriptsByProject, showConcluded]);
 
-  const visibleProjects = showConcluded
-    ? scriptsByProject
-    : Object.fromEntries(
-        Object.entries(scriptsByProject).filter(([name]) => !concludedProjects.has(name))
-      );
+  const treesByProject = useMemo(() => {
+    const m: Record<string, ReturnType<typeof buildTree>> = {};
+    for (const [name, projectScripts] of Object.entries(visibleProjects)) {
+      m[name] = buildTree(projectScripts);
+    }
+    return m;
+  }, [visibleProjects]);
 
   const projectSortKey = (projectName: string): { num: number; text: string } => {
     const project = projects.find(p => p.name === projectName);
@@ -1147,7 +1159,7 @@ function DashboardContent() {
               return (
                 <Card 
                   key={project.id} 
-                  className={`min-w-[220px] max-w-[220px] flex-shrink-0 cursor-pointer transition-all border-2 group ${
+                  className={`min-w-[220px] max-w-[220px] flex-shrink-0 cursor-pointer transition-all border-2 group py-0 ${
                     isActive 
                       ? 'border-blue-500 ring-4 ring-blue-500/10 scale-105 shadow-lg bg-blue-50/30' 
                       : 'hover:border-blue-300 border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'
@@ -1391,7 +1403,7 @@ function DashboardContent() {
           {Object.entries(visibleProjects)
             .sort((a, b) => compareProjectNames(a[0], b[0]))
             .map(([projectName, projectScripts]) => {
-              const tree = buildTree(projectScripts);
+              const tree = treesByProject[projectName];
               const project = projects.find(p => p.name === projectName);
               const pid = project?.id || projectScripts[0]?.projectId || "";
 
@@ -1680,7 +1692,7 @@ function DashboardContent() {
                                     <MessageSquare className="w-3 h-3" /> {script.commentCount}
                                   </div>
                                 )}
-                                <Card className={`h-full border-zinc-200 dark:border-zinc-800 hover:shadow-xl transition-all group flex flex-col 
+                                <Card className={`h-full border-zinc-200 dark:border-zinc-800 hover:shadow-xl transition-all group flex flex-col py-0
                                   ${script.status === "rascunho" ? "ring-2 ring-orange-500/30 border-orange-500/50" : ""}
                                   ${(script.status === "aguardando_gravacao" || script.status === "revisao_realizada") ? "ring-2 ring-emerald-500/30 border-emerald-500/50" : ""}
                                   ${script.status === "em_revisao" ? "ring-2 ring-yellow-500/30 border-yellow-500/50" : ""}

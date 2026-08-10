@@ -56,6 +56,7 @@ import {
   Hourglass,
   Check,
   X,
+  Sparkles,
 } from "lucide-react";
 import { 
   Select, 
@@ -81,6 +82,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { DebugLogsPanel } from "@/components/admin/DebugLogsPanel";
+import { DemoSetupPanel } from "@/components/admin/DemoSetupPanel";
 
 
 const roleConfig: Record<Role, { label: string; color: string; icon: React.ElementType }> = {
@@ -347,7 +350,7 @@ export default function AdminPage() {
     }
   };
 
-  const togglePermission = async (uid: string, field: 'canCollaborate' | 'isEditor' | 'isRevisor' | 'requiresChecklist' | 'canRevert' | 'canAssign' | 'canViewAdmin' | 'canViewReports' | 'canViewActivityHistory', value: boolean) => {
+  const togglePermission = async (uid: string, field: 'canCollaborate' | 'isEditor' | 'isRevisor' | 'requiresChecklist' | 'canRevert' | 'canAssign' | 'canViewAdmin' | 'canViewReports' | 'canViewActivityHistory' | 'canViewDebugLogs', value: boolean) => {
     setUpdating(uid);
     try {
       await updateUserPermissions(uid, { [field]: value });
@@ -362,6 +365,7 @@ export default function AdminPage() {
         canViewAdmin: "Ver Administração",
         canViewReports: "Ver Relatórios",
         canViewActivityHistory: "Ver Histórico",
+        canViewDebugLogs: "Ver Debug Logs",
         requiresChecklist: "Checklist",
       };
 
@@ -445,6 +449,16 @@ export default function AdminPage() {
           <TabsTrigger value="apresentadores" className="rounded-xl px-8 h-full data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-800 data-[state=active]:shadow-lg font-bold flex gap-2">
             <UserPlus className="w-4 h-4" /> Apresentadores
           </TabsTrigger>
+          {(user?.role === "SuperAdmin" || user?.isSuperAdmin || user?.canViewDebugLogs) && (
+            <TabsTrigger value="debuglogs" className="rounded-xl px-8 h-full data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-800 data-[state=active]:shadow-lg font-bold flex gap-2">
+              <Wrench className="w-4 h-4" /> Debug Logs
+            </TabsTrigger>
+          )}
+          {(user?.role === "SuperAdmin" || user?.isSuperAdmin) && (
+            <TabsTrigger value="demo" className="rounded-xl px-8 h-full data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-800 data-[state=active]:shadow-lg font-bold flex gap-2">
+              <Sparkles className="w-4 h-4" /> Demonstração
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="usuarios">
@@ -572,13 +586,14 @@ export default function AdminPage() {
                     <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100 text-[11px]">Admin</TableHead>
                     <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100 text-[11px]">Relatórios</TableHead>
                     <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100 text-[11px]">Histórico</TableHead>
+                    <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100 text-[11px]">Debug Logs</TableHead>
                     <TableHead className="font-bold text-zinc-900 dark:text-zinc-100">Status Atual</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {usersList.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={11} className="text-center py-12 text-zinc-400">
+                      <TableCell colSpan={12} className="text-center py-12 text-zinc-400">
                         <Users className="w-8 h-8 mx-auto mb-3 opacity-50" />
                         <p className="font-medium">Nenhum colaborador encontrado</p>
                         <p className="text-sm mt-1">Verifique se os usuários possuem um workspace vinculado.</p>
@@ -679,6 +694,15 @@ export default function AdminPage() {
                           />
                         </div>
                       </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex justify-center">
+                          <Switch 
+                            checked={userItem.canViewDebugLogs} 
+                            onCheckedChange={(val) => togglePermission(userItem.uid, 'canViewDebugLogs', val)}
+                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                          />
+                        </div>
+                      </TableCell>
                       <TableCell>
                          <div className="flex gap-1 flex-wrap">
                             {userItem.canCollaborate && <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400 border-none text-[9px]">COLABORADOR</Badge>}
@@ -689,7 +713,8 @@ export default function AdminPage() {
                             {userItem.canViewAdmin && <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 border-none text-[9px]">ADMIN</Badge>}
                             {userItem.canViewReports && <Badge className="bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400 border-none text-[9px]">RELATÓRIOS</Badge>}
                             {userItem.canViewActivityHistory && <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-none text-[9px]">HISTÓRICO</Badge>}
-                            {!userItem.canCollaborate && !userItem.isEditor && !userItem.isRevisor && !userItem.canRevert && !userItem.canAssign && !userItem.canViewAdmin && !userItem.canViewReports && !userItem.canViewActivityHistory && <span className="text-zinc-400 text-xs italic">Sem atribuições</span>}
+                            {userItem.canViewDebugLogs && <Badge className="bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border-none text-[9px]">DEBUG LOGS</Badge>}
+                            {!userItem.canCollaborate && !userItem.isEditor && !userItem.isRevisor && !userItem.canRevert && !userItem.canAssign && !userItem.canViewAdmin && !userItem.canViewReports && !userItem.canViewActivityHistory && !userItem.canViewDebugLogs && <span className="text-zinc-400 text-xs italic">Sem atribuições</span>}
                          </div>
                       </TableCell>
                     </TableRow>
@@ -963,6 +988,42 @@ export default function AdminPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {(user?.role === "SuperAdmin" || user?.isSuperAdmin || user?.canViewDebugLogs) && (
+          <TabsContent value="debuglogs">
+            <Card className="border-none shadow-2xl bg-white dark:bg-zinc-950 overflow-hidden rounded-[32px]">
+              <CardHeader className="bg-zinc-50/50 dark:bg-zinc-900/50 border-b border-zinc-100 dark:border-zinc-900 p-8">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-2xl font-bold">Debug Logs</CardTitle>
+                    <CardDescription className="text-base">
+                      Registro técnico (Firestore + console) com usuário, permissões, erros de permissão e tempos de operação do editor e teleprompter.
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-6">
+                <DebugLogsPanel />
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
+
+        {(user?.role === "SuperAdmin" || user?.isSuperAdmin) && (
+          <TabsContent value="demo">
+            <Card className="border-none shadow-2xl bg-white dark:bg-zinc-950 overflow-hidden rounded-[32px]">
+              <CardHeader className="bg-zinc-50/50 dark:bg-zinc-900/50 border-b border-zinc-100 dark:border-zinc-900 p-8">
+                <CardTitle className="text-2xl font-bold">Demonstração</CardTitle>
+                <CardDescription className="text-base">
+                  Workspace de demonstração único + conta compartilhável + roteiro de exemplo com o tour do app.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <DemoSetupPanel />
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
 
       </Tabs>
 
