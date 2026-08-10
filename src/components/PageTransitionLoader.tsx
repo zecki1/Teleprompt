@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Hourglass, WifiOff, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { ErrorReportDialog } from "@/components/tp/ErrorReporter";
+import { ErrorReportDialog, captureScreenshot } from "@/components/tp/ErrorReporter";
 
 interface LoadingScreenProps {
   fullScreen?: boolean;
@@ -26,6 +26,17 @@ export function LoadingScreen({
 }: LoadingScreenProps) {
   const [timedOut, setTimedOut] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [screenshotCanvas, setScreenshotCanvas] = useState<HTMLCanvasElement | null>(null);
+
+  const openReport = async () => {
+    setScreenshotCanvas(await captureScreenshot());
+    setReportOpen(true);
+  };
+
+  const closeReport = (next: boolean) => {
+    if (!next) setScreenshotCanvas(null);
+    setReportOpen(next);
+  };
 
   useEffect(() => {
     if (disableTimeout || timedOut) return;
@@ -78,14 +89,14 @@ export function LoadingScreen({
             </Button>
             <Button
               variant="outline"
-              onClick={() => setReportOpen(true)}
+              onClick={openReport}
               className="rounded px-6 h-12 font-black text-xs uppercase tracking-widest gap-2 border-zinc-700 text-zinc-300 hover:bg-zinc-800"
             >
               Reportar erro
             </Button>
           </div>
         </div>
-        <ErrorReportDialog open={reportOpen} onOpenChange={setReportOpen} />
+        <ErrorReportDialog open={reportOpen} onOpenChange={closeReport} screenshotCanvas={screenshotCanvas} />
       </div>
     );
   }

@@ -49,6 +49,7 @@ import {
   HelpCircle,
   Keyboard,
   Pencil,
+  FolderOpen,
 } from "lucide-react";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { Badge } from "@/components/ui/badge";
@@ -121,6 +122,8 @@ function TeleprompterContent({ id }: { id: string }) {
   const [editorId, setEditorId] = useState<string | null>(null);
   const [isSavingChecklist, setIsSavingChecklist] = useState(false);
   const [recordingOrder, setRecordingOrder] = useState<string[] | null>(null);
+  const [folderProgress, setFolderProgress] = useState<{ total: number; recorded: number; pending: number } | null>(null);
+  const [nextFolderPath, setNextFolderPath] = useState<string[] | null>(null);
   const router = useRouter();
 
   // Refs para Motor de Scroll (Evita lag de estado)
@@ -431,6 +434,14 @@ function TeleprompterContent({ id }: { id: string }) {
 
   const startCountdown = () => {
     if (countdownActiveRef.current || isPlayingRef.current) return;
+    // Bloqueia o início da reprodução sem o checklist confirmado nesta sessão,
+    // inclusive quando o play vem da tela de retorno/controle remoto (broadcast),
+    // que antes contornava o checklist e permitia gravar sem confirmação.
+    const needsChecklist = user?.requiresChecklist === true;
+    if (!checklistDoneRef.current && needsChecklist) {
+      setShowChecklist(true);
+      return;
+    }
     playRequestedRef.current = true;
     if (mirrorCountRef.current > 0 && countdownEnabled) {
       runLocalCountdown(true);
@@ -1138,6 +1149,42 @@ function TeleprompterContent({ id }: { id: string }) {
       if (el.innerHTML !== sanitized) el.innerHTML = sanitized;
     });
   }, [scenes, focusedId]);
+
+  // Atualiza o progresso de gravação da pasta atual ao abrir o TP
+  // (sem abrir o modal) — mostra gravados/faltam gravar direto na tela.
+  useEffect(() => {
+    if (!projectId && !projectName) return;
+    let active = true;
+    const run = async () => {
+      try {
+        const activeWorkspaceId = workspaceId || "senai";
+        const scriptsRef = collection(db, "scripts");
+        const scriptsConstraints = user?.isSuperAdmin ? [] : [where("workspaceId", "==", activeWorkspaceId)];
+        const snapshot = await getDocs(query(scriptsRef, ...scriptsConstraints));
+        if (!active) return;
+        const allScripts = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as ScriptDoc[];
+        const currentPath = getScriptPath({ path, folder, subfolder: undefined, lesson: undefined } as ScriptDoc);
+        const currentProjectId = projectId || projectName || "Geral";
+        const isPendingStatus = (s: ScriptDoc) => s.status === "revisao_realizada" || s.status === "aguardando_gravacao";
+        const sameFolder = allScripts.filter(s => {
+          const sProjectId = s.projectId || s.projectName || s.project || "Geral";
+          if (sProjectId !== currentProjectId) return false;
+          const sPath = getScriptPath(s);
+          if (sPath.length !== currentPath.length) return false;
+          return sPath.every((seg, i) => seg === currentPath[i]);
+        });
+        const realScripts = sameFolder.filter(s => !s.isPlaceholder);
+        setFolderProgress({
+          total: realScripts.length,
+          recorded: realScripts.filter(s => s.status === "gravado" || s.status === "rejeitado").length,
+          pending: realScripts.filter(isPendingStatus).length,
+        });
+      } catch { /* ignora */ }
+    };
+    run();
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, path, projectId, projectName, workspaceId, user?.isSuperAdmin]);
   
   if (loading) return <LoadingScreen />;
 
@@ -1236,6 +1283,8 @@ function TeleprompterContent({ id }: { id: string }) {
 
       if (allScripts.length === 0) {
         setNextScript(null);
+        setNextFolderPath(null);
+        setFolderProgress(null);
         setShowNextModal(true);
         return;
       }
@@ -1243,39 +1292,118 @@ function TeleprompterContent({ id }: { id: string }) {
       // Filtra: mesmo projeto + mesma pasta
       const currentPath = getScriptPath({ path, folder, subfolder: undefined, lesson: undefined } as ScriptDoc);
       const currentProjectId = projectId || projectName || "Geral";
+      const isPendingStatus = (s: ScriptDoc) => s.status === "revisao_realizada" || s.status === "aguardando_gravacao";
 
-      const sameFolder = allScripts.filter(s => {
+      const projectScripts = allScripts.filter(s => {
         const sProjectId = s.projectId || s.projectName || s.project || "Geral";
-        if (sProjectId !== currentProjectId) return false;
+        return sProjectId === currentProjectId;
+      });
+
+      const sameFolder = projectScripts.filter(s => {
         const sPath = getScriptPath(s);
         if (sPath.length !== currentPath.length) return false;
         return sPath.every((seg, i) => seg === currentPath[i]);
       });
 
+      const realScripts = sameFolder.filter(s => !s.isPlaceholder);
+      setFolderProgress({
+        total: realScripts.length,
+        recorded: realScripts.filter(s => s.status === "gravado" || s.status === "rejeitado").length,
+        pending: realScripts.filter(isPendingStatus).length,
+      });
+
       // Se houver ordem personalizada salva para esta pasta, respeita-a.
+      // Roteiros que não estão na ordem salva (ordem desatualizada, criados
+      // depois dela) são inseridos na posição alfabética correta — evita que
+      // um roteiro "novo" seja jogado para o fim e a sugestão pule ele.
       // Caso contrário, ordena por título (ordem alfabética padrão).
       const customOrder = recordingOrder ?? (await getRecordingOrder(projectId, path));
-      let ordered = sameFolder;
+      let ordered: ScriptDoc[];
       if (customOrder && customOrder.length > 0) {
         const pos = new Map(customOrder.map((scriptId, i) => [scriptId, i]));
-        ordered = [...sameFolder].sort((a, b) => {
-          const pa = pos.get(a.id);
-          const pb = pos.get(b.id);
-          if (pa === undefined && pb === undefined) return 0;
-          if (pa === undefined) return 1;
-          if (pb === undefined) return -1;
-          return pa - pb;
+        const known = sameFolder.filter(s => pos.has(s.id));
+        known.sort((a, b) => (pos.get(a.id)! - pos.get(b.id)!));
+        const missing = sameFolder.filter(s => !pos.has(s.id)).sort((a, b) => (a.title || "").localeCompare(b.title || "", undefined, { numeric: true, sensitivity: "base" }));
+        ordered = [...known];
+        missing.forEach(script => {
+          const target = script.title || "";
+          let insertAt = 0;
+          while (insertAt < ordered.length && ordered[insertAt].title!.localeCompare(target, undefined, { numeric: true, sensitivity: "base" }) <= 0) insertAt++;
+          ordered.splice(insertAt, 0, script);
         });
+      } else {
+        ordered = [...sameFolder].sort((a, b) => (a.title || "").localeCompare(b.title || "", undefined, { numeric: true, sensitivity: "base" }));
       }
 
       const currentIndex = ordered.findIndex(s => s.id === id);
-      const next = currentIndex !== -1
-        ? ordered.slice(currentIndex + 1).find(s =>
-            s.status === "revisao_realizada" || s.status === "aguardando_gravacao"
-          )
+      const nextInFolder = currentIndex !== -1
+        ? ordered.slice(currentIndex + 1).find(isPendingStatus)
         : null;
 
-      setNextScript(next ?? null);
+      if (nextInFolder) {
+        setNextScript(nextInFolder);
+        setNextFolderPath(null);
+        setShowNextModal(true);
+        return;
+      }
+
+      // Caso o roteiro atual não tenha sido encontrado na própria pasta
+      // (ex.: dado desatualizado no cache), sugere o primeiro pendente da
+      // mesma pasta antes de avançar para outras pastas.
+      if (currentIndex === -1) {
+        const firstPending = ordered.find(isPendingStatus);
+        if (firstPending) {
+          setNextScript(firstPending);
+          setNextFolderPath(null);
+          setShowNextModal(true);
+          return;
+        }
+      }
+
+      // Pasta atual concluída → sugere o próximo roteiro pendente da próxima pasta
+      // do mesmo projeto (pastas ordenadas por caminho).
+      const folderMap = new Map<string, ScriptDoc[]>();
+      projectScripts.forEach(s => {
+        const sp = getScriptPath(s);
+        const key = sp.length > 0 ? sp.join("/") : "(raiz)";
+        if (!folderMap.has(key)) folderMap.set(key, []);
+        folderMap.get(key)!.push(s);
+      });
+
+      const currentKey = currentPath.length > 0 ? currentPath.join("/") : "(raiz)";
+      const otherFolders = [...folderMap.entries()]
+        .filter(([key]) => key !== currentKey)
+        .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+
+      for (const [, folderScripts] of otherFolders) {
+        const pending = folderScripts.filter(s => !s.isPlaceholder && isPendingStatus(s));
+        if (pending.length === 0) continue;
+        const folderPath = getScriptPath(folderScripts[0]);
+        const folderOrder = await getRecordingOrder(projectId, folderPath);
+        let orderedNext: ScriptDoc[];
+        if (folderOrder && folderOrder.length > 0) {
+          const pos = new Map(folderOrder.map((scriptId, i) => [scriptId, i]));
+          const known = pending.filter(s => pos.has(s.id));
+          known.sort((a, b) => (pos.get(a.id)! - pos.get(b.id)!));
+          const missing = pending.filter(s => !pos.has(s.id)).sort((a, b) => (a.title || "").localeCompare(b.title || "", undefined, { numeric: true, sensitivity: "base" }));
+          orderedNext = [...known];
+          missing.forEach(script => {
+            const target = script.title || "";
+            let insertAt = 0;
+            while (insertAt < orderedNext.length && orderedNext[insertAt].title!.localeCompare(target, undefined, { numeric: true, sensitivity: "base" }) <= 0) insertAt++;
+            orderedNext.splice(insertAt, 0, script);
+          });
+        } else {
+          orderedNext = [...pending].sort((a, b) => (a.title || "").localeCompare(b.title || "", undefined, { numeric: true, sensitivity: "base" }));
+        }
+        setNextScript(orderedNext[0]);
+        setNextFolderPath(getScriptPath(orderedNext[0]));
+        setShowNextModal(true);
+        return;
+      }
+
+      setNextScript(null);
+      setNextFolderPath(null);
       setShowNextModal(true);
     } catch (err) {
       console.error("Erro ao buscar próximo roteiro:", err);
@@ -1348,6 +1476,16 @@ function TeleprompterContent({ id }: { id: string }) {
         >
           <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: isMirrorWindow ? '#ef4444' : '#22c55e' }} />
           <span className="text-xs font-black uppercase tracking-[0.3em]">PAUSADO</span>
+        </div>
+      )}
+
+      {/* PROGRESSO DA PASTA ATUAL (MASTER) */}
+      {!isMirrorWindow && folderProgress && path.length > 0 && (
+        <div className="absolute left-1/2 -translate-x-1/2 top-4 z-[60] flex items-center gap-3 px-4 py-2 rounded-xl backdrop-blur border border-zinc-800 bg-zinc-900/85 text-white shadow-2xl animate-in fade-in duration-500">
+          <FolderOpen size={13} className="text-amber-400 shrink-0" />
+          <span className="text-[9px] font-black uppercase tracking-widest text-zinc-400 max-w-[260px] truncate">{path.join(" / ")}</span>
+          <span className="text-[9px] font-bold text-blue-400 whitespace-nowrap">{folderProgress.recorded}/{folderProgress.total} gravados</span>
+          <span className="text-[9px] font-bold text-emerald-400 whitespace-nowrap">{folderProgress.pending} faltam</span>
         </div>
       )}
 
@@ -1893,6 +2031,34 @@ function TeleprompterContent({ id }: { id: string }) {
             {nextScript ? (
               <div className="space-y-4">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Sugestão de Próximo</p>
+
+                {folderProgress && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-4 text-[11px]">
+                      <span className="text-zinc-500 font-bold flex items-center gap-1.5 min-w-0">
+                        <FolderOpen size={12} className="text-amber-400 shrink-0" />
+                        <span className="truncate">{path.length > 0 ? path.join(" / ") : "Raiz"}</span>
+                      </span>
+                      <span className="text-zinc-400 font-mono whitespace-nowrap">
+                        {folderProgress.recorded}/{folderProgress.total} gravados • {folderProgress.pending} faltam
+                      </span>
+                    </div>
+                    <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-500 rounded-full transition-all"
+                        style={{ width: `${folderProgress.total > 0 ? Math.round((folderProgress.recorded / folderProgress.total) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {nextFolderPath && nextFolderPath.join("/") !== path.join("/") && (
+                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                    <ChevronRight size={12} className="shrink-0" />
+                    <span className="min-w-0 truncate normal-case">Próxima pasta: {nextFolderPath.join(" / ")}</span>
+                  </div>
+                )}
+
                 <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-2xl group hover:border-blue-500/50 transition-all cursor-pointer" onClick={() => { navigatingAwayRef.current = true; flushProgress(); router.push(`/tp/${nextScript.id}`); }}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-1">
@@ -1902,7 +2068,7 @@ function TeleprompterContent({ id }: { id: string }) {
                            {nextScript.projectName || "Geral"}
                          </Badge>
                          <span className="text-zinc-600 text-xs">/</span>
-                         <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{nextScript.folder || "Sem Pasta"}</span>
+                         <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{(getScriptPath(nextScript).join(" / ")) || "Sem Pasta"}</span>
                       </div>
                     </div>
                     <div className="w-10 h-10 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-500 group-hover:bg-blue-600 group-hover:text-white transition-all">
@@ -1916,8 +2082,8 @@ function TeleprompterContent({ id }: { id: string }) {
                 <div className="w-14 h-14 bg-emerald-600/20 rounded-full flex items-center justify-center mx-auto">
                   <CheckCircle2 size={28} className="text-emerald-400" />
                 </div>
-                <p className="text-zinc-300 font-bold text-sm">Todos os roteiros desta pasta foram gravados!</p>
-                <p className="text-zinc-500 text-xs">Não há mais roteiros prontos para gravação nesta pasta.</p>
+                <p className="text-zinc-300 font-bold text-sm">Todos os roteiros deste projeto foram gravados!</p>
+                <p className="text-zinc-500 text-xs">Não há mais roteiros prontos para gravação neste projeto.</p>
               </div>
             )}
 

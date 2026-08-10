@@ -56,7 +56,7 @@ Aplicação web completa para **criar, revisar, aprovar e gravar roteiros de ví
 
 ### Confiabilidade (novo nesta atualização)
 - **Tela de carregamento com watchdog (25s)** e detecção de conexão: se o Firestore estiver offline, em vez de "Carregando..." infinito aparece uma tela de erro com **"Recarregar página"** e **"Reportar erro"**.
-- **Botão de reportar erro**: captura **print da tela** (html2canvas), coleta **logs recentes** e dados do usuário, e grava um `error_reports` no Firestore (qualquer usuário autenticado pode criar; leitura só para quem gerencia permissões).
+- **Botão de reportar erro**: captura **print da tela** (modern-screenshot), coleta **logs recentes** e dados do usuário, e grava um `error_reports` no Firestore (qualquer usuário autenticado pode criar; leitura só para quem gerencia permissões). Se o print não puder ser gerado, inclui uma **descrição estruturada da tela** (títulos, botões, links e campos) no relatório.
 - **Logging centralizado** (`src/lib/debug-log.ts`): erros e eventos de depuração gravados em `debug_logs` (visíveis apenas com `canViewDebugLogs`).
 - **Error boundary global** (`AppErrorHandler`) com opção de reportar o erro.
 
@@ -188,7 +188,7 @@ Rodar: `npm run test`
 
 ### Testes e infra
 - `vitest.config.ts`, 9 arquivos de teste (71 casos), `src/types/window-management.d.ts`.
-- `package.json` — novas dependências (Vitest, html2canvas, etc.).
+- `package.json` — novas dependências (Vitest, modern-screenshot, etc.).
 
 ---
 

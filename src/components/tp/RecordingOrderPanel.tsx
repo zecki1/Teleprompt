@@ -149,8 +149,13 @@ export function RecordingOrderPanel({ projectId, folderPath, onOrderSaved }: Rec
                 </span>
                 <div className="flex-1 min-w-0">
                   <p className="text-[10px] font-bold text-white truncate">{s.title}</p>
-                  <p className="text-[8px] uppercase font-black tracking-widest text-zinc-600">
-                    {ready ? "PRONTO PARA GRAVAR" : (s.status || "rascunho").replace(/_/g, " ")}
+                  <p className={`text-[8px] uppercase font-black tracking-widest ${
+                    s.status === "gravado" ? "text-blue-400"
+                    : s.status === "rejeitado" ? "text-red-400"
+                    : ready ? "text-emerald-400"
+                    : "text-zinc-600"
+                  }`}>
+                    {s.status === "gravado" ? "✓ GRAVADO" : s.status === "rejeitado" ? "REJEITADO" : ready ? "PRONTO PARA GRAVAR" : "FALTA GRAVAR"}
                   </p>
                 </div>
                 <div className="flex flex-col gap-0.5 shrink-0">

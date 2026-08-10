@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import html2canvas from "html2canvas";
+import { domToCanvas } from "modern-screenshot";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { toast } from "sonner";
@@ -25,6 +25,34 @@ function esc(s: unknown): string {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+const PERMISSION_LABELS: { key: string; label: string }[] = [
+  { key: "isSuperAdmin", label: "Super Admin" },
+  { key: "canCollaborate", label: "Colaborador" },
+  { key: "isEditor", label: "Editor" },
+  { key: "isRevisor", label: "Revisor" },
+  { key: "canRevert", label: "Reverter" },
+  { key: "canAssign", label: "Atribuir" },
+  { key: "canViewAdmin", label: "Ver Administração" },
+  { key: "canViewReports", label: "Ver Relatórios" },
+  { key: "canViewActivityHistory", label: "Ver Histórico" },
+  { key: "canViewDebugLogs", label: "Ver Debug Logs" },
+  { key: "requiresChecklist", label: "Checklist" },
+];
+
+type ReportUser = {
+  uid?: string;
+  email?: string | null;
+  name?: string | null;
+  role?: string;
+  workspaceId?: string;
+  [key: string]: unknown;
+};
+
+function activePermissions(user: ReportUser | null): string[] {
+  if (!user) return [];
+  return PERMISSION_LABELS.filter(({ key }) => user[key] === true).map(({ label }) => label);
+}
+
 function compactLog(e: DebugLogEntry) {
   const truncate = (s: unknown, max: number) => {
     if (typeof s !== "string") return s ?? undefined;
@@ -43,15 +71,115 @@ function compactLog(e: DebugLogEntry) {
   };
 }
 
-async function captureScreenshot(): Promise<HTMLCanvasElement | null> {
+export async function captureScreenshot(): Promise<HTMLCanvasElement | null> {
   try {
-    const canvas = await html2canvas(document.body, {
-      scale: 0.6,
-      useCORS: true,
+    const canvas = await domToCanvas(document.body, {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      scale: 0.5,
       backgroundColor: "#ffffff",
-      logging: false,
+      timeout: 8000,
     });
     return canvas;
+  } catch {
+    return null;
+  }
+}
+
+async function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    try {
+      canvas.toBlob(resolve, "image/png");
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function makeScreenshot(canvas: HTMLCanvasElement): Promise<{ dataUrl: string; pngBlob: Blob | null } | null> {
+  const encode = (source: HTMLCanvasElement) => async () => {
+    for (const quality of [0.7, 0.5, 0.35, 0.2]) {
+      const dataUrl = source.toDataURL("image/jpeg", quality);
+      if (dataUrl.length <= SCREENSHOT_MAX_LENGTH) {
+        const pngBlob = await canvasToPng(source);
+        return { dataUrl, pngBlob };
+      }
+    }
+    return null;
+  };
+
+  const direct = await encode(canvas)();
+  if (direct) return direct;
+
+  const half = document.createElement("canvas");
+  half.width = Math.max(1, Math.round(canvas.width / 2));
+  half.height = Math.max(1, Math.round(canvas.height / 2));
+  const ctx = half.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, half.width, half.height);
+    ctx.drawImage(canvas, 0, 0, half.width, half.height);
+    const reduced = await encode(half)();
+    if (reduced) return reduced;
+  }
+  return null;
+}
+
+function buildScreenVirtualization(): string | null {
+  try {
+    const parts: string[] = [];
+
+    const pushList = (title: string, items: string[], max = 25) => {
+      const clean = [...new Set(items.map((s) => s.trim()).filter((s) => s && s.length <= 120))];
+      if (clean.length) {
+        parts.push(
+          `<div class="virt-block"><h3>${esc(title)}</h3><ul>${clean
+            .slice(0, max)
+            .map((s) => `<li>${esc(s)}</li>`)
+            .join("")}</ul></div>`
+        );
+      }
+    };
+
+    const bodyText = (document.body?.innerText || "").trim();
+    if (bodyText) {
+      parts.push(
+        `<div class="virt-block"><h3>Conteúdo visível</h3><pre>${esc(bodyText.slice(0, 6000))}</pre></div>`
+      );
+    }
+
+    const headings = Array.from(document.querySelectorAll("h1,h2,h3,h4"))
+      .map((h) => (h as HTMLElement).innerText.trim())
+      .filter(Boolean);
+    pushList("Títulos", headings, 15);
+
+    const buttons = Array.from(document.querySelectorAll("button"))
+      .map((b) => (b as HTMLElement).innerText.trim())
+      .filter(Boolean);
+    pushList("Botões", buttons, 30);
+
+    const links = Array.from(document.querySelectorAll("a[href]")).map((a) => {
+      const text = (a as HTMLElement).innerText.trim();
+      const href = (a as HTMLAnchorElement).getAttribute("href") || "";
+      return text ? `${text} → ${href}` : href;
+    });
+    pushList("Links", links, 20);
+
+    const fields = Array.from(document.querySelectorAll("input, textarea, select")).map((el) => {
+      const input = el as HTMLInputElement;
+      const label =
+        (el.closest("label") as HTMLElement | null)?.innerText?.trim() ||
+        input.getAttribute("aria-label") ||
+        input.name ||
+        input.id ||
+        "campo";
+      const value = input.type === "password" ? "••••••" : (input.value || "").slice(0, 120);
+      return value ? `${label}: ${value}` : label;
+    });
+    pushList("Campos preenchidos", fields, 20);
+
+    if (!parts.length) return null;
+    return parts.join("\n");
   } catch {
     return null;
   }
@@ -80,6 +208,7 @@ function timestampLabel(d = new Date()): string {
 function buildReportHtml({
   description,
   screenshot,
+  virtualization,
   logs,
   user,
   url,
@@ -89,8 +218,9 @@ function buildReportHtml({
 }: {
   description: string;
   screenshot: string | null;
+  virtualization: string | null;
   logs: ReturnType<typeof compactLog>[];
-  user: { uid?: string; email?: string | null; name?: string | null; role?: string; workspaceId?: string } | null;
+  user: ReportUser | null;
   url?: string;
   page?: string;
   ua?: string;
@@ -106,9 +236,18 @@ function buildReportHtml({
     })
     .join("\n");
 
+  const permissions = activePermissions(user);
+  const permissionsHtml = !user
+    ? "-"
+    : permissions.length
+    ? permissions.map((p) => `<span class="perm">${esc(p)}</span>`).join("")
+    : "<span class='muted'>Sem permissões especiais</span>";
+
   const screenshotBlock = screenshot
     ? `<div class="shot"><img src="${screenshot}" alt="Print da tela" /></div>`
-    : `<p class="muted">Não foi possível capturar o print da tela.</p>`;
+    : virtualization
+    ? `<div class="virt">${virtualization}</div>`
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -134,7 +273,13 @@ function buildReportHtml({
   .muted { color: #71717a; font-size: 13px; }
   .kv { display: grid; grid-template-columns: 180px 1fr; gap: 6px 12px; font-size: 13px; }
   .kv b { color: #71717a; font-weight: 600; }
+  .perm { display: inline-block; margin: 2px 6px 2px 0; padding: 2px 8px; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; border-radius: 999px; font-size: 11px; font-weight: 600; }
   .shot img { max-width: 100%; border: 1px solid #e4e4e7; border-radius: 8px; }
+  .virt-block { margin-bottom: 14px; }
+  .virt-block h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #71717a; margin: 0 0 6px; }
+  .virt-block pre { white-space: pre-wrap; word-break: break-word; max-height: 280px; overflow: auto; }
+  .virt-block ul { margin: 0; padding-left: 18px; }
+  .virt-block li { margin-bottom: 3px; word-break: break-word; }
   .level-error td { background: #fef2f2; }
 </style>
 </head>
@@ -153,6 +298,7 @@ function buildReportHtml({
       <div class="kv">
         <b>Usuário</b><span>${esc(user?.name)}${user?.email ? ` (${esc(user.email)})` : ""}</span>
         <b>Papel</b><span>${esc(user?.role)}</span>
+        <b>Permissões</b><span>${permissionsHtml}</span>
         <b>Workspace</b><span>${esc(user?.workspaceId)}</span>
         <b>Página</b><span>${esc(page)}</span>
         <b>URL</b><span>${esc(url)}</span>
@@ -160,10 +306,7 @@ function buildReportHtml({
       </div>
     </div>
 
-    <div class="card">
-      <h2>Print da tela</h2>
-      ${screenshotBlock}
-    </div>
+    ${screenshot || virtualization ? `<div class="card"><h2>Print da tela</h2>${screenshotBlock}</div>` : ""}
 
     <div class="card">
       <h2>Últimos logs (${logs.length})</h2>
@@ -182,9 +325,11 @@ function buildReportHtml({
 export function ErrorReportDialog({
   open,
   onOpenChange,
+  screenshotCanvas,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  screenshotCanvas: HTMLCanvasElement | null;
 }) {
   const { user } = useAuth();
   const [description, setDescription] = useState("");
@@ -197,19 +342,12 @@ export function ErrorReportDialog({
       const t = Date.now();
       const label = timestampLabel(new Date(t));
 
-      let screenshotDataUrl: string | null = null;
-      const canvas = await captureScreenshot();
-      if (canvas) {
-        screenshotDataUrl = canvas.toDataURL("image/jpeg", 0.6);
-        if (screenshotDataUrl.length <= SCREENSHOT_MAX_LENGTH) {
-          canvas.toBlob(
-            (blob) => {
-              if (blob) downloadBlob(`print-erro-teleprompt-${label}.png`, blob);
-            },
-            "image/png"
-          );
-        }
+      const screenshot = screenshotCanvas ? await makeScreenshot(screenshotCanvas) : null;
+      const screenshotDataUrl = screenshot?.dataUrl ?? null;
+      if (screenshot?.pngBlob) {
+        downloadBlob(`print-erro-teleprompt-${label}.png`, screenshot.pngBlob);
       }
+      const virtualization = screenshotDataUrl ? null : buildScreenVirtualization();
 
       const logs = getRecentLogs(60).map(compactLog);
       const url = typeof window !== "undefined" ? window.location.href : undefined;
@@ -219,6 +357,7 @@ export function ErrorReportDialog({
       const reportHtml = buildReportHtml({
         description,
         screenshot: screenshotDataUrl,
+        virtualization,
         logs,
         user,
         url,
@@ -231,13 +370,13 @@ export function ErrorReportDialog({
       setDescription("");
       onOpenChange(false);
       toast.success("Arquivos baixados! Envie o print e o relatório por e-mail, Teams ou WhatsApp.");
-
       try {
         await addDoc(collection(db, "error_reports"), {
           ts: serverTimestamp(),
           t,
           message: description.trim(),
           screenshot: screenshotDataUrl,
+          screenVirtualization: virtualization,
           logs,
           url,
           page,
@@ -246,6 +385,7 @@ export function ErrorReportDialog({
           email: user?.email,
           name: user?.name || user?.displayName,
           role: user?.role,
+          permissions: activePermissions(user),
           workspaceId: user?.workspaceId,
         });
       } catch {
@@ -256,7 +396,7 @@ export function ErrorReportDialog({
     } finally {
       setSending(false);
     }
-  }, [description, sending, user, onOpenChange]);
+  }, [description, sending, user, onOpenChange, screenshotCanvas]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -266,8 +406,9 @@ export function ErrorReportDialog({
             <Bug className="w-5 h-5 text-amber-500" /> Reportar problema
           </DialogTitle>
           <DialogDescription className="text-zinc-500 dark:text-zinc-400 pt-2 leading-relaxed">
-            Descreva o que aconteceu (opcional). Ao baixar, capturamos um print da tela e os
-            últimos logs do sistema em arquivos para você enviar por e-mail, Teams ou WhatsApp.
+            Descreva o que aconteceu (opcional). Ao baixar, capturamos um print da tela (ou, se não for
+            possível, uma descrição estruturada da tela) e os últimos logs do sistema em arquivos para você
+            enviar por e-mail, Teams ou WhatsApp.
           </DialogDescription>
         </DialogHeader>
         <Textarea
@@ -278,7 +419,7 @@ export function ErrorReportDialog({
         />
         <DialogFooter className="sm:justify-between pt-2">
           <span className="text-[10px] text-zinc-400 font-medium self-center">
-            Print da tela (PNG) + relatório com os últimos 60 logs (HTML) serão baixados.
+            Print da tela (PNG, se capturável) + relatório com os últimos 60 logs (HTML) serão baixados.
           </span>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={sending}>
@@ -301,19 +442,31 @@ export function ErrorReportDialog({
 
 export function ErrorReportButton() {
   const [open, setOpen] = useState(false);
+  const [screenshotCanvas, setScreenshotCanvas] = useState<HTMLCanvasElement | null>(null);
+
+  const handleOpen = useCallback(async () => {
+    setScreenshotCanvas(await captureScreenshot());
+    setOpen(true);
+  }, []);
+
+  const handleOpenChange = useCallback((next: boolean) => {
+    if (!next) setScreenshotCanvas(null);
+    setOpen(next);
+  }, []);
+
   return (
     <>
       <Button
         variant="outline"
         size="icon"
-        onClick={() => setOpen(true)}
+        onClick={handleOpen}
         aria-label="Reportar erro"
         title="Reportar erro"
         className="fixed bottom-5 right-5 z-[200] h-11 w-11 rounded-full shadow-2xl border-zinc-300 dark:border-zinc-700 bg-white/90 dark:bg-zinc-900/90 backdrop-blur text-amber-600 hover:text-amber-700 hover:scale-105 transition-all"
       >
         <Bug className="w-5 h-5" />
       </Button>
-      <ErrorReportDialog open={open} onOpenChange={setOpen} />
+      <ErrorReportDialog open={open} onOpenChange={handleOpenChange} screenshotCanvas={screenshotCanvas} />
     </>
   );
 }
