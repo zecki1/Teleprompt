@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Teleprompt.Api/Teleprompt.Api.csproj" />
+    <Project Path="src/Teleprompt.Application/Teleprompt.Application.csproj" />
+    <Project Path="src/Teleprompt.Domain/Teleprompt.Domain.csproj" />
+    <Project Path="src/Teleprompt.Infrastructure/Teleprompt.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Teleprompt.Tests/Teleprompt.Tests.csproj" />
+  </Folder>
+</Solution>
