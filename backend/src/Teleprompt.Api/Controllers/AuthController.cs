@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -91,6 +92,34 @@ public class AuthController : ControllerBase
         if (user == null)
             return NotFound();
         return Ok(ToDto(user));
+    }
+
+    /// <summary>
+    /// Renova a sessão de forma stateless: valida o JWT atual e emite um novo
+    /// (rolling refresh) com os mesmos claims e dados atualizados do usuário.
+    /// </summary>
+    [HttpPost("refresh")]
+    [AllowAnonymous]
+    public async Task<ActionResult<AuthResponse>> Refresh([FromBody] RefreshRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Token))
+            return Unauthorized(new ApiMessage("Token ausente."));
+
+        var principal = _tokenService.ValidateToken(request.Token);
+        if (principal == null)
+            return Unauthorized(new ApiMessage("Token inválido ou expirado."));
+
+        var userId = principal.FindFirstValue(System.Security.Claims.ClaimTypes.NameIdentifier)
+            ?? principal.FindFirstValue("sub");
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(new ApiMessage("Token inválido."));
+
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null || user.Status == UserStatus.Inactive)
+            return Unauthorized(new ApiMessage("Usuário não encontrado ou inativo."));
+
+        var token = _tokenService.GenerateToken(user);
+        return Ok(new AuthResponse(token, ToDto(user)));
     }
 
     [HttpPost("logout")]

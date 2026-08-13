@@ -27,10 +27,19 @@ public class UsersController : ControllerBase
     }
 
     [HttpGet]
-    [Authorize(Policy = PolicyNames.ManagePermissions)]
     public async Task<ActionResult<List<UserDto>>> List()
     {
-        var users = await _db.Users.AsNoTracking().ToListAsync();
+        var query = _db.Users.AsNoTracking();
+        if (!User.HasPermission(Permissions.IsSuperAdmin))
+        {
+            var wsId = User.WorkspaceId();
+            if (!string.IsNullOrEmpty(wsId))
+                query = query.Where(u => u.WorkspaceId == wsId);
+            else
+                return Ok(new List<UserDto>());
+        }
+
+        var users = await query.OrderBy(u => u.DisplayName).ToListAsync();
         return Ok(users.Select(AuthController.ToDto));
     }
 

@@ -4,7 +4,7 @@
 
 Aplicação web para **criar, revisar, aprovar e gravar roteiros de vídeo** com teleprompter embutido (cenas com marcadores, edição colaborativa em tempo real, espelhos sincronizados, controle remoto, histórico de versões e exportação PPT/Word).
 
-**Estado atual:** em planejamento · **Greenfield** (sem migração de dados) · Realtime obrigatório · Zero Firebase · Deploy em **VM Azure** em ambiente controlado.
+**Estado atual:** backend .NET em andamento · Fase 0-2 concluídas (solução, Identity, EF Core, controllers) · auth do frontend já aponta para a API .NET · **Greenfield** (sem migração de dados) · Realtime obrigatório · Zero Firebase · Deploy em **VM Azure** em ambiente controlado.
 
 ---
 
@@ -16,7 +16,7 @@ Navegador ──┬── HTTPS/REST ──► Next.js (frontend, só apresenta�
 ```
 
 - **Frontend:** Next.js + React + TypeScript — camada de apresentação; **sem acesso ao banco e sem regra de negócio**.
-- **Backend:** ASP.NET Core Web API (.NET 9) — regras de negócio, autorização, validação e realtime (SignalR).
+- **Backend:** ASP.NET Core Web API (.NET 10) — regras de negócio, autorização, validação e realtime (SignalR).
 - **Banco:** SQL Server + EF Core — integridade, RLS por workspace, soft-delete, auditoria.
 - **Auth:** ASP.NET Core Identity (e-mail/senha + Google OAuth).
 - **Armazenamento:** Azure Blob Storage ou disco da VM.
@@ -68,29 +68,132 @@ Navegador ──┬── HTTPS/REST ──► Next.js (frontend, só apresenta�
 
 ---
 
-## Como Rodar Localmente (após implementação da Fase 0)
+## Como Rodar Localmente
+
+> Requer **.NET SDK 10+** e **Node.js 20+**.
 
 ```bash
-# Backend (pasta da solução .NET)
+# Backend (pasta backend/)
 dotnet restore
-dotnet ef database update        # cria o schema no SQL local
-dotnet run                       # API em http://localhost:5000  (Swagger: /swagger)
+dotnet ef database update        # cria o schema no SQL local (ou use SQLite em dev)
+dotnet run                       # API em http://localhost:5026  (Swagger: /swagger)
+```
 
-# Frontend (pasta frontend/)
+- Em dev a API usa **SQLite** (`Database:Provider=Sqlite` no `appsettings.Development.json`) — sem precisar de SQL Server.
+- Usuário demo criado no seed: `demo@teleprompt.app` / `Demo@12345`.
+- JWT configurado em `Jwt:*` no `appsettings.json` (troque a chave em produção).
+
+```bash
+# Frontend (raiz do projeto)
 npm install
+# Crie um arquivo .env.local apontando para a API (ver .env.example):
+#   NEXT_PUBLIC_API_URL=http://localhost:5026
 npm run dev                      # Next.js em http://localhost:3000
 ```
 
-> SQL local via Docker: `docker run -e "ACCEPT_EULA=Y" -e "SA_PASSWORD=..." -p 1433:1433 -d mcr.microsoft.com/mssql/server:2022-latest`
+- A camada `src/api/*` fala com o backend .NET (REST + SignalR). O login/registro usam `POST /api/v1/auth/*`.
+- `@microsoft/signalr` conecta nos hubs `/hubs/script` e `/hubs/tp`.
+
+### Testes
+
+```bash
+# Backend (xUnit — unit + integração via WebApplicationFactory)
+dotnet test
+
+# Frontend (Vitest — 71 casos atuais)
+npm test
+```
+
+> SQL Server via Docker para integração/Testcontainers:
+> `docker run -e "ACCEPT_EULA=Y" -e "SA_PASSWORD=REDACTED_SQL_CREDENTIAL" -p 1433:1433 -d mcr.microsoft.com/mssql/server:2022-latest`
+
+---
+
+## macOS — guia de instalação do ambiente
+
+> O mesmo código roda igual no macOS; abaixo só a preparação da máquina. A API usa **SQLite em dev**,
+> então dá para desenvolver **sem Docker**; o SQL Server (Linux) é opcional via container.
+
+### 1. .NET SDK 10
+
+```bash
+# Opção A — Homebrew
+brew install --cask dotnet-sdk
+
+# Opção B — instalador oficial (dotnet-install)
+curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0
+# depois adicione ao ~/.zshrc:
+#   export PATH="$HOME/.dotnet:$PATH"
+#   export DOTNET_ROOT="$HOME/.dotnet"
+
+# Ferramentas do EF Core (migrations)
+dotnet tool install --global dotnet-ef
+export PATH="$PATH:$HOME/.dotnet/tools"   # adicione ao ~/.zshrc
+```
+
+### 2. Node.js 20+ (recomendado: 22 LTS)
+
+```bash
+brew install node        # ou use nvm
+node -v && npm -v
+```
+
+### 3. SQL Server via Docker (opcional — só se não usar SQLite em dev)
+
+```bash
+# SQL Server 2022 (Linux, suporta Apple Silicon)
+docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=REDACTED_SQL_CREDENTIAL" \
+  -p 1433:1433 -d mcr.microsoft.com/mssql/server:2022-latest
+
+# alternativa leve p/ dev: Azure SQL Edge
+docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=REDACTED_SQL_CREDENTIAL" \
+  -p 1433:1433 -d mcr.microsoft.com/azure-sql-edge:latest
+```
+
+> Em dev basta deixar `Database:Provider=Sqlite` em
+> `backend/src/Teleprompt.Api/appsettings.Development.json` (padrão) — sem container.
+
+### 4. Rodar (igual ao Windows/Linux)
+
+```bash
+# Backend
+cd backend
+dotnet restore
+dotnet run --project src/Teleprompt.Api        # http://localhost:5026
+
+# Frontend (raiz do projeto)
+cd ..
+npm install
+cp .env.example .env.local    # NEXT_PUBLIC_API_URL=http://localhost:5026
+npm run dev                    # http://localhost:3000
+```
+
+### 5. Solução de problemas no macOS
+
+| Problema | Solução |
+|---|---|
+| `dotnet: command not found` | Exporte o PATH/`DOTNET_ROOT` do `dotnet-install` no `~/.zshrc` (passo 1) |
+| `dotnet ef: command not found` | `dotnet tool install --global dotnet-ef` e adicione `~/.dotnet/tools` ao PATH |
+| Porta 5026 em uso | Altere `applicationUrl` em `launchSettings.json` e o `NEXT_PUBLIC_API_URL` |
+| Apple Silicon + SQL Server | Use o container `mcr.microsoft.com/mssql/server:2022-latest` (tem imagem ARM) |
+| Certificado HTTPS dev | `dotnet dev-certs https` |
 
 ---
 
 ## Próximos Passos
 
-1. Definir as **decisões pendentes** (§15 do planejamento): OS da VM, SQL na mesma VM vs Azure SQL, storage.
-2. Executar a **Fase 0** — solução .NET, Identity, EF Core + modelo SQL, Swagger.
-3. POC de **1 semana** do realtime do teleprompter (2 abas sincronizadas) antes da Fase 3.
+1. **Migrar o acesso a dados do frontend** (dashboard, projetos, editor, TP, relatórios, admin) do Firestore para a camada `src/api/*` — o backend já expõe os endpoints REST + hubs SignalR.
+2. Definir as **decisões pendentes** (§15 do planejamento): OS da VM, SQL na mesma VM vs Azure SQL, storage.
+3. POC de **1 semana** do realtime do teleprompter (2 abas sincronizadas) via SignalR antes da Fase 3.
 4. Cronograma completo das 7 fases no §13 do [`PLANEJAMENTO-NET.md`](./PLANEJAMENTO-NET.md).
+
+## Progresso
+
+- ✅ **Fase 0** — solução .NET em camadas (Domain / Application / Infrastructure / Api), Identity, EF Core + modelo, Swagger.
+- ✅ **Fase 1** — auth: register, login, me, refresh (rolling JWT), logout; roles e permissões; workspace via convite.
+- ✅ **Fase 2** — controllers: workspaces, projects, scripts (+ parser, versões, comentários, checklist, export), tp sessions, teams, presenters, users/admin, reports, activities, upload; hubs SignalR (`/hubs/script`, `/hubs/tp`); RLS no SQL Server.
+- ✅ **Build + testes** — `dotnet build` limpo (0 warnings), 14 testes xUnit verdes, smoke test E2E do fluxo completo na API.
+- ✅ **Frontend** — auth trocado para a API .NET (`src/api/*` + `AuthContext`), tipo da sessão unificado, `middleware.ts` atualizado; 71 testes Vitest verdes + `tsc` limpo.
 
 ---
 

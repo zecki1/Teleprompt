@@ -2,11 +2,14 @@
 
 import { useEffect, useState, useRef, use, useCallback, useMemo, Suspense } from "react";
 import dynamic from "next/dynamic";
-import { doc, getDoc, onSnapshot, getDocs, addDoc, collection, query, orderBy, limit, updateDoc, serverTimestamp, where, setDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import { logActivity } from "@/lib/activity";
+import { getScript, updateScript } from "@/api/scripts";
+import { createTpSession, getTpSession, updateTpSession, markRecorded } from "@/api/tp";
+import { getChecklist, updateChecklist } from "@/api/comments";
+import { createVersion } from "@/api/versions";
+import { getSignalRClient } from "@/api/realtime";
+import type { TpSessionDto } from "@/api/types";
 import { debugLog, debugInfo, debugWarn, debugError, debugPerf } from "@/lib/debug-log";
-import { Scene, stripHtml } from "@/lib/parser";
+import { Scene, stripHtml, parseScript } from "@/lib/parser";
 import { ScriptDoc } from "@/types/script";
 import { RemoteControlUI } from "@/components/tp/RemoteControlUI";
 import { RecordingOrderPanel, getRecordingOrder } from "@/components/tp/RecordingOrderPanel";
@@ -55,6 +58,9 @@ import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getScriptPath } from "@/lib/pathUtils";
+import { getScriptsByWorkspace } from "@/services/projects";
+import { usePolling } from "@/lib/polling";
+import { BACKEND_TO_LOCAL_STATUS } from "@/lib/script-mappers";
 import Link from "next/link";
 const CommentsPanel = dynamic(
   () => import("@/components/tp/CommentsPanel").then((m) => ({ default: m.CommentsPanel })),
@@ -72,10 +78,30 @@ import { useRouter } from "next/navigation";
 
 
 
+// Mapeia o modo de scroll local para o enum do backend (TpScrollMode).
+const LOCAL_TO_BACKEND_MODE: Record<TPScrollMode, string> = {
+  paragraph: "Paragraph",
+  scene: "Scene",
+  middle: "HalfScene",
+  all: "Continuous",
+};
+
+const BACKEND_TO_LOCAL_MODE: Record<string, TPScrollMode> = {
+  Paragraph: "paragraph",
+  Scene: "scene",
+  HalfScene: "middle",
+  Continuous: "all",
+};
+
+// Sessão do TP é compartilhada entre master e mirror do mesmo navegador
+// (mesmo origin) via localStorage.
+const SESSION_STORAGE_KEY = (scriptId: string) => `tp-session-id-${scriptId}`;
+const CHECKLIST_STORAGE_KEY = (scriptId: string, uid: string) =>
+  `tp-checklist-confirmed-${scriptId}-${uid}`;
+
 
 function TeleprompterContent({ id }: { id: string }) {
   const [scenes, setScenes] = useState<Scene[]>([]);
-  const [versionId, setVersionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   
   const isMirrorWindow = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('mirror') === 'true' : false;
@@ -119,11 +145,11 @@ function TeleprompterContent({ id }: { id: string }) {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [nextScript, setNextScript] = useState<ScriptDoc | null>(null);
   const [showNextModal, setShowNextModal] = useState(false);
-  const [editorId, setEditorId] = useState<string | null>(null);
   const [isSavingChecklist, setIsSavingChecklist] = useState(false);
   const [recordingOrder, setRecordingOrder] = useState<string[] | null>(null);
   const [folderProgress, setFolderProgress] = useState<{ total: number; recorded: number; pending: number } | null>(null);
   const [nextFolderPath, setNextFolderPath] = useState<string[] | null>(null);
+  const [tpSessionId, setTpSessionId] = useState<string | null>(null);
   const router = useRouter();
 
   // Refs para Motor de Scroll (Evita lag de estado)
@@ -136,6 +162,15 @@ function TeleprompterContent({ id }: { id: string }) {
   const progressRef = useRef(0);
   const scrollModeRef = useRef<TPScrollMode>("scene");
   useEffect(() => { scrollModeRef.current = scrollMode; }, [scrollMode]);
+
+  // Estado persistido da sessão TP (backend + SignalR)
+  const tpSessionIdRef = useRef<string | null>(null);
+  const contentRef = useRef<string | null>(null);
+  const lastPersistedStateRef = useRef<{ speed: number | null; mode: string | null }>({ speed: null, mode: null });
+  const lastScrollSentAtRef = useRef(0);
+  const lastSessionPersistAtRef = useRef(0);
+  const lastBcMessageAtRef = useRef(0);
+  const lastLocalActionAtRef = useRef(0);
 
   // Binds efetivos de atalho (padrão de fábrica + personalização por usuário)
   const effectiveBindings = useMemo<TPBindings>(
@@ -202,13 +237,6 @@ function TeleprompterContent({ id }: { id: string }) {
     c.scrollBy({ top: step, behavior: 'smooth' });
   }, [goToNextScene, goToMiddleOfScene]);
 
-  // Grava o progresso no Firestore (apenas em pause/saída para reduzir writes)
-  const flushProgress = useCallback(() => {
-    try {
-      updateDoc(doc(db, "scripts", id), { progress: progressRef.current }).catch(() => {});
-    } catch {}
-  }, [id]);
-  const lastProcessedReset = useRef<number>(0);
   const [showCountdown, setShowCountdown] = useState(false);
   const [countdownValue, setCountdownValue] = useState(3);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -276,6 +304,171 @@ function TeleprompterContent({ id }: { id: string }) {
     setRealTime(0);
   };
 
+  // Persiste o estado da sessão TP (scrollStateJson + speed + mode).
+  // O backend só armazena speed em [0.1, 10] — registramos o valor efetivamente
+  // enviado para ignorar o eco do próprio poll (self-echo) no master.
+  const persistTpState = useCallback(async (progressOverride?: number) => {
+    const sessionId = tpSessionIdRef.current;
+    if (!sessionId) return;
+    const sentSpeed = Math.min(Math.max(speedRef.current, 0.1), 10);
+    const sentMode = LOCAL_TO_BACKEND_MODE[scrollModeRef.current];
+    const state = {
+      position: progressOverride ?? progressRef.current,
+      speed: sentSpeed,
+      mode: sentMode,
+      isPlaying: isPlayingRef.current,
+      updatedAt: new Date().toISOString(),
+    };
+    lastPersistedStateRef.current = { speed: sentSpeed, mode: sentMode };
+    try {
+      await updateTpSession(sessionId, {
+        speed: sentSpeed,
+        mode: sentMode,
+        scrollStateJson: JSON.stringify(state),
+      });
+      lastSessionPersistAtRef.current = Date.now();
+    } catch (e) {
+      debugWarn("tp.persist", "Falha ao salvar estado do TP", undefined, e);
+    }
+  }, []);
+
+  // Aplica o estado remoto da sessão (polling). O BroadcastChannel é a fonte
+  // real-time entre master e mirror do mesmo navegador — enquanto ele estiver
+  // ativo o estado persistido é redundante e não deve sobrescrever a UI.
+  const applyTpSession = useCallback((dto: TpSessionDto) => {
+    let parsed: { position?: number; speed?: number; mode?: string; isPlaying?: boolean } | null = null;
+    try {
+      if (dto.scrollStateJson) parsed = JSON.parse(dto.scrollStateJson);
+    } catch {
+      parsed = null;
+    }
+
+    const isFirstApply = !initialSyncDoneRef.current;
+    initialSyncDoneRef.current = true;
+    if (isFirstApply && !isMirrorWindow && parsed?.isPlaying === true) {
+      // Primeiro load: sempre começar pausado (evita leftover da sessão)
+      setIsPlaying(false);
+      isPlayingRef.current = false;
+      playRequestedRef.current = false;
+    }
+
+    const now = Date.now();
+    if (now - lastBcMessageAtRef.current < 1200) return;
+    if (now - lastLocalActionAtRef.current < 1200) return;
+
+    const serverSpeed = typeof dto.speed === "number" ? dto.speed : parsed?.speed;
+    const serverMode = dto.mode || parsed?.mode;
+
+    const isSelfEcho =
+      (lastPersistedStateRef.current.speed !== null &&
+        typeof serverSpeed === "number" &&
+        Math.abs(serverSpeed - lastPersistedStateRef.current.speed) < 0.001) ||
+      (lastPersistedStateRef.current.mode !== null && serverMode === lastPersistedStateRef.current.mode);
+
+    if (!isMirrorWindow && isSelfEcho) return;
+
+    if (typeof serverSpeed === "number" && Math.abs(serverSpeed - speedRef.current) > 0.01) {
+      setSpeed(serverSpeed);
+      speedRef.current = serverSpeed;
+    }
+    if (serverMode) {
+      const m = BACKEND_TO_LOCAL_MODE[serverMode];
+      if (m && m !== scrollModeRef.current) {
+        setScrollMode(m);
+        scrollModeRef.current = m;
+      }
+    }
+    if (isMirrorWindow) {
+      if (parsed && typeof parsed.isPlaying === "boolean" && parsed.isPlaying !== isPlayingRef.current) {
+        setIsPlaying(parsed.isPlaying);
+        isPlayingRef.current = parsed.isPlaying;
+        if (parsed.isPlaying) playRequestedRef.current = false;
+      }
+      if (parsed && typeof parsed.position === "number" && Math.abs(parsed.position - progressRef.current) > 0.02) {
+        const c = containerRef.current;
+        if (c) {
+          const maxScroll = c.scrollHeight - c.clientHeight;
+          if (maxScroll > 0) {
+            c.scrollTop = parsed.position * maxScroll;
+            setLocalProgress(parsed.position);
+          }
+        }
+      }
+    }
+  }, [isMirrorWindow]);
+
+  // Cria ou recupera a sessão TP para o roteiro. O id é compartilhado entre
+  // master e mirror do mesmo navegador via localStorage.
+  const ensureTpSession = useCallback(async (): Promise<string | null> => {
+    if (tpSessionIdRef.current) return tpSessionIdRef.current;
+    const key = SESSION_STORAGE_KEY(id);
+    try {
+      const stored = window.localStorage.getItem(key);
+      if (stored) {
+        try {
+          const dto = await getTpSession(stored);
+          tpSessionIdRef.current = dto.id;
+          setTpSessionId(dto.id);
+          return dto.id;
+        } catch {
+          // sessão não existe mais no backend → cria uma nova
+        }
+      }
+      const dto = await createTpSession({
+        scriptId: id,
+        mode: LOCAL_TO_BACKEND_MODE[scrollModeRef.current],
+        speed: Math.min(Math.max(speedRef.current, 0.1), 10),
+      });
+      tpSessionIdRef.current = dto.id;
+      setTpSessionId(dto.id);
+      try { window.localStorage.setItem(key, dto.id); } catch {}
+      return dto.id;
+    } catch (e) {
+      debugError("tp.session", "Falha ao criar sessão do TP", e, { scriptId: id });
+      return null;
+    }
+  }, [id]);
+
+  // Atualiza o estado de reprodução local, persiste e avisa os demais
+  // participantes via SignalR.
+  const setPlayState = useCallback((playing: boolean) => {
+    isPlayingRef.current = playing;
+    setIsPlaying(playing);
+    if (playing) playRequestedRef.current = false;
+    lastLocalActionAtRef.current = Date.now();
+    persistTpState();
+    getSignalRClient().remoteCommand(tpSessionIdRef.current ?? "", playing ? "play" : "pause").catch(() => {});
+  }, [persistTpState]);
+
+  // Reinicia o roteiro (scroll, timer e estado de reprodução) e propaga para
+  // o mirror (BroadcastChannel) e demais participantes (SignalR).
+  const resetPlayback = useCallback(() => {
+    resetTimer();
+    if (countdownActiveRef.current) {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      countdownActiveRef.current = false;
+      setShowCountdown(false);
+      try { bcRef.current?.postMessage({ type: 'countdown', value: 0 }); } catch {}
+    }
+    progressRef.current = 0;
+    setLocalProgress(0);
+    setIsPlaying(false);
+    isPlayingRef.current = false;
+    playRequestedRef.current = false;
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    lastLocalActionAtRef.current = Date.now();
+    persistTpState(0);
+    try {
+      bcRef.current?.postMessage({ type: 'syncScroll', scrollTop: 0, progress: 0 });
+    } catch {}
+    getSignalRClient().remoteCommand(tpSessionIdRef.current ?? "", "home").catch(() => {});
+  }, [persistTpState]);
+
+  // Grava o progresso no backend (apenas em pause/saída para reduzir writes)
+  const flushProgress = useCallback(() => {
+    persistTpState();
+  }, [persistTpState]);
+
   useEffect(() => {
     if (!isMirrorWindow) {
       if (isPlaying && sessionStartRef.current === null) {
@@ -300,48 +493,23 @@ function TeleprompterContent({ id }: { id: string }) {
   const [referenceInches, setReferenceInches] = useState(11);
   const [operatorInches, setOperatorInches] = useState(27);
 
-  // Carregar preferências salvas do usuário — fonte da verdade para o master
-  // No mirror, o onSnapshot do script doc aplica os estilos
-  useEffect(() => {
-    if (!user?.uid || isMirrorWindow) return;
-    getDoc(doc(db, "users", user.uid)).then((snap) => {
-      if (!snap.exists()) return;
-      const prefs = snap.data()?.tpPreferences;
-      if (!prefs) return;
-      if (prefs.fontSize) setFontSize(prefs.fontSize);
-      if (prefs.textAlign) setTextAlign(prefs.textAlign);
-      if (prefs.fontFamily) setFontFamily(prefs.fontFamily);
-      if (prefs.fontWeight) setFontWeight(prefs.fontWeight);
-      if (prefs.lineHeight) setLineHeight(prefs.lineHeight);
-      if (prefs.maxWidth) setMaxWidth(prefs.maxWidth);
-      if (prefs.bgColor) setBgColor(prefs.bgColor);
-      if (prefs.textColor) setTextColor(prefs.textColor);
-      if (typeof prefs.showReadingStrip === "boolean") setShowReadingStrip(prefs.showReadingStrip);
-      if (typeof prefs.countdownEnabled === "boolean") setCountdownEnabled(prefs.countdownEnabled);
-      if (prefs.sceneGap) setSceneGap(prefs.sceneGap);
-      if (typeof prefs.referenceInches === "number") setReferenceInches(prefs.referenceInches);
-      if (typeof prefs.operatorInches === "number") setOperatorInches(prefs.operatorInches);
-      if (typeof prefs.speed === "number") { setSpeed(prefs.speed); speedRef.current = prefs.speed; }
-      if (prefs.scrollMode) setScrollMode(prefs.scrollMode);
-      if (prefs.tpShortcuts && typeof prefs.tpShortcuts === "object") {
-        setUserShortcuts(prefs.tpShortcuts as Partial<Record<TPActionId, string>>);
-      }
-    }).catch(() => {});
-  }, [user?.uid, isMirrorWindow]);
+  // Preferências de TP (fonte, cores, atalhos) não são persistidas pelo
+  // backend — ficam apenas no estado local (defaults) e seguem para o mirror
+  // via BroadcastChannel (syncStyles).
 
-  const saveUserPreferences = async (data: Record<string, unknown>) => {
-    if (!user?.uid || isMirrorWindow) return;
-    try {
-      await setDoc(doc(db, "users", user.uid), { tpPreferences: data }, { merge: true });
-    } catch (e) { debugWarn("tp.preferences", "Falha ao salvar preferências", undefined, e); }
+  const saveUserPreferences = async (_data: Record<string, unknown>) => {
+    // No-op: o backend .NET não persiste preferências de usuário.
   };
 
   const handleScrollModeChange = useCallback((mode: TPScrollMode) => {
     setScrollMode(mode);
+    scrollModeRef.current = mode;
     saveUserPreferences({ scrollMode: mode });
-    updateDoc(doc(db, "scripts", id), { scrollMode: mode }).catch(() => {});
+    lastLocalActionAtRef.current = Date.now();
+    persistTpState();
+    getSignalRClient().modeChanged(tpSessionIdRef.current ?? "", LOCAL_TO_BACKEND_MODE[mode]).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [persistTpState]);
 
   // CSS para ocultar marcadores no TP e garantir estabilidade na edição
   useEffect(() => {
@@ -425,8 +593,9 @@ function TeleprompterContent({ id }: { id: string }) {
           isPlayingRef.current = true;
           countdownJustFinishedRef.current = true;
           setTimeout(() => { countdownJustFinishedRef.current = false; }, 2000);
-          updateDoc(doc(db, "scripts", id), { isPlaying: true }).then(() => {
-          });
+          lastLocalActionAtRef.current = Date.now();
+          persistTpState();
+          getSignalRClient().remoteCommand(tpSessionIdRef.current ?? "", "play").catch(() => {});
         }
       }
     }, 1000);
@@ -448,7 +617,10 @@ function TeleprompterContent({ id }: { id: string }) {
     } else {
       setIsPlaying(true);
       isPlayingRef.current = true;
-      updateDoc(doc(db, "scripts", id), { isPlaying: true });
+      playRequestedRef.current = false;
+      lastLocalActionAtRef.current = Date.now();
+      persistTpState();
+      getSignalRClient().remoteCommand(tpSessionIdRef.current ?? "", "play").catch(() => {});
     }
   };
 
@@ -599,26 +771,23 @@ function TeleprompterContent({ id }: { id: string }) {
     }).join('\n\n');
   };
 
-  // Persiste a lista de cenas na versão atual do roteiro
+  // Persiste a lista de cenas no roteiro (nova versão + conteúdo atualizado)
   const persistScenes = async (list: Scene[]) => {
-    if (!versionId) return;
     try {
       const rawContent = reconstructRawText(list);
-      await updateDoc(doc(db, "scripts", id, "versions", versionId), { scenes: list, content: rawContent });
-      await updateDoc(doc(db, "scripts", id), {
-        duration: calculateDuration(list),
-        updatedAt: serverTimestamp()
-      });
+      contentRef.current = rawContent;
+      await createVersion(id, rawContent);
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus(null), 2000);
     } catch (e) {
-      debugError("tp.scene", "Falha ao salvar edição da cena", e, { versionId });
+      debugError("tp.scene", "Falha ao salvar edição da cena", e, { scriptId: id });
     }
   };
 
   const updateGlobalStyle = async (data: Record<string, string | number | boolean>) => {
     if (isMirrorWindow) return;
-    // Atualizar state local imediatamente
+    // Atualizar state local imediatamente (estilos não são persistidos pelo
+    // backend — seguem para o mirror via BroadcastChannel syncStyles)
     if (data.fontSize !== undefined) setFontSize(data.fontSize as string);
     if (data.textAlign !== undefined) setTextAlign(data.textAlign as string);
     if (data.fontFamily !== undefined) setFontFamily(data.fontFamily as string);
@@ -632,62 +801,179 @@ function TeleprompterContent({ id }: { id: string }) {
     if (data.sceneGap !== undefined) setSceneGap(data.sceneGap as string);
     if (typeof data.referenceInches === "number") setReferenceInches(data.referenceInches);
     if (typeof data.operatorInches === "number") setOperatorInches(data.operatorInches);
-    if (typeof data.speed === "number") { setSpeed(data.speed); speedRef.current = data.speed; }
-    // Salvar no Firestore (para mirror sync) e nas preferências do usuário
-    try {
-      await updateDoc(doc(db, "scripts", id), data);
+    if (typeof data.speed === "number") {
+      setSpeed(data.speed);
+      speedRef.current = data.speed;
+      lastLocalActionAtRef.current = Date.now();
+      persistTpState();
+      getSignalRClient().speedChanged(tpSessionIdRef.current ?? "", data.speed).catch(() => {});
       saveUserPreferences(data);
-    } catch (e) { debugWarn("tp.styles", "Falha ao aplicar estilos", { fields: Object.keys(data) }, e); }
+    }
+    if (typeof data.isPlaying === "boolean" && data.isPlaying !== isPlayingRef.current) {
+      setIsPlaying(data.isPlaying);
+      isPlayingRef.current = data.isPlaying;
+      if (data.isPlaying) playRequestedRef.current = false;
+      lastLocalActionAtRef.current = Date.now();
+      persistTpState();
+      getSignalRClient().remoteCommand(tpSessionIdRef.current ?? "", data.isPlaying ? "play" : "pause").catch(() => {});
+    }
+    if (data.progress !== undefined) {
+      progressRef.current = Number(data.progress);
+      setLocalProgress(Number(data.progress));
+      persistTpState();
+    }
   };
 
-  // --- 2. CARREGAMENTO E SYNC FIRESTORE ---
+  // --- 2. CARREGAMENTO E SYNC (BACKEND + POLLING + SIGNALR) ---
 
   useEffect(() => {
     const loadStartedAt = performance.now();
     debugInfo("tp.load", "Iniciando carregamento das cenas", { scriptId: id, mirror: isMirrorWindow });
-    // onSnapshot responde primeiro do cache local (abre instantâneo) e depois
-    // sincroniza em tempo real — evita esperar round-trip lento do servidor.
-    const q = query(collection(db, "scripts", id, "versions"), orderBy("createdAt", "desc"), limit(1));
-    const unsub = onSnapshot(
-      q,
-      (snapshot) => {
-        if (!snapshot.empty) {
-          const docData = snapshot.docs[0].data();
-          setVersionId(snapshot.docs[0].id);
-          const loadedScenes = docData.scenes || [];
-          setScenes(loadedScenes);
-          setDuration(calculateDuration(loadedScenes));
-        } else {
-          debugWarn("tp.load", "Nenhuma versão encontrada para o roteiro", { scriptId: id });
-        }
-        setLoading(false);
-        debugPerf("tp.load", "Cenas carregadas", loadStartedAt, { sceneCount: snapshot.size });
-      },
-      (e) => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const script = await getScript(id);
+        if (cancelled) return;
+        contentRef.current = script.content || "";
+        const loadedScenes = parseScript(script.content || "");
+        setScenes(loadedScenes);
+        setDuration(calculateDuration(loadedScenes));
+        setScriptTitle(script.title);
+        setScriptStatus(BACKEND_TO_LOCAL_STATUS[script.status] ?? "rascunho");
+        if (script.projectId) setProjectId(script.projectId);
+        if (script.workspaceId) setWorkspaceId(script.workspaceId);
+        debugPerf("tp.load", "Cenas carregadas", loadStartedAt, { sceneCount: loadedScenes.length });
+      } catch (e) {
         debugError("tp.load", "Falha ao carregar cenas", e, { scriptId: id });
-        setLoading(false);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    );
-    return () => unsub();
+
+      const sessionId = await ensureTpSession();
+      if (cancelled || !sessionId) return;
+      try {
+        const dto = await getTpSession(sessionId);
+        if (!cancelled) applyTpSession(dto);
+      } catch {}
+    };
+    load();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // Limpar countdownStartedAt obsoleto ao carregar (se não estiver tocando)
-  useEffect(() => {
-    if (isMirrorWindow) return;
-    const clean = async () => {
+  // Polling: recarrega roteiro + estado da sessão TP no lugar de listeners
+  // de banco — o estado remoto chega via sessão TP, SignalR e BroadcastChannel.
+  usePolling(async () => {
+    try {
+      const script = await getScript(id);
+      const newContent = script.content || "";
+      if (script.title) setScriptTitle(script.title);
+      if (script.status) setScriptStatus(BACKEND_TO_LOCAL_STATUS[script.status] ?? "rascunho");
+      if (script.projectId) setProjectId(script.projectId);
+      if (script.workspaceId) setWorkspaceId(script.workspaceId);
+      if (contentRef.current !== newContent && !editModeRef.current && !isEditingRef.current) {
+        contentRef.current = newContent;
+        const loadedScenes = parseScript(newContent);
+        setScenes(loadedScenes);
+        setDuration(calculateDuration(loadedScenes));
+      }
+    } catch {}
+    if (tpSessionIdRef.current) {
       try {
-        const snap = await getDoc(doc(db, "scripts", id));
-        if (snap.exists()) {
-          const d = snap.data();
-          if (d.countdownStartedAt && !d.isPlaying) {
-            await updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
+        const dto = await getTpSession(tpSessionIdRef.current);
+        applyTpSession(dto);
+      } catch {}
+    }
+  }, 2000, [id]);
+
+  // Real-time do teleprompter via SignalR (estado compartilhado da sessão):
+  // o master publica scroll/velocidade/modo/comandos e o mirror (ou janela
+  // remota) aplica localmente sem resetar o scroll durante a reprodução.
+  useEffect(() => {
+    if (!tpSessionId) return;
+    const rt = getSignalRClient();
+    rt.joinTp(tpSessionId, isMirrorWindow ? "mirror" : "master").catch((e) =>
+      debugWarn("tp.signalr", "Falha ao entrar na sessão", { tpSessionId }, e)
+    );
+
+    const applyRemoteState = (position?: number, speed?: number, mode?: string) => {
+      if (!isMirrorWindow && Date.now() - lastLocalActionAtRef.current < 1200) return;
+      if (typeof speed === "number" && Math.abs(speed - speedRef.current) > 0.01) {
+        setSpeed(speed);
+        speedRef.current = speed;
+      }
+      if (mode) {
+        const m = BACKEND_TO_LOCAL_MODE[mode];
+        if (m && m !== scrollModeRef.current) {
+          setScrollMode(m);
+          scrollModeRef.current = m;
+        }
+      }
+      if (isMirrorWindow && typeof position === "number" && Math.abs(position - progressRef.current) > 0.02) {
+        const c = containerRef.current;
+        if (c) {
+          const maxScroll = c.scrollHeight - c.clientHeight;
+          if (maxScroll > 0) {
+            c.scrollTop = position * maxScroll;
+            setLocalProgress(position);
           }
         }
-      } catch {}
+      }
     };
-    clean();
-  }, [id, isMirrorWindow]);
+
+    const onScrollStateChanged = (args: unknown[]) => {
+      if (args[0] !== tpSessionId) return;
+      applyRemoteState(Number(args[1]), Number(args[2]), String(args[3]));
+    };
+    const onModeChanged = (args: unknown[]) => {
+      if (args[0] !== tpSessionId) return;
+      applyRemoteState(undefined, undefined, String(args[1]));
+    };
+    const onSpeedChanged = (args: unknown[]) => {
+      if (args[0] !== tpSessionId) return;
+      applyRemoteState(undefined, Number(args[1]));
+    };
+    const onRemoteCommand = (args: unknown[]) => {
+      if (args[0] !== tpSessionId) return;
+      const command = String(args[1]);
+      switch (command) {
+        case "play":
+          setIsPlaying(true);
+          isPlayingRef.current = true;
+          playRequestedRef.current = false;
+          break;
+        case "pause":
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+          break;
+        case "home":
+        case "reset":
+          progressRef.current = 0;
+          setLocalProgress(0);
+          if (containerRef.current) containerRef.current.scrollTop = 0;
+          break;
+        case "next":
+          navigateNext();
+          break;
+        case "prev":
+          navigatePrev();
+          break;
+      }
+    };
+
+    const unsubs = [
+      // A runtime do SignalRClient entrega o array de argumentos como um único
+      // argumento; o cast apenas alinha o tipo com a assinatura variádica.
+      rt.on("ScrollStateChanged", onScrollStateChanged as (...args: unknown[]) => void),
+      rt.on("ModeChanged", onModeChanged as (...args: unknown[]) => void),
+      rt.on("SpeedChanged", onSpeedChanged as (...args: unknown[]) => void),
+      rt.on("RemoteCommand", onRemoteCommand as (...args: unknown[]) => void),
+    ];
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tpSessionId, isMirrorWindow]);
 
   // --- CHECK SE CHECKLIST JÁ FOI FEITO PARA ESTE ROTEIRO ---
   useEffect(() => {
@@ -704,13 +990,18 @@ function TeleprompterContent({ id }: { id: string }) {
     checklistLoadingRef.current = true;
     const checkDone = async () => {
       try {
-        const snap = await getDocs(
-          query(
-            collection(db, "scripts", id, "checklist_confirmations"),
-            where("userId", "==", user.uid)
-          )
-        );
-        if (!snap.empty) { setChecklistDone(true); checklistDoneRef.current = true; }
+        // Confirmação local por usuário+roteiro (equivalente à antiga
+        // subcoleção checklist_confirmations).
+        if (window.localStorage.getItem(CHECKLIST_STORAGE_KEY(id, user.uid)) === "1") {
+          setChecklistDone(true);
+          checklistDoneRef.current = true;
+        } else {
+          const items = await getChecklist(id);
+          if (items.length > 0 && items.every((i) => !i.required || i.isChecked)) {
+            setChecklistDone(true);
+            checklistDoneRef.current = true;
+          }
+        }
       } catch { /* ignore */ }
       setChecklistLoading(false);
       checklistLoadingRef.current = false;
@@ -723,106 +1014,22 @@ function TeleprompterContent({ id }: { id: string }) {
     if (scriptStatus === 'gravado') setChecklistDone(true);
   }, [scriptStatus]);
 
-  useEffect(() => {
-    if (!user?.uid) return;
-    const unsub = onSnapshot(doc(db, "scripts", id), (docObj) => {
-      if (docObj.exists()) {
-        const d = docObj.data();
-        const isFirstSnapshot = !initialSyncDoneRef.current;
-        initialSyncDoneRef.current = true;
-
-        // Sincronizar isPlaying
-        if (typeof d.isPlaying === "boolean") {
-          if (isFirstSnapshot) {
-            // Primeiro snapshot: sempre começar pausado (evita leftover do Firestore)
-            setIsPlaying(false);
-            isPlayingRef.current = false;
-            playRequestedRef.current = false;
-            if (d.isPlaying && !isMirrorWindow) {
-              updateDoc(doc(db, "scripts", id), { isPlaying: false });
-            }
-          } else if (d.isPlaying && !isPlayingRef.current && !playRequestedRef.current && !checklistDoneRef.current && !checklistLoadingRef.current && !isMirrorWindow) {
-            // Firestore mandou play sem permissão (checklist pendente)
-            setIsPlaying(false);
-            isPlayingRef.current = false;
-            setShowChecklist(true);
-            updateDoc(doc(db, "scripts", id), { isPlaying: false });
-          } else if (!d.isPlaying && countdownJustFinishedRef.current) {
-            // Ignorar falso isPlaying:false logo após countdown
-          } else {
-            setIsPlaying(d.isPlaying);
-            isPlayingRef.current = d.isPlaying;
-            if (d.isPlaying) playRequestedRef.current = false;
-          }
-        }
-        if (d.title) setScriptTitle(d.title);
-        if (d.status) setScriptStatus(d.status);
-        if (d.recordingTaskId) setRecordingTaskId(d.recordingTaskId);
-        if (d.projectId) setProjectId(d.projectId);
-        if (d.projectName) setProjectName(d.projectName);
-        if (d.folder) setFolder(d.folder);
-        const scriptPath = getScriptPath(d as ScriptDoc);
-        setPath(scriptPath);
-        if (d.workspaceId) setWorkspaceId(d.workspaceId);
-        if (d.editorId) setEditorId(d.editorId);
-
-        // Estilos vêm exclusivamente do tpPreferences do usuário no master.
-        // No mirror, aplicar do documento do roteiro (sync via Firestore).
-        // Velocidade: após o primeiro snapshot, seguir o documento em ambos (master e mirror)
-        if (!isFirstSnapshot && typeof d.speed === "number") {
-          setSpeed(d.speed);
-          speedRef.current = d.speed;
-        }
-        if (isMirrorWindow) {
-          if (d.fontSize) setFontSize(d.fontSize);
-          if (d.textAlign) setTextAlign(d.textAlign);
-          if (d.bgColor) setBgColor(d.bgColor);
-          if (d.textColor) setTextColor(d.textColor);
-          if (d.maxWidth) setMaxWidth(d.maxWidth);
-          if (d.fontFamily) setFontFamily(d.fontFamily);
-          if (d.fontWeight) setFontWeight(d.fontWeight);
-          if (d.lineHeight) setLineHeight(d.lineHeight);
-          if (typeof d.showReadingStrip === "boolean") setShowReadingStrip(d.showReadingStrip);
-          if (typeof d.countdownEnabled === "boolean") setCountdownEnabled(d.countdownEnabled);
-          if (d.sceneGap) setSceneGap(d.sceneGap);
-          if (typeof d.referenceInches === "number") setReferenceInches(d.referenceInches);
-          if (typeof d.operatorInches === "number") setOperatorInches(d.operatorInches);
-        }
-
-        if (d.resetRequest && d.resetRequest !== lastProcessedReset.current) {
-          if (containerRef.current) containerRef.current.scrollTop = 0;
-          lastProcessedReset.current = d.resetRequest;
-        }
-      }
-    });
-    return () => unsub();
-  }, [id, user?.uid, isMirrorWindow]);
-
   // --- 3. ATALHOS DE TECLADO (BINDS PERSONALIZÁVEIS POR USUÁRIO) ---
 
   useEffect(() => {
     const goHome = () => {
-      resetTimer();
-      if (countdownActiveRef.current) {
-        if (countdownRef.current) clearInterval(countdownRef.current);
-        countdownActiveRef.current = false;
-        setShowCountdown(false);
-        updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
-        if (bcRef.current) {
-          bcRef.current.postMessage({ type: 'countdown', value: 0 });
-        }
-      }
-      progressRef.current = 0;
-      setLocalProgress(0);
-      if (containerRef.current) containerRef.current.scrollTop = 0;
-      updateDoc(doc(db, "scripts", id), { resetRequest: Date.now(), isPlaying: false, progress: 0 }).catch(() => {});
+      // Reinício completo: reseta scroll/timer/reprodução local e propaga
+      // para o mirror (BroadcastChannel) e demais participantes (SignalR).
+      resetPlayback();
     };
 
     const setSpeedValue = (value: number) => {
       const newSpeed = Math.min(Math.max(value, 0), 30);
       speedRef.current = newSpeed;
       setSpeed(newSpeed);
-      updateDoc(doc(db, "scripts", id), { speed: newSpeed });
+      lastLocalActionAtRef.current = Date.now();
+      persistTpState();
+      getSignalRClient().speedChanged(tpSessionIdRef.current ?? "", newSpeed).catch(() => {});
       saveUserPreferences({ speed: newSpeed });
     };
 
@@ -835,26 +1042,23 @@ function TeleprompterContent({ id }: { id: string }) {
         if (countdownRef.current) clearInterval(countdownRef.current);
         countdownActiveRef.current = false;
         setShowCountdown(false);
-        updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
-        if (bcRef.current) {
-          bcRef.current.postMessage({ type: 'countdown', value: 0 });
-        }
+        try { bcRef.current?.postMessage({ type: 'countdown', value: 0 }); } catch {}
         return;
       }
       if (isMirrorWindow) {
         if (isPlayingRef.current) {
-          updateDoc(doc(db, "scripts", id), { isPlaying: false });
+          setPlayState(false);
         } else {
           if (bcRef.current) {
             bcRef.current.postMessage({ type: 'start-countdown' });
           } else {
-            updateDoc(doc(db, "scripts", id), { isPlaying: true });
+            setPlayState(true);
           }
         }
       } else {
         const needsChecklist = user?.requiresChecklist === true;
         if (isPlayingRef.current) {
-          updateDoc(doc(db, "scripts", id), { isPlaying: false, progress: progressRef.current });
+          setPlayState(false);
         } else if (!checklistDone && needsChecklist) {
           setShowChecklist(true);
         } else {
@@ -939,7 +1143,7 @@ function TeleprompterContent({ id }: { id: string }) {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [id, isCommentsVisible, user?.requiresChecklist, checklistDone, effectiveBindings, navigatePrev, navigateNext, goToMiddleOfScene]);
+  }, [isCommentsVisible, user?.requiresChecklist, checklistDone, effectiveBindings, navigatePrev, navigateNext, goToMiddleOfScene, persistTpState, setPlayState, resetPlayback, isMirrorWindow]);
 
   // --- 4. MOTOR DE SCROLL E BROADCAST ---
   useEffect(() => {
@@ -1152,26 +1356,20 @@ function TeleprompterContent({ id }: { id: string }) {
 
   // Atualiza o progresso de gravação da pasta atual ao abrir o TP
   // (sem abrir o modal) — mostra gravados/faltam gravar direto na tela.
+  // O backend não tem hierarquia de pastas — a lista é plana (raiz).
   useEffect(() => {
     if (!projectId && !projectName) return;
     let active = true;
     const run = async () => {
       try {
         const activeWorkspaceId = workspaceId || "senai";
-        const scriptsRef = collection(db, "scripts");
-        const scriptsConstraints = user?.isSuperAdmin ? [] : [where("workspaceId", "==", activeWorkspaceId)];
-        const snapshot = await getDocs(query(scriptsRef, ...scriptsConstraints));
+        const allScripts = await getScriptsByWorkspace(activeWorkspaceId, user?.isSuperAdmin);
         if (!active) return;
-        const allScripts = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as ScriptDoc[];
-        const currentPath = getScriptPath({ path, folder, subfolder: undefined, lesson: undefined } as ScriptDoc);
         const currentProjectId = projectId || projectName || "Geral";
         const isPendingStatus = (s: ScriptDoc) => s.status === "revisao_realizada" || s.status === "aguardando_gravacao";
         const sameFolder = allScripts.filter(s => {
           const sProjectId = s.projectId || s.projectName || s.project || "Geral";
-          if (sProjectId !== currentProjectId) return false;
-          const sPath = getScriptPath(s);
-          if (sPath.length !== currentPath.length) return false;
-          return sPath.every((seg, i) => seg === currentPath[i]);
+          return sProjectId === currentProjectId;
         });
         const realScripts = sameFolder.filter(s => !s.isPlaceholder);
         setFolderProgress({
@@ -1183,8 +1381,7 @@ function TeleprompterContent({ id }: { id: string }) {
     };
     run();
     return () => { active = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, path, projectId, projectName, workspaceId, user?.isSuperAdmin]);
+  }, [projectId, projectName, workspaceId, user?.isSuperAdmin]);
   
   if (loading) return <LoadingScreen />;
 
@@ -1197,63 +1394,25 @@ function TeleprompterContent({ id }: { id: string }) {
         currentScenes = applySceneEdit(activeEl.getAttribute('data-scene-id')!, activeEl.innerText);
         setScenes(currentScenes);
       }
-      const rawContent = reconstructRawText(currentScenes);
-      await updateDoc(doc(db, "scripts", id, "versions", versionId!), { scenes: currentScenes, content: rawContent });
-      
+
       pauseTimer();
-      const recordedDuration = accumulatedTimeRef.current;
 
-      const updateData: Record<string, unknown> = {
-        status: 'gravado',
-        isPlaying: false,
-        progress: 1,
-        updatedAt: serverTimestamp(),
-        duration: calculateDuration(currentScenes),
-        recordedDuration,
-        recordedAt: serverTimestamp(),
-        videomakerId: user?.uid || null,
-        videomakerName: user?.displayName || user?.name || "Videomaker"
-      };
-
-      if (user?.uid) {
-        const scriptRef = doc(db, "scripts", id);
-        const prevSnap = await getDoc(scriptRef);
-        const previousScriptData = prevSnap.exists() ? prevSnap.data() : undefined;
-
-        if (!editorId) {
-          updateData.editorId = user.uid;
-          updateData.editorName = user.displayName || user.name || user.email || "Videomaker";
-        }
-
-        await updateDoc(scriptRef, updateData);
-
-        // Registra a atividade no log global
-        await logActivity({
-          userId: user.uid,
-          userName: user.displayName || user.name || user.email || "Usuário",
-          userAvatar: user.photoURL || null,
-          action: "Gravou",
-          scriptId: id,
-          scriptTitle: scriptTitle,
-          projectId: projectId || null,
-          projectName: projectName || null,
-          folder: folder || (path && path[0]) || null,
-          subfolder: (path && path[1]) || null,
-          lesson: (path && path[2]) || null,
-          path: path,
-          snapshot: previousScriptData as Record<string, unknown> | undefined,
-          workspaceId: workspaceId || "senai"
-        });
+      // O backend não guarda metadata de gravação (editorId, videomaker,
+      // duration, recordedAt, progress) — apenas status + log de atividade.
+      await updateScript(id, { status: "Gravado" });
+      if (tpSessionIdRef.current) {
+        await markRecorded(tpSessionIdRef.current, { scriptId: id });
       }
 
       setIsPlaying(false);
       isPlayingRef.current = false;
       playRequestedRef.current = false;
+      setScriptStatus('gravado');
       setSaveStatus('saved');
-      
+
       // Busca o próximo roteiro para sugerir
       await findNextScript();
-      
+
       setTimeout(() => setSaveStatus(null), 2000);
     } catch (e) {
       console.error(e);
@@ -1275,11 +1434,7 @@ function TeleprompterContent({ id }: { id: string }) {
   const findNextScript = async () => {
     try {
       const activeWorkspaceId = workspaceId || "senai";
-      const scriptsRef = collection(db, "scripts");
-      
-      const scriptsConstraints = user?.isSuperAdmin ? [] : [where("workspaceId", "==", activeWorkspaceId)];
-      const snapshot = await getDocs(query(scriptsRef, ...scriptsConstraints));
-      const allScripts = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as ScriptDoc[];
+      const allScripts = await getScriptsByWorkspace(activeWorkspaceId, user?.isSuperAdmin);
 
       if (allScripts.length === 0) {
         setNextScript(null);
@@ -1831,16 +1986,22 @@ function TeleprompterContent({ id }: { id: string }) {
                           if (typeof data.speed === "number") {
                             setSpeed(data.speed);
                             speedRef.current = data.speed;
+                            lastLocalActionAtRef.current = Date.now();
+                            persistTpState();
+                            getSignalRClient().speedChanged(tpSessionIdRef.current ?? "", data.speed).catch(() => {});
+                            saveUserPreferences(data);
+                          }
+                          if (data.resetRequest !== undefined) {
+                            resetPlayback();
+                            return;
                           }
                           if (countdownActiveRef.current) {
                             if (data.isPlaying !== undefined) {
                               if (countdownRef.current) clearInterval(countdownRef.current);
                               countdownActiveRef.current = false;
                               setShowCountdown(false);
-                              updateDoc(doc(db, "scripts", id), { countdownStartedAt: null, isPlaying: false, progress: progressRef.current });
-                            } else {
-                              updateDoc(doc(db, "scripts", id), data);
-                              if (typeof data.speed === "number") saveUserPreferences(data);
+                              try { bcRef.current?.postMessage({ type: 'countdown', value: 0 }); } catch {}
+                              setPlayState(false);
                             }
                             return;
                           }
@@ -1849,13 +2010,8 @@ function TeleprompterContent({ id }: { id: string }) {
                             setShowChecklist(true);
                           } else if (data.isPlaying === true) {
                             startCountdown();
-                          } else {
-                            if (data.isPlaying === false) {
-                              updateDoc(doc(db, "scripts", id), { ...data, progress: progressRef.current });
-                            } else {
-                              updateDoc(doc(db, "scripts", id), data);
-                            }
-                            if (typeof data.speed === "number") saveUserPreferences(data);
+                          } else if (data.isPlaying === false) {
+                            setPlayState(false);
                           }
                         }}
                       manualScroll={(amt) => { if (containerRef.current) containerRef.current.scrollBy({ top: amt, behavior: 'smooth' }); }}
@@ -1916,7 +2072,7 @@ function TeleprompterContent({ id }: { id: string }) {
                          if (countdownRef.current) clearInterval(countdownRef.current);
                          countdownActiveRef.current = false;
                          setShowCountdown(false);
-                         updateDoc(doc(db, "scripts", id), { countdownStartedAt: null });
+                         try { bcRef.current?.postMessage({ type: 'countdown', value: 0 }); } catch {}
                          return;
                        }
                        const needsChecklist = user?.requiresChecklist === true;
@@ -1945,7 +2101,7 @@ function TeleprompterContent({ id }: { id: string }) {
              {/* REINICIAR */}
              <button
                data-tour="tp-restart"
-               onClick={() => { resetTimer(); progressRef.current = 0; updateGlobalStyle({ resetRequest: Date.now(), isPlaying: false, progress: 0 }); updateDoc(doc(db, "scripts", id), { progress: 0 }).catch(() => {}); }}
+               onClick={() => resetPlayback()}
                className="flex flex-col items-center justify-center hover:text-white text-zinc-500 transition-colors"
                title="Reiniciar roteiro"
              >
@@ -2171,15 +2327,11 @@ function TeleprompterContent({ id }: { id: string }) {
                 if (!Object.values(checklistItems).every(Boolean)) return;
                 setIsSavingChecklist(true);
                 try {
-                  await addDoc(collection(db, "scripts", id, "checklist_confirmations"), {
-                    userId: user?.uid || null,
-                    userName: user?.displayName || user?.name || user?.email || "Anônimo",
-                    userEmail: user?.email || null,
-                    checkedAt: serverTimestamp(),
-                    items: checklistItems,
-                    scriptId: id,
-                    scriptTitle: scriptTitle,
-                  });
+                  // Confirmação salva localmente por usuário+roteiro (antiga
+                  // subcoleção checklist_confirmations).
+                  if (user?.uid) {
+                    window.localStorage.setItem(CHECKLIST_STORAGE_KEY(id, user.uid), "1");
+                  }
                 } catch (e) {
                   console.error("Erro ao salvar checklist:", e);
                 } finally {

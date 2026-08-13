@@ -1,27 +1,21 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { 
-  User as FirebaseUser, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword,
-  signInWithPopup, 
-  signOut, 
-  onAuthStateChanged 
-} from "firebase/auth";
-import { doc, onSnapshot, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove, collection, query, where, getDocs, QuerySnapshot, DocumentData } from "firebase/firestore";
-import { auth, db, googleProvider } from "@/lib/firebase";
-import { ExtendedUser, ExtendedUserSchema, Workspace, Team, Role, UserStatus } from "@/services/schemas";
-import { getWorkspace, createWorkspace, joinWorkspaceByToken } from "@/services/workspaceService";
+import { ExtendedUser, Workspace, Role, UserStatus } from "@/services/schemas";
 import { toast } from "sonner";
 
-import { logActivity } from "@/lib/activity";
+import { clearStoredToken, getStoredToken, setStoredToken } from "@/api/client";
+import { login as apiLogin, register as apiRegister, me as apiMe, logout as apiLogout } from "@/api/auth";
+import { listMyWorkspaces, createWorkspace as apiCreateWorkspace, joinWorkspaceByToken as apiJoinWorkspace } from "@/api/workspace";
+import { listTeams } from "@/api/teams";
+import { listUsers } from "@/api/users";
+import type { UserDto } from "@/api/types";
+
 import { addKnownAccount } from "@/lib/account-storage";
 import { setDebugUserContext } from "@/lib/debug-log";
 
 interface AuthContextType {
   user: ExtendedUser | null;
-  firebaseUser: FirebaseUser | null;
   currentWorkspace: Workspace | null;
   userWorkspacesDetailed: Workspace[];
   allUsers: ExtendedUser[];
@@ -40,53 +34,68 @@ interface AuthContextType {
   hasPermission: (allowedRoles: Role[]) => boolean;
 }
 
+// Tipos locais para os dados que chegam da API (Teams vêm como entidade pura).
+type Team = {
+  id: string;
+  name: string;
+  acronym?: string;
+  members: string[];
+  workspaceId?: string;
+};
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const GHOST_EMAILS = ['zecki1@hotmail.com'];
-
-const sanitizeData = (data: Record<string, unknown>, fbEmail?: string | null): Record<string, unknown> => {
-  const wsId = (data['workspaceId'] as string) || (data['workspaces'] as string[])?.[0] || "";
-  const isSuperAdmin = (data['isSuperAdmin'] as boolean) || (fbEmail && GHOST_EMAILS.includes(fbEmail.toLowerCase()));
-  return {
-    ...data,
-    workspaceId: typeof wsId === 'string' ? wsId : wsId,
-    isSuperAdmin,
-  };
+const toRole = (role: string): Role => {
+  const known: Role[] = [
+    "SuperAdmin", "Diretor", "Coordenador", "Orientador", "Docente",
+    "Especialista", "Assistente", "Analista", "Tutor", "Monitor",
+    "Técnico", "Estagiário", "editor", "validador", "publico",
+  ];
+  const match = known.find((r) => r.toLowerCase() === role.toLowerCase());
+  return match ?? "Estagiário";
 };
 
-const buildFallbackUser = (uid: string, data: Record<string, unknown>, fbEmail?: string | null): ExtendedUser => {
-  const safe = sanitizeData(data, fbEmail);
-  const wsId = (safe['workspaceId'] as string) || (safe['workspaces'] as string[])?.[0] || "";
+const toStatus = (status: string): UserStatus =>
+  status.toLowerCase() === "active" ? "active" : status.toLowerCase() === "inactive" ? "inactive" : "pending";
+
+function dtoToExtendedUser(dto: UserDto): ExtendedUser {
   return {
-    uid,
-    email: (safe['email'] as string) || "",
-    displayName: (safe['displayName'] as string) || (safe['name'] as string) || "Usuário",
-    name: (safe['name'] as string) || "",
-    role: (safe['role'] as Role) || "Estagiário",
-    isSuperAdmin: safe['isSuperAdmin'] === true,
-    canCollaborate: safe['canCollaborate'] === true,
-    isEditor: safe['isEditor'] === true,
-    isRevisor: safe['isRevisor'] === true,
-    canRevert: safe['canRevert'] === true,
-    canViewAdmin: safe['canViewAdmin'] === true,
-    canViewReports: safe['canViewReports'] === true,
-    canViewActivityHistory: safe['canViewActivityHistory'] === true,
-    canViewDebugLogs: safe['canViewDebugLogs'] === true,
-    canAssign: safe['canAssign'] === true,
-    requiresChecklist: typeof safe['requiresChecklist'] === 'boolean' ? (safe['requiresChecklist'] as boolean) : true,
-    status: (safe['status'] as UserStatus) || "active",
-    workspaceId: wsId,
-    workspaces: (safe['workspaces'] as string[]) || [],
-    avatarUrl: (safe['avatarUrl'] as string) || "",
-    photoURL: (safe['photoURL'] as string) || null,
-    createdAt: safe['createdAt'] as string | { toDate: () => Date } | null | undefined,
-    updatedAt: safe['updatedAt'] as string | { toDate: () => Date } | null | undefined,
+    uid: dto.id,
+    email: dto.email,
+    displayName: dto.displayName,
+    name: dto.displayName,
+    role: toRole(dto.role),
+    isSuperAdmin: dto.isSuperAdmin,
+    canCollaborate: dto.canCollaborate,
+    isEditor: dto.isEditor,
+    isRevisor: dto.isRevisor,
+    canRevert: dto.canRevert,
+    canViewAdmin: dto.canViewAdmin,
+    canViewReports: dto.canViewReports,
+    canViewActivityHistory: dto.canViewActivityHistory,
+    canViewDebugLogs: dto.canViewDebugLogs,
+    canAssign: dto.canAssign,
+    requiresChecklist: dto.requiresChecklist,
+    status: toStatus(dto.status),
+    workspaceId: dto.workspaceId,
+    workspaces: dto.workspaceId ? [dto.workspaceId] : [],
+    avatarUrl: "",
+    photoURL: null,
   };
-};
+}
+
+const workspaceToDto = (w: { id: string; name: string; ownerId: string; plan: string; createdAt: string }): Workspace => ({
+  id: w.id,
+  name: w.name,
+  ownerId: w.ownerId,
+  plan: (w.plan.toLowerCase() as Workspace["plan"]) || "free",
+  createdAt: w.createdAt,
+  updatedAt: w.createdAt,
+  members: [],
+});
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<ExtendedUser | null>(null);
-  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
   const [userWorkspacesDetailed, setUserWorkspacesDetailed] = useState<Workspace[]>([]);
   const [allUsers, setAllUsers] = useState<ExtendedUser[]>([]);
@@ -94,437 +103,236 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [isDataLoading, setIsDataLoading] = useState(false);
 
-  // Timeout de segurança para não ficar preso no loading
+  // Hydrata a sessão a partir do token armazenado.
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 10000);
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Listener principal do usuário e autenticação
-  useEffect(() => {
-    let unsubscribeUser: () => void;
-
-    const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
-      if (unsubscribeUser) {
-        unsubscribeUser();
-      }
-      if (fbUser) {
-        setFirebaseUser(fbUser);
-        addKnownAccount({
-          uid: fbUser.uid,
-          email: fbUser.email,
-          displayName: fbUser.displayName,
-          photoURL: fbUser.photoURL,
-        });
-        const userRef = doc(db, "users", fbUser.uid);
-        
-        unsubscribeUser = onSnapshot(userRef, 
-          async (docSnap) => {
-            if (docSnap.exists()) {
-              const rawData = docSnap.data() as Record<string, unknown>;
-              const userData = buildFallbackUser(docSnap.id, rawData, fbUser.email);
-              
-              setUser(userData);
-              setDebugUserContext({
-                uid: userData.uid,
-                email: userData.email || undefined,
-                name: userData.displayName || userData.name || undefined,
-                role: userData.role,
-                workspaceId: userData.workspaceId || undefined,
-                isSuperAdmin: userData.isSuperAdmin,
-                permissions: [
-                  ...(userData.canCollaborate ? ["collaborate"] : []),
-                  ...(userData.isEditor ? ["editor"] : []),
-                  ...(userData.isRevisor ? ["revisor"] : []),
-                  ...(userData.canRevert ? ["revert"] : []),
-                  ...(userData.canAssign ? ["assign"] : []),
-                  ...(userData.canViewAdmin ? ["admin"] : []),
-                  ...(userData.canViewReports ? ["reports"] : []),
-                  ...(userData.canViewActivityHistory ? ["history"] : []),
-                  ...(userData.canViewDebugLogs ? ["debuglogs"] : []),
-                  ...(userData.isSuperAdmin ? ["superadmin"] : []),
-                ],
-              });
-              addKnownAccount({
-                uid: userData.uid,
-                email: userData.email,
-                displayName: userData.displayName || userData.name || null,
-                photoURL: userData.photoURL || null,
-              });
-              
-              const loadWorkspaces = async () => {
-                  if (userData.isSuperAdmin) {
-                    try {
-                      const wsSnap = await getDocs(collection(db, "workspaces"));
-                      const allWs = wsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Workspace));
-                      setUserWorkspacesDetailed(allWs);
-                      if (userData.workspaceId) {
-                        const currentWs = allWs.find((w) => w.id === userData.workspaceId);
-                        if (currentWs) setCurrentWorkspace(currentWs);
-                      }
-                    } catch (e) {
-                      console.error("Erro ao carregar todos os workspaces", e);
-                    }
-                    return;
-                  }
-
-                  if (userData.workspaces && userData.workspaces.length > 0) {
-                    try {
-                      const wsPromises = userData.workspaces.map(id => getWorkspace(id));
-                      const wsResults = await Promise.all(wsPromises);
-                      const validWs = wsResults.filter((ws): ws is Workspace => ws !== null);
-                      setUserWorkspacesDetailed(validWs);
-                      
-                      if (userData.workspaceId) {
-                        const currentWs = validWs.find((w) => w.id === userData.workspaceId);
-                        if (currentWs) {
-                          setCurrentWorkspace(currentWs);
-                        } else {
-                          const fallbackWs = await getWorkspace(userData.workspaceId);
-                          setCurrentWorkspace(fallbackWs);
-                          if (fallbackWs) setUserWorkspacesDetailed(prev => [...prev, fallbackWs]);
-                        }
-                      }
-                    } catch (wsErr) {
-                      console.error("Erro ao carregar detalhes dos workspaces", wsErr);
-                      if (userData.workspaceId) {
-                        const ws = await getWorkspace(userData.workspaceId);
-                        setCurrentWorkspace(ws);
-                        if (ws) setUserWorkspacesDetailed([ws]);
-                      }
-                    }
-                  } else if (userData.workspaceId) {
-                    const ws = await getWorkspace(userData.workspaceId);
-                    setCurrentWorkspace(ws);
-                    if (ws) setUserWorkspacesDetailed([ws]);
-                  }
-                };
-                loadWorkspaces();
-                
-                setLoading(false);
-            } else {
-              console.warn("[AuthContext] User document not found for", fbUser.uid);
-              setLoading(false);
-            }
-          },
-          (error) => {
-            console.error("[AuthContext] Firestore snapshot error:", error);
-            setLoading(false);
-          }
-        );
-      } else {
-        if (unsubscribeUser) {
-          unsubscribeUser();
-        }
-        setFirebaseUser(null);
-        setUser(null);
-        setCurrentWorkspace(null);
-        setUserWorkspacesDetailed([]);
-        setAllUsers([]);
-        setTeams([]);
-        setDebugUserContext(null);
+    let cancelled = false;
+    const hydrate = async () => {
+      if (!getStoredToken()) {
         setLoading(false);
+        return;
       }
-    });
-
+      try {
+        const dto = await apiMe();
+        if (cancelled) return;
+        const u = dtoToExtendedUser(dto);
+        setUser(u);
+        setDebugUserContext(buildDebugContext(u));
+        addKnownAccount({
+          uid: u.uid,
+          email: u.email,
+          displayName: u.displayName || u.name || null,
+          photoURL: u.photoURL || null,
+        });
+      } catch {
+        // Token inválido/expirado e refresh falhou -> limpa sessão.
+        clearStoredToken();
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void hydrate();
     return () => {
-      unsubscribeAuth();
-      if (unsubscribeUser) unsubscribeUser();
+      cancelled = true;
     };
   }, []);
 
-  // Listeners de dados do Workspace (Usuários e Times)
+  // Carrega workspaces do usuário quando ele muda.
   useEffect(() => {
-    if (!user?.workspaceId && !user?.isSuperAdmin) return;
+    if (!user?.uid) {
+      setUserWorkspacesDetailed([]);
+      setCurrentWorkspace(null);
+      return;
+    }
 
-    // setIsDataLoading(true); // Removido para evitar cascading render warning
-    
-    // Listener de Usuários
-    const workspaceFilter = user.workspaceId ? where("workspaceId", "==", user.workspaceId) : where("workspaceId", "==", "");
-    const qUsers = query(collection(db, "users"), workspaceFilter);
-    const unsubUsers = onSnapshot(qUsers, (snapshot: QuerySnapshot<DocumentData>) => {
-      const usersList = snapshot.docs.map(doc => {
-        const data = doc.data();
-        try {
-          return ExtendedUserSchema.parse({ uid: doc.id, ...data });
-        } catch {
-          return {
-            uid: doc.id,
-            email: data.email || "",
-            displayName: data.displayName || data.name || "Usuário",
-            name: data.name || "",
-            role: (data.role as Role) || "Docente",
-            status: data.status || "active",
-            workspaceId: data.workspaceId || "",
-            workspaces: data.workspaces || [],
-            canCollaborate: data.canCollaborate || false,
-            isEditor: data.isEditor || false,
-            isRevisor: data.isRevisor || false,
-            canRevert: data.canRevert || false,
-            canViewAdmin: data.canViewAdmin || false,
-            canViewReports: data.canViewReports || false,
-            canViewActivityHistory: data.canViewActivityHistory || false,
-            canViewDebugLogs: data.canViewDebugLogs || false,
-            canAssign: data.canAssign || false,
-            requiresChecklist: data.requiresChecklist ?? true,
-            createdAt: data.createdAt,
-            updatedAt: data.updatedAt,
-          } as ExtendedUser;
-        }
-      }).filter((u): u is ExtendedUser => u !== null)
-        .filter(u => !GHOST_EMAILS.includes((u.email || "").toLowerCase()));
-      
-      setAllUsers(usersList);
-      setIsDataLoading(false);
-    });
+    const workspaceId = user.workspaceId;
+    const isSuperAdmin = user.isSuperAdmin;
 
-    // Listener de Times
-    const teamsConstraints = user.isSuperAdmin ? [] : [where("workspaceId", "==", user.workspaceId)];
-    const qTeams = query(collection(db, "teams"), ...teamsConstraints);
-    const unsubTeams = onSnapshot(qTeams, (snapshot: QuerySnapshot<DocumentData>) => {
-      const teamsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Team));
-      setTeams(teamsList);
-    });
+    let cancelled = false;
+    const loadWorkspaces = async () => {
+      try {
+        const wsList = await listMyWorkspaces();
+        if (cancelled) return;
+        const mapped = wsList.map(workspaceToDto);
+        setUserWorkspacesDetailed(mapped);
+        const current = workspaceId
+          ? mapped.find((w) => w.id === workspaceId) ?? null
+          : mapped[0] ?? null;
+        setCurrentWorkspace(current);
+      } catch (e) {
+        console.error("Erro ao carregar workspaces", e);
+      }
+    };
+    void loadWorkspaces();
+
+    // Usuários (para exibição de nomes/permissões) e times do workspace.
+    const loadMembers = async () => {
+      setIsDataLoading(true);
+      try {
+        const users = await listUsers();
+        if (cancelled) return;
+        const filtered = isSuperAdmin
+          ? users
+          : users.filter((u) => u.workspaceId === workspaceId);
+        setAllUsers(filtered.map(dtoToExtendedUser));
+      } catch {
+        setAllUsers([]);
+      } finally {
+        if (!cancelled) setIsDataLoading(false);
+      }
+
+      try {
+        const teamsData = await listTeams(workspaceId || undefined);
+        if (cancelled) return;
+        setTeams(teamsData.map((t) => ({
+          id: t.id,
+          name: t.name,
+          acronym: t.acronym ?? undefined,
+          members: [],
+          workspaceId: t.workspaceId,
+        })));
+      } catch {
+        setTeams([]);
+      }
+    };
+    void loadMembers();
 
     return () => {
-      unsubUsers();
-      unsubTeams();
+      cancelled = true;
     };
-  }, [user?.workspaceId, user?.isSuperAdmin, user?.canViewAdmin, user?.canViewReports, user?.canViewActivityHistory, user?.canViewDebugLogs, user?.canAssign]);
+  }, [user?.uid, user?.workspaceId, user?.isSuperAdmin]);
 
-  const signIn = async (email: string, password: string, inviteWorkspaceId?: string) => {
+  const buildDebugContext = (u: ExtendedUser) => ({
+    uid: u.uid,
+    email: u.email || undefined,
+    name: u.displayName || u.name || undefined,
+    role: u.role,
+    workspaceId: u.workspaceId || undefined,
+    isSuperAdmin: u.isSuperAdmin,
+    permissions: [
+      ...(u.canCollaborate ? ["collaborate"] : []),
+      ...(u.isEditor ? ["editor"] : []),
+      ...(u.isRevisor ? ["revisor"] : []),
+      ...(u.canRevert ? ["revert"] : []),
+      ...(u.canAssign ? ["assign"] : []),
+      ...(u.canViewAdmin ? ["admin"] : []),
+      ...(u.canViewReports ? ["reports"] : []),
+      ...(u.canViewActivityHistory ? ["history"] : []),
+      ...(u.canViewDebugLogs ? ["debuglogs"] : []),
+      ...(u.isSuperAdmin ? ["superadmin"] : []),
+    ],
+  });
+
+  const applySession = (dto: UserDto, token: string) => {
+    setStoredToken(token);
+    const u = dtoToExtendedUser(dto);
+    setUser(u);
+    setDebugUserContext(buildDebugContext(u));
+    addKnownAccount({
+      uid: u.uid,
+      email: u.email,
+      displayName: u.displayName || u.name || null,
+      photoURL: u.photoURL || null,
+    });
+  };
+
+  const signIn = async (email: string, password: string) => {
     setLoading(true);
     try {
-      const result = await signInWithEmailAndPassword(auth, email, password);
-      
-      if (inviteWorkspaceId) {
-        const userRef = doc(db, "users", result.user.uid);
-        const wsRef = doc(db, "workspaces", inviteWorkspaceId);
-        const userSnap = await getDoc(userRef);
-        if (userSnap.exists()) {
-          const userData = userSnap.data();
-          const currentWorkspaces = userData.workspaces || [];
-          if (!currentWorkspaces.includes(inviteWorkspaceId)) {
-            // Adiciona o workspace ao usuário
-            await updateDoc(userRef, {
-              workspaces: arrayUnion(inviteWorkspaceId),
-              workspaceId: inviteWorkspaceId
-            });
-            // Adiciona o usuário como membro do workspace (necessário para as Firestore Rules)
-            await updateDoc(wsRef, {
-              members: arrayUnion(result.user.uid)
-            });
-          } else {
-            // Já é membro, mas garante que está na lista de members do workspace
-            await updateDoc(wsRef, {
-              members: arrayUnion(result.user.uid)
-            });
-          }
-        }
-      }
-    } catch (error) {
+      const res = await apiLogin({ email, password });
+      applySession(res.user, res.token);
+    } finally {
       setLoading(false);
-      throw error;
     }
   };
 
-  const signUp = async (email: string, password: string, name: string, inviteWorkspaceId?: string) => {
+  const signUp = async (email: string, password: string, name: string) => {
     setLoading(true);
     try {
-      const { user: fbUser } = await createUserWithEmailAndPassword(auth, email, password);
-
-      let targetWorkspaceId: string | null = inviteWorkspaceId || null;
-
-      if (inviteWorkspaceId) {
-        const wsRef = doc(db, "workspaces", inviteWorkspaceId);
-        await updateDoc(wsRef, {
-          members: arrayUnion(fbUser.uid)
-        }).catch(err => console.error("[AuthContext] Erro ao vincular membro ao workspace:", err));
-      }
-
-      const isInvite = !!inviteWorkspaceId;
-
-      const newUserDoc: Record<string, unknown> = {
-        uid: fbUser.uid,
-        email: fbUser.email,
-        name: name,
-        displayName: name,
-        role: "Estagiário",
-        status: "active",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-
-      if (isInvite) {
-        Object.assign(newUserDoc, {
-          workspaceId: inviteWorkspaceId,
-          workspaces: [inviteWorkspaceId],
-          role: "Estagiário",
-        });
-      } else {
-        newUserDoc.workspaceId = "";
-        newUserDoc.workspaces = [];
-      }
-
-      await setDoc(doc(db, "users", fbUser.uid), newUserDoc);
-
-      await logActivity({
-        userId: fbUser.uid,
-        userName: name,
-        action: "Cadastrou",
-        workspaceId: targetWorkspaceId || "",
-      });
-
-    } catch (error) {
+      const res = await apiRegister({ email, password, displayName: name });
+      applySession(res.user, res.token);
+    } finally {
       setLoading(false);
-      throw error;
     }
   };
 
-  const signInWithGoogle = async (inviteWorkspaceId?: string) => {
-    setLoading(true);
-    try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const fbUser = result.user;
-      
-      const userRef = doc(db, "users", fbUser.uid);
-      const userSnap = await getDoc(userRef);
-      
-      if (!userSnap.exists()) {
-        const name = fbUser.displayName || fbUser.email?.split('@')[0] || "Usuário";
-        
-        if (inviteWorkspaceId) {
-          const wsRef = doc(db, "workspaces", inviteWorkspaceId);
-          await updateDoc(wsRef, { members: arrayUnion(fbUser.uid) }).catch(() => {});
-        }
-
-        const newUserDoc: Record<string, unknown> = {
-          uid: fbUser.uid,
-          email: fbUser.email,
-          name: name,
-          displayName: name,
-          role: "Estagiário",
-          status: "active",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-
-        if (inviteWorkspaceId) {
-          Object.assign(newUserDoc, {
-            workspaceId: inviteWorkspaceId,
-            workspaces: [inviteWorkspaceId],
-            role: "Estagiário",
-          });
-        } else {
-          newUserDoc.workspaceId = "";
-          newUserDoc.workspaces = [];
-        }
-
-        await setDoc(userRef, newUserDoc);
-        await logActivity({
-          userId: fbUser.uid,
-          userName: name,
-          action: "Cadastrou",
-          workspaceId: inviteWorkspaceId || "",
-        });
-      } else if (inviteWorkspaceId) {
-        const userData = userSnap.data();
-        const currentWorkspaces = userData.workspaces || [];
-        const wsRef = doc(db, "workspaces", inviteWorkspaceId);
-        if (!currentWorkspaces.includes(inviteWorkspaceId)) {
-          await updateDoc(userRef, {
-            workspaces: arrayUnion(inviteWorkspaceId),
-            workspaceId: inviteWorkspaceId,
-            role: "Estagiário",
-          });
-        }
-        await updateDoc(wsRef, { members: arrayUnion(fbUser.uid) }).catch(() => {});
-      }
-    } catch (error) {
-      setLoading(false);
-      throw error;
-    }
+  const signInWithGoogle = async () => {
+    // Google OAuth ainda não habilitado no backend .NET (JWT sem Google).
+    throw new Error("Login com Google será habilitado em breve.");
   };
 
   const logOut = async () => {
-    await signOut(auth);
+    try {
+      await apiLogout();
+    } catch {
+      // stateless: segue mesmo se a API falhar.
+    }
+    clearStoredToken();
+    setUser(null);
+    setCurrentWorkspace(null);
+    setUserWorkspacesDetailed([]);
+    setAllUsers([]);
+    setTeams([]);
+    setDebugUserContext(null);
   };
 
   const switchWorkspace = async (workspaceId: string) => {
     if (!user) return;
-    try {
-      await updateDoc(doc(db, "users", user.uid), {
-        workspaceId,
-        workspaces: arrayUnion(workspaceId),
-      });
-      setUser(prev => {
-        if (!prev) return null;
-        const workspaces = prev.workspaces?.includes(workspaceId)
-          ? prev.workspaces
-          : [...(prev.workspaces || []), workspaceId];
-        return { ...prev, workspaceId, workspaces };
-      });
-      toast.success("Workspace alterado!");
-    } catch {
-      toast.error("Erro ao alterar workspace.");
-    }
+    setUser((prev) => (prev ? { ...prev, workspaceId } : prev));
+    const ws = userWorkspacesDetailed.find((w) => w.id === workspaceId);
+    if (ws) setCurrentWorkspace(ws);
+    toast.success("Workspace alterado!");
   };
 
   const leaveWorkspace = async () => {
     if (!user || !user.workspaceId) return;
+    const remaining = userWorkspacesDetailed.filter((w) => w.id !== user.workspaceId);
+    const nextWsId = remaining[0]?.id ?? "";
+    setUser((prev) =>
+      prev ? { ...prev, workspaceId: nextWsId, workspaces: remaining.map((w) => w.id) } : prev,
+    );
+    setCurrentWorkspace(remaining[0] ?? null);
+    setUserWorkspacesDetailed(remaining);
+    toast.success("Você saiu do workspace.");
+  };
+
+  const joinWorkspace = async (workspaceId: string) => {
+    if (!user) return;
     try {
-      const userRef = doc(db, "users", user.uid);
-      const wsRef = doc(db, "workspaces", user.workspaceId);
-      const remainingWorkspaces = (user.workspaces || []).filter(id => id !== user.workspaceId);
-      const nextWsId = remainingWorkspaces[0] || "";
-
-      await updateDoc(wsRef, {
-        members: arrayRemove(user.uid),
-      });
-
-      await updateDoc(userRef, {
-        workspaceId: nextWsId,
-        workspaces: remainingWorkspaces,
-        role: nextWsId ? user.role : "Estagiário",
-      });
-
-      setUser(prev => prev ? {
-        ...prev,
-        workspaceId: nextWsId,
-        workspaces: remainingWorkspaces,
-        role: nextWsId ? prev.role : "Estagiário" as Role,
-      } : null);
-
-      logActivity({
-        userId: user.uid,
-        userName: user.displayName || user.email || "Usuário",
-        action: "Saiu",
-        workspaceId: user.workspaceId,
-      });
-
-      toast.success("Você saiu do workspace.");
-    } catch {
-      toast.error("Erro ao sair do workspace.");
+      const result = await apiJoinWorkspace(workspaceId);
+      if (result.success) {
+        const dto = await apiMe();
+        setUser(dtoToExtendedUser(dto));
+        toast.success("Bem-vindo ao novo workspace!");
+      } else {
+        toast.error("Não foi possível entrar no workspace.");
+      }
+    } catch (error) {
+      console.error("[AuthContext] Erro ao entrar no workspace:", error);
+      toast.error("Erro ao entrar no workspace.");
     }
   };
 
   const setupInitialWorkspace = async (name: string): Promise<string> => {
     if (!user) throw new Error("Usuário não autenticado.");
     try {
-      const wsId = await createWorkspace(name, user.uid, user.email || "");
-      const userRef = doc(db, "users", user.uid);
-      await updateDoc(userRef, {
-        workspaceId: wsId,
-        workspaces: arrayUnion(wsId),
-        role: "Diretor",
-        canCollaborate: true,
-        canViewAdmin: true,
-        canViewReports: true,
-        canViewActivityHistory: true,
-        canRevert: true,
-      });
+      const ws = await apiCreateWorkspace({ name });
+      setUser((prev) =>
+        prev
+          ? {
+              ...prev,
+              workspaceId: ws.id,
+              workspaces: [...(prev.workspaces || []), ws.id],
+              role: "Diretor" as Role,
+              canCollaborate: true,
+              canViewAdmin: true,
+              canViewReports: true,
+              canViewActivityHistory: true,
+              canRevert: true,
+            }
+          : prev,
+      );
       toast.success(`Workspace "${name}" criado com sucesso!`);
-      return wsId;
+      return ws.id;
     } catch (error) {
       console.error("[AuthContext] Erro ao criar workspace inicial:", error);
       toast.error("Erro ao criar workspace.");
@@ -532,28 +340,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const joinWorkspace = async (workspaceId: string) => {
-    if (!user) return;
-    try {
-      const userRef = doc(db, "users", user.uid);
-      const wsRef = doc(db, "workspaces", workspaceId);
-      
-      const currentWorkspaces = user.workspaces || [];
-      if (!currentWorkspaces.includes(workspaceId)) {
-        await updateDoc(userRef, {
-          workspaces: arrayUnion(workspaceId),
-          workspaceId: workspaceId,
-          role: "Estagiário",
-        });
-        await updateDoc(wsRef, {
-          members: arrayUnion(user.uid)
-        });
-        toast.success("Bem-vindo ao novo workspace!");
+  const joinWorkspaceByToken = async (token: string) => {
+    const { joinWorkspaceByToken: join } = await import("@/api/workspace");
+    const result = await join(token);
+    if (result.success) {
+      // Atualiza a sessão para refletir o novo workspace.
+      try {
+        const dto = await apiMe();
+        setUser(dtoToExtendedUser(dto));
+      } catch {
+        // mantém estado atual
       }
-    } catch (error) {
-      console.error("[AuthContext] Erro ao entrar no workspace:", error);
-      toast.error("Erro ao entrar no workspace.");
     }
+    return result;
   };
 
   const hasPermission = (allowedRoles: Role[]): boolean => {
@@ -563,26 +362,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      firebaseUser,
-      currentWorkspace,
-      userWorkspacesDetailed,
-      allUsers,
-      teams,
-      loading, 
-      isDataLoading,
-      signIn, 
-      signUp,
-      signInWithGoogle, 
-      logOut,
-      switchWorkspace,
-      leaveWorkspace,
-      joinWorkspace,
-      setupInitialWorkspace,
-      joinWorkspaceByToken: (token: string) => joinWorkspaceByToken(token, user?.uid || "", user?.email || ""),
-      hasPermission 
-    }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        currentWorkspace,
+        userWorkspacesDetailed,
+        allUsers,
+        teams,
+        loading,
+        isDataLoading,
+        signIn,
+        signUp,
+        signInWithGoogle,
+        logOut,
+        switchWorkspace,
+        leaveWorkspace,
+        joinWorkspace,
+        setupInitialWorkspace,
+        joinWorkspaceByToken,
+        hasPermission,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

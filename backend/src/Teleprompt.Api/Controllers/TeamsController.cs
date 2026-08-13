@@ -48,6 +48,23 @@ public class TeamsController : ControllerBase
         return team == null ? NotFound() : Ok(team);
     }
 
+    [HttpPut("{id}")]
+    public async Task<ActionResult<Team>> Update(string id, [FromBody] CreateTeamRequest request)
+    {
+        var team = await _db.Teams.FindAsync(id);
+        if (team == null)
+            return NotFound();
+
+        if (!string.IsNullOrWhiteSpace(request.Name))
+            team.Name = request.Name.Trim();
+        team.Acronym = request.Acronym;
+        if (!string.IsNullOrWhiteSpace(request.WorkspaceId))
+            team.WorkspaceId = request.WorkspaceId;
+
+        await _db.SaveChangesAsync();
+        return Ok(team);
+    }
+
     [HttpDelete("{id}")]
     [Authorize(Policy = "ManagePermissions")]
     public async Task<IActionResult> Delete(string id)

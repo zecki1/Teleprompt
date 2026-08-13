@@ -2,9 +2,8 @@
 
 import { useCallback, useState } from "react";
 import { domToCanvas } from "modern-screenshot";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { toast } from "sonner";
+import { createErrorReport } from "@/api/admin";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -350,6 +349,7 @@ export function ErrorReportDialog({
       const virtualization = screenshotDataUrl ? null : buildScreenVirtualization();
 
       const logs = getRecentLogs(60).map(compactLog);
+      const logsJson = JSON.stringify(getRecentLogs(60));
       const url = typeof window !== "undefined" ? window.location.href : undefined;
       const page = typeof window !== "undefined" ? window.location.pathname : undefined;
       const ua = typeof window !== "undefined" ? window.navigator.userAgent : undefined;
@@ -371,25 +371,13 @@ export function ErrorReportDialog({
       onOpenChange(false);
       toast.success("Arquivos baixados! Envie o print e o relatório por e-mail, Teams ou WhatsApp.");
       try {
-        await addDoc(collection(db, "error_reports"), {
-          ts: serverTimestamp(),
-          t,
-          message: description.trim(),
-          screenshot: screenshotDataUrl,
-          screenVirtualization: virtualization,
-          logs,
-          url,
-          page,
-          ua,
-          uid: user?.uid,
-          email: user?.email,
-          name: user?.name || user?.displayName,
-          role: user?.role,
-          permissions: activePermissions(user),
-          workspaceId: user?.workspaceId,
+        await createErrorReport({
+          screenshotUrl: screenshotDataUrl ?? undefined,
+          description: description.trim(),
+          logsJson,
         });
       } catch {
-        // O download já garante o envio manual; o Firestore é apenas best-effort.
+        // O download já garante o envio manual; o back-end é apenas best-effort.
       }
     } catch {
       toast.error("Não foi possível gerar o relatório. Tente novamente.");

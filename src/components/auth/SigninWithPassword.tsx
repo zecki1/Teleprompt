@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "@/lib/firebase";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -34,20 +32,8 @@ const SigninWithPassword: React.FC<SigninWithPasswordProps> = ({ inviteWorkspace
       await signIn(email, password, inviteWorkspaceId);
       toast.success("Login realizado com sucesso!");
     } catch (err: unknown) {
-      const fbError = err as { code?: string; message?: string };
-      const code = fbError?.code || fbError?.message?.match(/\((\w+\/[\w-]+)\)/)?.[1] || "";
-      console.log("[DEBUG] err:", err, "code:", code);
-      const messages: Record<string, string> = {
-        "auth/invalid-credential": "E-mail ou senha incorretos.",
-        "auth/user-not-found": "Usuário não encontrado.",
-        "auth/wrong-password": "Senha incorreta.",
-        "auth/invalid-email": "E-mail inválido.",
-        "auth/too-many-requests": "Muitas tentativas. Tente novamente mais tarde.",
-        "auth/user-disabled": "Esta conta foi desativada.",
-        "auth/network-request-failed": "Erro de conexão. Verifique sua internet.",
-      };
-      const friendlyMsg = messages[code];
-      toast.error(friendlyMsg || "Erro ao entrar. Verifique suas credenciais.");
+      const message = err instanceof Error ? err.message : "Erro ao entrar. Verifique suas credenciais.";
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -60,10 +46,9 @@ const SigninWithPassword: React.FC<SigninWithPasswordProps> = ({ inviteWorkspace
     }
     setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, email);
-      toast.success("E-mail de redefinição enviado!");
-    } catch {
-      toast.error("Erro ao enviar e-mail de redefinição.");
+      // Recuperação de senha ainda não habilitada no backend .NET.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      toast.info("Recuperação de senha estará disponível em breve.");
     } finally {
       setLoading(false);
     }

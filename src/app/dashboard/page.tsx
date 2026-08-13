@@ -1,9 +1,6 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { collection, query, deleteDoc, doc, updateDoc, writeBatch, where, addDoc, serverTimestamp, onSnapshot, orderBy, limit, getDocs, startAfter } from "firebase/firestore";
-import type { QueryDocumentSnapshot } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 
 import { LoadingScreen } from "@/components/PageTransitionLoader";
@@ -22,8 +19,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Suspense } from "react";
-import { fetchProjects, Project, createProject, deleteProject, updateProject } from "@/services/projects";
-import { toDate } from "@/lib/firebase-utils";
+import { fetchProjects, Project, createProject, deleteProject, updateProject, getScriptsByProject, getScriptsByWorkspace } from "@/services/projects";
+import { toDate } from "@/lib/data-utils";
+import { createScript, deleteScript as apiDeleteScript, updateScript } from "@/api/scripts";
+import { listVersions } from "@/api/versions";
+import { LOCAL_TO_BACKEND_STATUS } from "@/lib/script-mappers";
+import { usePolling } from "@/lib/polling";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -139,7 +140,8 @@ function DashboardContent() {
   const SCRIPTS_PAGE_SIZE = 50;
   const [hasMoreScripts, setHasMoreScripts] = useState(false);
   const [loadingMoreScripts, setLoadingMoreScripts] = useState(false);
-  const lastVisibleRef = useRef<QueryDocumentSnapshot | null>(null);
+  const allScriptsRef = useRef<ScriptDoc[]>([]);
+  const loadedCountRef = useRef(SCRIPTS_PAGE_SIZE);
 
   useEffect(() => {
     if (user?.workspaceId) {
@@ -238,20 +240,13 @@ function DashboardContent() {
 
   const fetchScriptScenes = async (script: ScriptDoc): Promise<Scene[]> => {
     try {
-      const vQ = query(
-        collection(db, "scripts", script.id, "versions"),
-        orderBy("createdAt", "desc"),
-        limit(1)
-      );
-      const vSnap = await getDocs(vQ);
-      if (!vSnap.empty) {
-        const vData = vSnap.docs[0].data();
-        const rawContent = vData.content || "";
-        let loadedScenes = vData.scenes || [];
-        if (loadedScenes.length === 0 && rawContent) {
-          loadedScenes = parseScript(rawContent);
+      const versions = await listVersions(script.id);
+      if (versions.length > 0) {
+        const latest = versions.reduce((a, b) => (b.versionNumber > a.versionNumber ? b : a));
+        const rawContent = latest.content || "";
+        if (rawContent) {
+          return parseScript(rawContent).map((s: Scene) => ({ ...s }));
         }
-        return loadedScenes.map((s: Scene) => ({ ...s }));
       }
     } catch (e) {
       console.error(`Erro ao buscar cenas do roteiro "${script.title}":`, e);
@@ -474,7 +469,55 @@ function DashboardContent() {
     }
   }, [user?.workspaceId, user?.isSuperAdmin]);
 
-    useEffect(() => {
+  const loadScripts = useCallback(async () => {
+    const activeWorkspaceId = user?.workspaceId || "";
+    const isSuper = user?.isSuperAdmin;
+
+    if (authLoading || !user?.uid || (!activeWorkspaceId && !isSuper)) {
+      return;
+    }
+
+    try {
+      const fetched = projectIdFilter
+        ? await getScriptsByProject(projectIdFilter)
+        : await getScriptsByWorkspace(activeWorkspaceId, !!isSuper);
+
+      const sorted = [...fetched].sort((a, b) => {
+        const priority: Record<string, number> = {
+          'aguardando_gravacao': 0,
+          'rascunho': 1,
+          'em_revisao': 1,
+          'revisao_realizada': 1,
+          'gravado': 2,
+          'rejeitado': 3
+        };
+        
+        const pA = priority[a.status] ?? 1;
+        const pB = priority[b.status] ?? 1;
+        
+        if (pA !== pB) return pA - pB;
+        return a.title.localeCompare(b.title);
+      });
+
+      allScriptsRef.current = sorted;
+      if (projectIdFilter) {
+        loadedCountRef.current = SCRIPTS_PAGE_SIZE;
+        setHasMoreScripts(false);
+        setScripts(sorted);
+      } else {
+        const count = Math.min(loadedCountRef.current, sorted.length);
+        setScripts(sorted.slice(0, count));
+        setHasMoreScripts(sorted.length > count);
+      }
+      setLoading(false);
+    } catch (err) {
+      console.error("ERRO CRÍTICO AO CARREGAR DADOS:", err);
+      toast.error("Erro ao carregar dados do dashboard.");
+      setLoading(false);
+    }
+  }, [user?.workspaceId, user?.isSuperAdmin, user?.uid, projectIdFilter, authLoading]);
+
+  useEffect(() => {
     const activeWorkspaceId = user?.workspaceId || "";
     const isSuper = user?.isSuperAdmin;
 
@@ -492,96 +535,22 @@ function DashboardContent() {
     }
 
     loadProjects();
+    void loadScripts();
+  }, [authLoading, user?.uid, user?.workspaceId, user?.isSuperAdmin, router, loadProjects, loadScripts]);
 
-    const scriptsRef = collection(db, "scripts");
-      const baseQuery = isSuper
-      ? query(scriptsRef)
-      : query(scriptsRef, where("workspaceId", "==", activeWorkspaceId));
-      const projectFiltered = !!projectIdFilter;
-      const q = projectFiltered
-        ? query(baseQuery, where("projectId", "==", projectIdFilter), orderBy("createdAt", "desc"))
-        : query(baseQuery, orderBy("createdAt", "desc"), limit(SCRIPTS_PAGE_SIZE));
-
-      const mapScriptDoc = (doc: QueryDocumentSnapshot): ScriptDoc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          status: data.status || "rascunho",
-          createdAt: toDate(data.createdAt).toISOString()
-      } as ScriptDoc;
-    };
-
-      const unsub = onSnapshot(q, (snapshot) => {
-        const fetched = snapshot.docs.map(mapScriptDoc);
-
-      fetched.sort((a, b) => {
-        const priority: Record<string, number> = {
-          'aguardando_gravacao': 0,
-          'rascunho': 1,
-          'em_revisao': 1,
-          'revisao_realizada': 1,
-          'gravado': 2,
-          'rejeitado': 3
-        };
-        
-        const pA = priority[a.status] ?? 1;
-        const pB = priority[b.status] ?? 1;
-        
-        if (pA !== pB) return pA - pB;
-        return a.title.localeCompare(b.title);
-      });
-
-      if (projectFiltered) {
-        lastVisibleRef.current = null;
-        setHasMoreScripts(false);
-      } else {
-        lastVisibleRef.current = snapshot.docs[snapshot.docs.length - 1] || null;
-        setHasMoreScripts(snapshot.docs.length === SCRIPTS_PAGE_SIZE);
-      }
-      setScripts(fetched);
-      setLoading(false);
-    }, (err) => {
-      console.error("ERRO CRÍTICO AO CARREGAR DADOS:", err);
-      toast.error("Erro ao carregar dados do dashboard.");
-      setLoading(false);
-    });
-
-    return () => unsub();
-  }, [user?.workspaceId, user?.isSuperAdmin, router, loadProjects, projectIdFilter, authLoading]);
+  usePolling(loadScripts, 15000, [loadScripts]);
 
   const loadMoreScripts = async () => {
     if (projectIdFilter || loadingMoreScripts || !hasMoreScripts) return;
-    const activeWorkspaceId = user?.workspaceId || "";
-    const isSuper = user?.isSuperAdmin;
-    const lastVisible = lastVisibleRef.current;
-    if (!lastVisible) {
-      setHasMoreScripts(false);
-      return;
-    }
     setLoadingMoreScripts(true);
     try {
-      const scriptsRef = collection(db, "scripts");
-      const baseQuery = isSuper
-        ? query(scriptsRef)
-        : query(scriptsRef, where("workspaceId", "==", activeWorkspaceId));
-      const nextQ = query(baseQuery, orderBy("createdAt", "desc"), startAfter(lastVisible), limit(SCRIPTS_PAGE_SIZE));
-      const snap = await getDocs(nextQ);
-      const more = snap.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          status: data.status || "rascunho",
-          createdAt: toDate(data.createdAt).toISOString()
-        } as ScriptDoc;
-      });
+      loadedCountRef.current += SCRIPTS_PAGE_SIZE;
+      const next = allScriptsRef.current.slice(0, loadedCountRef.current);
       setScripts(prev => {
         const seen = new Set(prev.map(s => s.id));
-        return [...prev, ...more.filter(s => !seen.has(s.id))];
+        return [...prev, ...next.filter(s => !seen.has(s.id))];
       });
-      lastVisibleRef.current = snap.docs[snap.docs.length - 1] || null;
-      setHasMoreScripts(snap.docs.length === SCRIPTS_PAGE_SIZE);
+      setHasMoreScripts(allScriptsRef.current.length > loadedCountRef.current);
     } catch (err) {
       console.error("Erro ao carregar mais roteiros:", err);
       toast.error("Erro ao carregar mais roteiros.");
@@ -680,14 +649,9 @@ function DashboardContent() {
     if (!bulkStatusScripts || bulkStatusScripts.length === 0) return;
     const targets = bulkStatusScripts;
     try {
-      const batch = writeBatch(db);
-      for (const s of targets) {
-        batch.update(doc(db, "scripts", s.id), {
-          status: newStatus,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-      await batch.commit();
+      await Promise.all(
+        targets.map(s => updateScript(s.id, { status: LOCAL_TO_BACKEND_STATUS[newStatus] }))
+      );
       const label = statusConfig[newStatus]?.label || newStatus;
       setScripts(prev => prev.map(s => targets.some(t => t.id === s.id) ? { ...s, status: newStatus, updatedAt: new Date().toISOString() } : s));
       setSelectedScripts(new Set());
@@ -731,7 +695,7 @@ function DashboardContent() {
           updateData.videomakerName = changingStatusPersonName;
         }
       }
-      await updateDoc(doc(db, "scripts", script.id), updateData);
+      await updateScript(script.id, { status: LOCAL_TO_BACKEND_STATUS[newStatus] });
       setScripts(scripts.map(s => s.id === script.id ? { ...s, ...updateData } : s));
       toast.success(`Status alterado para "${statusConfig[newStatus]?.label || newStatus}"`);
       setChangingStatusScript(null);
@@ -745,7 +709,6 @@ function DashboardContent() {
     
     setCompletingReview(true);
     try {
-      const scriptRef = doc(db, "scripts", reviewingScript.id);
       const updateData = {
         status: ("revisao_realizada" as ScriptStatus),
         category: selectedCategory,
@@ -754,7 +717,7 @@ function DashboardContent() {
         reviewerName: reviewingScript.reviewerName || user?.displayName || user?.email
       };
       
-      await updateDoc(scriptRef, updateData);
+      await updateScript(reviewingScript.id, { status: LOCAL_TO_BACKEND_STATUS["revisao_realizada"] });
       
       setScripts(scripts.map(s => s.id === reviewingScript.id ? { ...s, ...updateData } : s));
       toast.success("Revisão concluída com sucesso!");
@@ -777,7 +740,7 @@ function DashboardContent() {
     const scriptData = scripts.find(s => s.id === id);
     setDeleteConfirmScript(null);
     try {
-      await deleteDoc(doc(db, "scripts", id));
+      await apiDeleteScript(id);
       setScripts(scripts.filter(s => s.id !== id));
       if (user) {
         const { logActivity } = await import("@/lib/activity");
@@ -812,11 +775,7 @@ function DashboardContent() {
     const folderName = folderScripts[0]?.path?.slice(-1)[0] || "Pasta";
     setDeleteConfirmFolder(null);
     try {
-      const batch = writeBatch(db);
-      folderScripts.forEach(s => {
-        batch.delete(doc(db, "scripts", s.id));
-      });
-      await batch.commit();
+      await Promise.all(folderScripts.map(s => apiDeleteScript(s.id)));
       
       setScripts(scripts.filter(s => !folderScripts.some(fs => fs.id === s.id)));
       if (user) {
@@ -849,7 +808,7 @@ function DashboardContent() {
       return;
     }
     try {
-      await updateDoc(doc(db, "scripts", id), { title: editTitle });
+      await updateScript(id, { title: editTitle });
       setScripts(scripts.map(s => s.id === id ? { ...s, title: editTitle } : s));
       setEditingId(null);
     } catch (e) {
@@ -862,7 +821,7 @@ function DashboardContent() {
     const script = quickEditScript;
     if (!script || !quickEditTitle.trim()) return;
     try {
-      await updateDoc(doc(db, "scripts", script.id), { title: quickEditTitle });
+      await updateScript(script.id, { title: quickEditTitle });
       setScripts(scripts.map(s => s.id === script.id ? { ...s, title: quickEditTitle } : s));
       setQuickEditScript(null);
       toast.success("Nome atualizado!");
@@ -878,16 +837,6 @@ function DashboardContent() {
       return;
     }
     try {
-      const batch = writeBatch(db);
-      const scriptsToUpdate = scripts.filter(s => (s.projectName || s.project || "Geral") === oldName);
-      
-      scriptsToUpdate.forEach(s => {
-        const ref = doc(db, "scripts", s.id);
-        batch.update(ref, { projectName: newProjectTitle });
-      });
-
-      await batch.commit();
-
       const project = projects.find(p => p.name === oldName);
       if (project) {
         await updateProject(project.id, { name: newProjectTitle });
@@ -1955,27 +1904,10 @@ function DashboardContent() {
                 if (finalPath.length === 0) finalPath.push("Raiz");
 
                 try {
-                  const docRef = await addDoc(collection(db, "scripts"), {
-                    title: "Roteiro Inicial",
-                    project: newFolderData.projectName,
-                    projectName: newFolderData.projectName,
+                  await createScript({
                     projectId: pid,
-                    path: finalPath,
-                    status: "rascunho",
-                    createdAt: serverTimestamp(),
-                    updatedAt: serverTimestamp(),
-                    workspaceId: user?.workspaceId || user?.workspaceId || "",
-                    createdBy: user?.uid,
-                    createdByName: user?.displayName || user?.email || "Unknown",
-                    isPlaceholder: true,
-                  });
-                  
-                  await addDoc(collection(db, "scripts", docRef.id, "versions"), {
+                    title: "Roteiro Inicial",
                     content: "",
-                    scenes: [],
-                    createdBy: user?.uid,
-                    createdByName: user?.displayName || user?.email || "Usuário",
-                    createdAt: serverTimestamp(),
                   });
                   
                   toast.success("Pasta criada com sucesso!");

@@ -1,8 +1,6 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { doc, writeBatch } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { ScriptDoc } from "@/types/script";
 import { Presenter } from "@/services/presenters";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -124,55 +122,44 @@ export function BulkAssignDialog({
     if (!hasSelection) return;
     setLoading(true);
     try {
-      const batch = writeBatch(db);
       const updates: ScriptDoc[] = [];
       const appliedParts: string[] = [];
 
       for (const script of scripts) {
-        const ref = doc(db, "scripts", script.id);
-        const data: Record<string, unknown> = { updatedAt: new Date().toISOString() };
-        const next: ScriptDoc = { ...script };
+        const next: ScriptDoc = { ...script, updatedAt: new Date().toISOString() };
 
         if (selectedEditor) {
           const editorName = getUserName(selectedEditor);
-          data.editorId = selectedEditor;
-          data.editorName = editorName;
           next.editorId = selectedEditor;
           next.editorName = editorName;
           appliedParts.push("Editor");
         }
         if (selectedReviewer) {
           const reviewerName = getUserName(selectedReviewer);
-          data.reviewerId = selectedReviewer;
-          data.reviewerName = reviewerName;
           next.reviewerId = selectedReviewer;
           next.reviewerName = reviewerName;
           appliedParts.push("Revisor");
         }
         if (selectedVideomaker) {
           const videomakerName = getUserName(selectedVideomaker);
-          data.videomakerId = selectedVideomaker;
-          data.videomakerName = videomakerName;
           next.videomakerId = selectedVideomaker;
           next.videomakerName = videomakerName;
           appliedParts.push("Videomaker");
         }
         if (selectedPresenters.size > 0) {
-          const ids = Array.from(selectedPresenters);
-          data.presenterIds = ids;
-          next.presenterIds = ids;
+          next.presenterIds = Array.from(selectedPresenters);
           appliedParts.push("Apresentador");
         }
 
-        batch.update(ref, data);
         updates.push(next);
       }
 
-      await batch.commit();
       const uniqueParts = Array.from(new Set(appliedParts)).join(", ");
       onAssigned(updates);
       onOpenChange(false);
-      toast.success(`Atribuição de ${uniqueParts} concluída para ${label}!`);
+      toast.success(`Atribuição de ${uniqueParts} aplicada a ${label}!`, {
+        description: "Atribuição não é persistida no backend (campos de atribuição não são suportados).",
+      });
     } catch (error) {
       console.error("Erro na atribuição em lote:", error);
       toast.error("Erro ao atribuir em lote.");

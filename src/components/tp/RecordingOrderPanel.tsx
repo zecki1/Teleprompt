@@ -1,8 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { getScriptsByProject } from "@/services/projects";
 import { ScriptDoc } from "@/types/script";
 import { getScriptPath } from "@/lib/pathUtils";
@@ -18,14 +16,17 @@ function folderKeyOf(path: string[]): string {
   return path.length > 0 ? path.join("/") : "Raiz";
 }
 
-/** Lê a ordem customizada gravada no projeto para uma pasta. */
+function storageKeyOf(projectId: string, folderPath: string[]): string {
+  return `recording-order-${projectId}-${folderKeyOf(folderPath)}`;
+}
+
+/** Lê a ordem customizada persistida no localStorage para uma pasta. */
 export async function getRecordingOrder(projectId: string | null, folderPath: string[]): Promise<string[] | null> {
   if (!projectId) return null;
   try {
-    const snap = await getDoc(doc(db, "projects", projectId));
-    if (!snap.exists()) return null;
-    const map = snap.data()?.recordingOrder;
-    const list = map?.[folderKeyOf(folderPath)];
+    const raw = localStorage.getItem(storageKeyOf(projectId, folderPath));
+    if (!raw) return null;
+    const list = JSON.parse(raw);
     return Array.isArray(list) ? (list as string[]) : null;
   } catch {
     return null;
@@ -95,14 +96,12 @@ export function RecordingOrderPanel({ projectId, folderPath, onOrderSaved }: Rec
     if (!projectId) return;
     setSaving(true);
     try {
-      await updateDoc(doc(db, "projects", projectId), {
-        recordingOrder: { [folderKeyOf(folderPath)]: order },
-      });
+      localStorage.setItem(storageKeyOf(projectId, folderPath), JSON.stringify(order));
       setSaved(true);
       onOrderSaved?.(order);
       setTimeout(() => setSaved(false), 2000);
     } catch {
-      // regras podem não estar publicadas
+      // armazenamento indisponível
     } finally {
       setSaving(false);
     }

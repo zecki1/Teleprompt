@@ -1,16 +1,5 @@
-import {
-  collection,
-  getDocs,
-  query,
-  orderBy,
-  limit,
-  doc,
-  getDoc,
-  addDoc,
-  setDoc,
-  serverTimestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { listVersions, revertVersion } from "@/api/versions";
+import { toVersion } from "@/lib/script-mappers";
 import { Scene } from "@/lib/parser";
 
 export interface VersionData {
@@ -22,71 +11,57 @@ export interface VersionData {
   createdByName?: string;
   description?: string;
   restoredFrom?: string;
+  versionNumber?: number;
 }
 
 export async function getVersions(
   scriptId: string,
   max: number = 50
 ): Promise<VersionData[]> {
-  const vQ = query(
-    collection(db, "scripts", scriptId, "versions"),
-    orderBy("createdAt", "desc"),
-    limit(max)
-  );
-  const snapshot = await getDocs(vQ);
-  return snapshot.docs.map((doc) => ({
-    id: doc.id,
-    ...doc.data(),
-  })) as VersionData[];
+  try {
+    const dtos = await listVersions(scriptId);
+    return dtos.slice(0, max).map((dto) => ({
+      ...toVersion(dto),
+      createdAt: dto.createdAt,
+      content: dto.content,
+      createdBy: dto.createdBy ?? undefined,
+    }));
+  } catch (error) {
+    console.error("[Versions] Erro ao listar versões:", error);
+    return [];
+  }
 }
 
 export async function getVersionById(
   scriptId: string,
   versionId: string
 ): Promise<VersionData | null> {
-  const ref = doc(db, "scripts", scriptId, "versions", versionId);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return null;
-  return { id: snap.id, ...snap.data() } as VersionData;
+  try {
+    const dtos = await listVersions(scriptId);
+    const dto = dtos.find((v) => v.id === versionId);
+    if (!dto) return null;
+    return {
+      ...toVersion(dto),
+      createdAt: dto.createdAt,
+      content: dto.content,
+      createdBy: dto.createdBy ?? undefined,
+    };
+  } catch (error) {
+    console.error("[Versions] Erro ao buscar versão:", error);
+    return null;
+  }
 }
 
 export async function restoreVersion(
   scriptId: string,
   versionId: string,
-  restoredBy: string,
-  restoredByName: string
+  _restoredBy: string,
+  _restoredByName: string
 ): Promise<boolean> {
   try {
-    const versionData = await getVersionById(scriptId, versionId);
-    if (!versionData) return false;
-
-    const scenes = versionData.scenes || [];
-    const rawContent = versionData.content || "";
-
-    const docRef = doc(db, "scripts", scriptId);
-    const currentSnap = await getDoc(docRef);
-    if (!currentSnap.exists()) return false;
-
-    await setDoc(
-      docRef,
-      {
-        updatedAt: serverTimestamp(),
-        restoredFrom: versionId,
-        restoredAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-
-    await addDoc(collection(db, "scripts", scriptId, "versions"), {
-      content: rawContent,
-      scenes: scenes,
-      createdAt: new Date().toISOString(),
-      createdBy: restoredBy,
-      createdByName: restoredByName,
-      description: `Restaurado da versão ${versionId.slice(0, 8)}...`,
-      restoredFrom: versionId,
-    });
-
+    const version = await getVersionById(scriptId, versionId);
+    if (!version || version.versionNumber === undefined) return false;
+    await revertVersion(scriptId, version.versionNumber);
     return true;
   } catch (error) {
     console.error("[Versions] Erro ao restaurar versão:", error);

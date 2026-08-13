@@ -2,22 +2,11 @@
 
 import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
-import {
-  collection,
-  query,
-  orderBy,
-  limit,
-  onSnapshot,
-  where,
-  Timestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -37,12 +26,15 @@ import {
   RotateCcw,
   FolderOpen,
   Briefcase,
-  Hourglass,
   User,
 } from "lucide-react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { listActivities } from "@/api/activities";
+import type { ActivityDto } from "@/api/types";
+import { toDate } from "@/lib/data-utils";
+import { usePolling } from "@/lib/polling";
 import { ActivityData, ActivityAction } from "@/lib/activity";
 
 const actionConfig: Record<string, { label: string; color: string; icon: React.ElementType }> = {
@@ -57,44 +49,78 @@ const actionConfig: Record<string, { label: string; color: string; icon: React.E
   ExportouBackup: { label: "Exportação", color: "bg-indigo-500", icon: Download },
   Reverteu: { label: "Restauração", color: "bg-cyan-500", icon: RotateCcw },
   EditouProjeto: { label: "Editar Projeto", color: "bg-teal-500", icon: Briefcase },
+  Entrou: { label: "Entrou", color: "bg-sky-500", icon: User },
+};
+
+// Mapeia os ActivityType do backend (.NET) para as ações exibidas pela UI.
+const activityTypeToAction: Record<string, ActivityAction> = {
+  Create: "Criou",
+  Update: "Editou",
+  Delete: "ExcluiuRoteiro",
+  Comment: "Comentou",
+  Version: "Editou",
+  Revert: "Reverteu",
+  Assign: "Editou",
+  Record: "Gravou",
+  Login: "Entrou",
+  Permission: "Editou",
+  Other: "Entrou",
 };
 
 export default function ActivitiesPage() {
-  const { user } = useAuth();
+  const { user, allUsers } = useAuth();
   const router = useRouter();
   const [activities, setActivities] = useState<(ActivityData & { id: string })[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionFilter, setActionFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    const isSuper = user?.isSuperAdmin;
-    const wsId = user?.workspaceId || "senai";
+  const usersByName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const u of allUsers ?? []) {
+      const name = u.displayName || u.name;
+      if (name) map.set(u.uid, name);
+    }
+    return map;
+  }, [allUsers]);
 
+  const loadActivities = useCallback(async () => {
+    if (!user?.uid) return;
+    try {
+      const dtos = await listActivities({ page: 1, pageSize: 100 });
+      const list = dtos.map((dto: ActivityDto) => {
+        const titleMatch = dto.description?.match(/"([^"]+)"/);
+        return {
+          id: dto.id,
+          userId: dto.userId ?? "",
+          userName: dto.userId
+            ? usersByName.get(dto.userId) ?? "Usuário"
+            : "Sistema",
+          action: activityTypeToAction[dto.type] ?? "Editou",
+          scriptTitle: titleMatch ? titleMatch[1] : undefined,
+          timestamp: toDate(dto.createdAt),
+          workspaceId: "",
+        } satisfies ActivityData & { id: string };
+      });
+      setActivities(list);
+    } catch (error) {
+      console.error("Erro ao carregar atividades:", error);
+      setActivities([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.uid, user?.workspaceId, usersByName]);
+
+  useEffect(() => {
     if (!user?.uid) {
       router.push("/login");
       return;
     }
+    setLoading(true);
+    void loadActivities();
+  }, [user?.uid, router, loadActivities]);
 
-    const activitiesConstraints = isSuper
-      ? [orderBy("timestamp", "desc"), limit(200)]
-      : [where("workspaceId", "==", wsId), orderBy("timestamp", "desc"), limit(200)];
-    const q = query(
-      collection(db, "activities"),
-      ...activitiesConstraints
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as (ActivityData & { id: string })[];
-      setActivities(list);
-      setLoading(false);
-    });
-
-    return () => unsub();
-  }, [user?.uid, user?.workspaceId, user?.isSuperAdmin, router]);
+  usePolling(loadActivities, 15000, [loadActivities]);
 
   const filtered = useMemo(() => {
     let result = activities;
@@ -116,10 +142,7 @@ export default function ActivitiesPage() {
 
   const formatDate = (ts: unknown) => {
     if (!ts) return "";
-    if (ts && typeof ts === "object" && "toDate" in ts) {
-      return format((ts as Timestamp).toDate(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
-    }
-    return "";
+    return format(toDate(ts), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
   };
 
   if (!user) return null;

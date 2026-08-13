@@ -1,8 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
-
-vi.mock("@/lib/firebase", () => ({
-  db: {},
-}));
+import { describe, it, expect } from "vitest";
 
 import { getScriptPath, buildTree, isValidPath } from "./pathUtils";
 import type { ScriptDoc } from "@/types/script";

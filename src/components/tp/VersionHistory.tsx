@@ -1,15 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import {
-  collection,
-  query,
-  orderBy,
-  limit,
-  onSnapshot,
-  Timestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -34,6 +25,8 @@ import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { Scene } from "@/lib/parser";
 import { getVersions, restoreVersion, VersionData } from "@/lib/versions";
+import { toDate } from "@/lib/data-utils";
+import { usePolling } from "@/lib/polling";
 
 interface VersionHistoryProps {
   scriptId: string;
@@ -59,40 +52,32 @@ export function VersionHistory({ scriptId, isOpen, onClose }: VersionHistoryProp
     }
   }, [allUsers]);
 
-  const loadVersions = useCallback(async () => {
+  const loadVersions = useCallback(async (showLoading: boolean = true) => {
     if (!scriptId) return;
-    setLoading(true);
+    if (showLoading) setLoading(true);
     try {
       const data = await getVersions(scriptId, 50);
       setVersions(data);
     } catch (e) {
       console.error("[VersionHistory] Erro ao carregar versões:", e);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, [scriptId]);
 
   useEffect(() => {
     if (!isOpen || !scriptId) return;
     loadVersions();
-
-    const unsub = onSnapshot(
-      query(
-        collection(db, "scripts", scriptId, "versions"),
-        orderBy("createdAt", "desc"),
-        limit(50)
-      ),
-      (snapshot) => {
-        const data = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as VersionData[];
-        setVersions(data);
-        setLoading(false);
-      }
-    );
-    return () => unsub();
   }, [isOpen, scriptId, loadVersions]);
+
+  usePolling(
+    async () => {
+      if (!isOpen || !scriptId) return;
+      await loadVersions(false);
+    },
+    15000,
+    [isOpen, scriptId, loadVersions]
+  );
 
   const handleRestore = async (versionId: string) => {
     if (!user) return;
@@ -117,15 +102,9 @@ export function VersionHistory({ scriptId, isOpen, onClose }: VersionHistoryProp
     }
   };
 
-  const formatDate = (date: { toDate: () => Date } | string | undefined) => {
+  const formatDate = (date: VersionData["createdAt"] | undefined) => {
     if (!date) return "Data desconhecida";
-    if (typeof date === "object" && date.toDate) {
-      return format(date.toDate(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
-    }
-    if (typeof date === "string") {
-      return format(new Date(date), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
-    }
-    return "Data desconhecida";
+    return format(toDate(date), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
   };
 
   const getUserName = (v: VersionData): string | null => {

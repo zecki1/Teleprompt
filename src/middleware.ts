@@ -6,6 +6,7 @@ const PUBLIC_ROUTES = [
   "/login",
   "/s/",
   "/tp/",
+  "/api/",
 ];
 
 const PROTECTED_ROUTES = [
@@ -15,27 +16,27 @@ const PROTECTED_ROUTES = [
   "/admin",
   "/relatorio",
   "/activities",
+  "/profile",
 ];
+
+const TOKEN_COOKIE = "tp_token";
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Rotas públicas
   const isPublic = PUBLIC_ROUTES.some((route) => pathname === route || pathname.startsWith(route));
   if (isPublic) {
     return securityHeaders(NextResponse.next());
   }
 
-  // Rotas protegidas - por enquanto só adiciona headers
-  // TODO: Verificar session cookie (Firebase Admin SDK) para auth server-side real
+  const token = request.cookies.get(TOKEN_COOKIE)?.value;
   const isProtected = PROTECTED_ROUTES.some((route) => pathname.startsWith(route));
-  if (isProtected) {
-    // Futuro: const session = request.cookies.get("__session")?.value;
-    //         if (!session) return NextResponse.redirect(new URL("/login", request.url));
-    return securityHeaders(NextResponse.next());
+  if (isProtected && !token) {
+    const loginUrl = new URL("/login", request.url);
+    if (pathname !== "/login") loginUrl.searchParams.set("redirect", pathname);
+    return NextResponse.redirect(loginUrl);
   }
 
-  // Demais rotas: adiciona headers de segurança
   return securityHeaders(NextResponse.next());
 }
 

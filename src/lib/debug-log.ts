@@ -1,7 +1,6 @@
 "use client";
 
-import { collection, doc, writeBatch, serverTimestamp } from "firebase/firestore";
-import { db } from "./firebase";
+import { writeDebugLog } from "@/api/admin";
 
 export type DebugLevel = "debug" | "info" | "warn" | "error";
 
@@ -80,7 +79,7 @@ function sanitizeMeta(meta?: Record<string, unknown>): Record<string, unknown> |
     if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
       out[k] = v;
     } else if (Array.isArray(v)) {
-      out[k] = v.map(item =>
+      out[k] = v.map((item) =>
         typeof item === "string" || typeof item === "number" || typeof item === "boolean"
           ? item
           : JSON.stringify(item)
@@ -106,21 +105,23 @@ function buildEntry(
 ): DebugLogEntry {
   const stack = err instanceof Error ? err.stack : err ? String(err) : undefined;
   const entry: DebugLogEntry = {
-    ts: serverTimestamp(),
+    ts: new Date().toISOString(),
     t: Date.now(),
     level,
     context,
     message,
     meta: sanitizeMeta(meta),
     ...(durationMs !== undefined ? { durationMs: Math.round(durationMs) } : {}),
-    ...(currentUser ? {
-      uid: currentUser.uid,
-      email: currentUser.email,
-      name: currentUser.name,
-      role: currentUser.role,
-      workspaceId: currentUser.workspaceId,
-      permissions: currentUser.permissions,
-    } : {}),
+    ...(currentUser
+      ? {
+          uid: currentUser.uid,
+          email: currentUser.email,
+          name: currentUser.name,
+          role: currentUser.role,
+          workspaceId: currentUser.workspaceId,
+          permissions: currentUser.permissions,
+        }
+      : {}),
   };
   if (typeof window !== "undefined") {
     entry.url = window.location.href;
@@ -128,7 +129,6 @@ function buildEntry(
     entry.ua = window.navigator.userAgent;
   }
   if (stack) entry.stack = stack;
-  // Firestore rejeita campos undefined; remove-os antes de persistir.
   (Object.keys(entry) as (keyof DebugLogEntry)[]).forEach((k) => {
     if (entry[k] === undefined) delete entry[k];
   });
@@ -150,14 +150,27 @@ async function flushQueue() {
   if (queue.length === 0) return;
   const batchEntries = queue.splice(0, FLUSH_BATCH_SIZE);
   try {
-    const batch = writeBatch(db);
-    for (const e of batchEntries) {
-      batch.set(doc(collection(db, "debug_logs")), e);
-    }
-    await batch.commit();
-  } catch (e) {
-    // Regras do Firestore podem não estar publicadas ainda; não derrubar o app.
-    console.warn("[TP-DEBUG] Falha ao gravar logs no Firestore:", e);
+    await Promise.all(
+      batchEntries.map((e) =>
+        writeDebugLog({
+          level: e.level,
+          source: e.context,
+          message: e.message,
+          metadataJson: JSON.stringify({
+            ...(e.meta ? { meta: e.meta } : {}),
+            ...(e.durationMs !== undefined ? { durationMs: e.durationMs } : {}),
+            ...(e.url ? { url: e.url } : {}),
+            ...(e.page ? { page: e.page } : {}),
+            ...(e.stack ? { stack: e.stack } : {}),
+            ...(e.uid ? { uid: e.uid } : {}),
+          }),
+        }).catch(() => {
+          // Não derrubar o app se o back-end estiver indisponível.
+        })
+      )
+    );
+  } catch {
+    // ignora erros em lote
   }
 }
 
@@ -215,7 +228,7 @@ let globalCaptureInstalled = false;
 
 /**
  * Captura erros de runtime (window.onerror + unhandledrejection) e os registra
- * no buffer/log do Firestore automaticamente. Chamar uma única vez no bootstrap.
+ * no buffer/log do back-end automaticamente. Chamar uma única vez no bootstrap.
  */
 export function initGlobalErrorCapture() {
   if (globalCaptureInstalled || typeof window === "undefined") return;

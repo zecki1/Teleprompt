@@ -4,9 +4,15 @@ import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { useRouter } from "next/navigation";
-import { collection, getDocs, query, where, orderBy, limit } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { motion } from "framer-motion";
+import { listScripts } from "@/api/scripts";
+import { listProjects } from "@/api/projects";
+import { listActivities } from "@/api/activities";
+import { getReports } from "@/api/reports";
+import type { ReportsSummary } from "@/api/types";
+import { getUsers } from "@/services/users";
+import { toActivity, toScriptDoc } from "@/lib/script-mappers";
+import { usePolling } from "@/lib/polling";
 
 import { ScriptDoc } from "@/types/script";
 import {
@@ -78,6 +84,7 @@ interface ActivityLog {
   userId: string;
   userName: string;
   action: string;
+  actionType?: string;
   scriptId?: string;
   scriptTitle?: string;
   projectName?: string;
@@ -167,6 +174,63 @@ const COLORS = [
   "#ec4899", "#14b8a6", "#f97316", "#6366f1", "#84cc16",
 ];
 
+// Mapeia os ActivityType do backend (.NET) para as ações exibidas pela UI.
+const activityTypeToAction: Record<string, string> = {
+  Create: "Criou",
+  Update: "Editou",
+  Delete: "Excluiu",
+  Comment: "Comentou",
+  Version: "Editou",
+  Revert: "Reverteu",
+  Assign: "Editou",
+  Record: "Gravou",
+  Login: "Entrou",
+  Permission: "Editou",
+  Other: "Entrou",
+};
+
+// Tipos de atividade que representam contribuição real em roteiros.
+const CONTRIB_ACTIVITY_TYPES = new Set([
+  "Create",
+  "Update",
+  "Delete",
+  "Comment",
+  "Version",
+  "Revert",
+  "Assign",
+  "Record",
+]);
+
+const EDIT_ACTIVITY_TYPES = new Set(["Create", "Update", "Version", "Revert", "Assign"]);
+
+// O backend grava a descrição como `Roteiro "Título" criado` / `Versão N criada para "Título"`.
+const extractScriptTitle = (description: string): string | null => {
+  const match = description.match(/"([^"]+)"/);
+  return match ? match[1] : null;
+};
+
+// Conta cenas marcadas com [Cena] no conteúdo bruto do roteiro.
+const countScenes = (content: string): number => {
+  const match = content.match(/\[cena\b/gi);
+  return match ? match.length : 0;
+};
+
+// Converte o growth do backend (6 meses) no formato do gráfico de adoção.
+const buildMonthlyAdoption = (growth: ReportsSummary["growth"]) => {
+  let cumulativeSum = 0;
+  return growth.map((g) => {
+    const date = new Date(g.year, g.month - 1, 1);
+    const label = date.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }).replace(".", "");
+    const count = g.count;
+    cumulativeSum += count;
+    return {
+      name: label.charAt(0).toUpperCase() + label.slice(1),
+      "Novos Roteiros": count,
+      "Total Acumulado": cumulativeSum,
+    };
+  });
+};
+
 export default function RelatorioPage() {
   const { user } = useAuth();
   const router = useRouter();
@@ -187,6 +251,7 @@ export default function RelatorioPage() {
   const [totalTimeSaved, setTotalTimeSaved] = useState(0);
   const [userAdoptionRate, setUserAdoptionRate] = useState(0);
   const [monthlyAdoptionData, setMonthlyAdoptionData] = useState<{ name: string; "Novos Roteiros": number; "Total Acumulado": number }[]>([]);
+  const [reports, setReports] = useState<ReportsSummary | null>(null);
 
   const isSuperAdmin = user?.role === "SuperAdmin" || user?.isSuperAdmin === true;
 
@@ -211,149 +276,85 @@ export default function RelatorioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, user?.workspaceId]);
 
+  // Substitui o onSnapshot do Firestore: atualiza periodicamente os dados.
+  usePolling(() => {
+    if (user) loadData(user.workspaceId || "");
+  }, 60000, [user?.uid, user?.workspaceId, isSuperAdmin]);
+
   const loadData = async (workspaceId: string) => {
     try {
-      const scriptsQuery = query(collection(db, "scripts"), where("workspaceId", "==", workspaceId));
-      const usersQuery = query(collection(db, "users"), where("workspaceId", "==", workspaceId));
+      const isSuper = isSuperAdmin;
 
-      const [scriptsSnap, usersSnap] = await Promise.all([
-        getDocs(scriptsQuery),
-        getDocs(usersQuery),
+      const [scriptDtos, projectDtos, userList, activityDtos, reportsSummary] = await Promise.all([
+        listScripts({ workspaceId: isSuper ? undefined : workspaceId }),
+        listProjects(isSuper ? undefined : workspaceId),
+        getUsers(workspaceId, isSuper),
+        listActivities({ page: 1, pageSize: 200 }),
+        getReports(workspaceId || undefined).catch(() => null),
       ]);
 
       const userMap = new Map<string, UserInfo>();
-      usersSnap.forEach((d) => {
-        const data = d.data();
-        const email = data.email || "";
+      userList.forEach((u) => {
+        const email = u.email || "";
         if (email.endsWith("@sp.senai.br")) {
-          userMap.set(d.id, {
-            uid: d.id,
-            displayName: data.displayName || data.name || email.split("@")[0],
+          userMap.set(u.uid, {
+            uid: u.uid,
+            displayName: u.displayName || email.split("@")[0],
             email,
-            role: data.role || "Docente",
-            createdAt: data.createdAt || null,
+            role: u.role || "Docente",
+            createdAt: null,
           });
         }
       });
 
+      const projectNameMap = new Map<string, string>();
+      projectDtos.forEach((p) => projectNameMap.set(p.id, p.name));
+
       const allScripts: ScriptDoc[] = [];
-      scriptsSnap.forEach((doc) => {
-        const data = { id: doc.id, ...doc.data() } as ScriptDoc;
-        if (!data.isPlaceholder) allScripts.push(data);
+      const charMap = new Map<string, number>();
+      scriptDtos.forEach((dto) => {
+        const content = dto.content || "";
+        const base = toScriptDoc(dto);
+        const scenes = countScenes(content);
+        const script: ScriptDoc = {
+          ...base,
+          projectName: dto.projectId ? projectNameMap.get(dto.projectId) || undefined : undefined,
+          charCount: content.length,
+          sceneCount: scenes > 0 ? scenes : undefined,
+        };
+        charMap.set(script.id, content.length);
+        if (!script.isPlaceholder) allScripts.push(script);
       });
       setAllScripts(allScripts);
 
-      // Busca de logs de atividades com fallback
-      const allActivities: ActivityLog[] = [];
-      try {
-        const activitiesQuery = query(
-          collection(db, "activities"),
-          where("workspaceId", "==", workspaceId),
-          orderBy("timestamp", "desc"),
-          limit(1000)
-        );
-        const activitiesSnap = await getDocs(activitiesQuery);
-        activitiesSnap.forEach((doc) => {
-          const actData = doc.data();
-          allActivities.push({
-            id: doc.id,
-            userId: actData.userId || "",
-            userName: actData.userName || "",
-            action: actData.action || "",
-            scriptId: actData.scriptId,
-            scriptTitle: actData.scriptTitle,
-            projectName: actData.projectName,
-            timestamp: actData.timestamp,
-          });
-        });
-      } catch (err) {
-        console.warn("Failed to load activities with orderBy, trying fallback:", err);
-        try {
-          const fallbackQuery = query(
-            collection(db, "activities"),
-            where("workspaceId", "==", workspaceId),
-            limit(1000)
-          );
-          const activitiesSnap = await getDocs(fallbackQuery);
-          activitiesSnap.forEach((doc) => {
-            const actData = doc.data();
-            allActivities.push({
-              id: doc.id,
-              userId: actData.userId || "",
-              userName: actData.userName || "",
-              action: actData.action || "",
-              scriptId: actData.scriptId,
-              scriptTitle: actData.scriptTitle,
-              projectName: actData.projectName,
-              timestamp: actData.timestamp,
-            });
-          });
-          // ordenar localmente
-          allActivities.sort((a, b) => {
-            const dateA = parseDate(a.timestamp);
-            const dateB = parseDate(b.timestamp);
-            const timeA = dateA ? dateA.getTime() : 0;
-            const timeB = dateB ? dateB.getTime() : 0;
-            return timeB - timeA;
-          });
-        } catch (fallbackErr) {
-          console.error("Failed to load activities completely:", fallbackErr);
-        }
+      const allActivities: ActivityLog[] = activityDtos.map((dto) => {
+        const local = toActivity(dto);
+        const actionType = local.type;
+        const title = extractScriptTitle(local.description);
+        const userInfo = local.userId ? userMap.get(local.userId) : undefined;
+        return {
+          id: local.id,
+          userId: local.userId || "",
+          userName: userInfo?.displayName || "",
+          action: activityTypeToAction[actionType] || local.description || "Editou",
+          actionType,
+          scriptTitle: title || undefined,
+          timestamp: local.createdAt,
+        };
+      });
+      setWorkspaceActivities(allActivities);
+
+      if (reportsSummary) {
+        setReports(reportsSummary);
+        setMonthlyAdoptionData(buildMonthlyAdoption(reportsSummary.growth || []));
       }
 
-      setWorkspaceActivities(allActivities);
-      const charMap = await fetchScriptsCharMap(allScripts);
       aggregateData(allScripts, userMap, allActivities, charMap);
     } catch (err) {
       console.error("Erro ao carregar dados:", err);
     } finally {
       setLoading(false);
     }
-  };
-
-  const fetchScriptsCharMap = async (scripts: ScriptDoc[]): Promise<Map<string, number>> => {
-    const charMap = new Map<string, number>();
-    // Prefere a métrica já gravada no doc (evita N+1); fallback para versões legadas
-    const missing = scripts.filter(s => {
-      const cached = s.charCount;
-      if (typeof cached === "number") {
-        charMap.set(s.id, cached);
-        return false;
-      }
-      return true;
-    });
-    const batchSize = 20;
-    for (let i = 0; i < missing.length; i += batchSize) {
-      const batch = missing.slice(i, i + batchSize);
-      const results = await Promise.allSettled(
-        batch.map(async (script) => {
-          const vQ = query(
-            collection(db, "scripts", script.id, "versions"),
-            orderBy("createdAt", "desc"),
-            limit(1)
-          );
-          const vSnap = await getDocs(vQ);
-          if (!vSnap.empty) {
-            const vData = vSnap.docs[0].data();
-            const scenes = vData.scenes || [];
-            if (Array.isArray(scenes)) {
-              const chars = scenes.reduce((sum: number, sc: unknown) => {
-                const s = sc as Record<string, unknown>;
-                return sum + (typeof s.spokenText === "string" ? (s.spokenText as string).length : 0);
-              }, 0);
-              return { id: script.id, chars };
-            }
-          }
-          return { id: script.id, chars: 0 };
-        })
-      );
-      for (const result of results) {
-        if (result.status === "fulfilled" && result.value) {
-          charMap.set(result.value.id, result.value.chars);
-        }
-      }
-    }
-    return charMap;
   };
 
   const aggregateData = (
@@ -383,9 +384,8 @@ export default function RelatorioPage() {
       const draft = projectScripts.filter((s) => s.status === "rascunho").length;
 
       const totalScenes = projectScripts.reduce((sum, s) => {
-        const script = s as unknown as Record<string, unknown>;
-        const scenes = script.scenes;
-        return sum + (Array.isArray(scenes) ? scenes.length : 10);
+        const sc = s.sceneCount;
+        return sum + (typeof sc === "number" && sc > 0 ? sc : 10);
       }, 0);
 
       const totalChars = projectScripts.reduce((sum, s) => {
@@ -546,9 +546,21 @@ export default function RelatorioPage() {
     for (const [uid, info] of userMap) {
       const userActivities = allActivities.filter((a) => a.userId === uid);
 
-      const userRecordedScripts = allScripts.filter((s) => s.videomakerId === uid && s.status === "gravado");
-      const userEditedScripts = allScripts.filter((s) => s.editorId === uid);
-      const userReviewedScripts = allScripts.filter((s) => s.reviewerId === uid);
+      const userRecordedScripts = allScripts.filter(
+        (s) =>
+          s.status === "gravado" &&
+          userActivities.some((a) => a.actionType === "Record" && a.scriptTitle === s.title)
+      );
+      const userEditedScripts = allScripts.filter(
+        (s) =>
+          userActivities.some(
+            (a) => EDIT_ACTIVITY_TYPES.has(a.actionType || "") && a.scriptTitle === s.title
+          )
+      );
+      const userReviewedScripts = allScripts.filter(
+        (s) =>
+          userActivities.some((a) => a.actionType === "Comment" && a.scriptTitle === s.title)
+      );
 
       const contributedScriptIds = new Set([
         ...userRecordedScripts.map((s) => s.id),
@@ -726,7 +738,7 @@ export default function RelatorioPage() {
 
     // --- Cálculos de Adoção & ROI (Modelo de Estimativa) ---
     const totalCharsAll = allScripts.reduce((sum, s) => sum + (charMap.get(s.id) || 0), 0);
-    const computedTotalScenes = allScripts.length * 12;
+    const computedTotalScenes = allScripts.reduce((sum, s) => sum + (s.sceneCount && s.sceneCount > 0 ? s.sceneCount : 12), 0);
     setTotalScenes(computedTotalScenes);
 
     // Baseado em caracteres: Word 10 min / 1000 chars + PPT 5 min / 1000 chars
@@ -735,49 +747,24 @@ export default function RelatorioPage() {
     setTotalTimeSaved(computedTimeSaved);
 
     const activeUserIds = new Set<string>();
-    allScripts.forEach((s) => {
-      if (s.editorId) activeUserIds.add(s.editorId);
-      if (s.reviewerId) activeUserIds.add(s.reviewerId);
-      if (s.videomakerId) activeUserIds.add(s.videomakerId);
+    allActivities.forEach((a) => {
+      if (a.userId && CONTRIB_ACTIVITY_TYPES.has(a.actionType || "")) {
+        activeUserIds.add(a.userId);
+      }
     });
 
     const totalUsersCount = userMap.size;
     const activeUsersCount = Array.from(userMap.keys()).filter((uid) => activeUserIds.has(uid)).length;
     const computedAdoptionRate = totalUsersCount > 0 ? Math.round((activeUsersCount / totalUsersCount) * 100) : 0;
     setUserAdoptionRate(computedAdoptionRate);
-
-    const scriptsByMonth = new Map<string, number>();
-    allScripts.forEach((s) => {
-      const date = parseDate(s.createdAt);
-      if (date) {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, "0");
-        const key = `${year}-${month}`;
-        scriptsByMonth.set(key, (scriptsByMonth.get(key) || 0) + 1);
-      }
-    });
-
-    const sortedMonthKeys = Array.from(scriptsByMonth.keys()).sort();
-    let cumulativeSum = 0;
-    const computedMonthlyData = sortedMonthKeys.map((key) => {
-      const [year, month] = key.split("-");
-      const date = new Date(parseInt(year), parseInt(month) - 1, 1);
-      const label = date.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }).replace(".", "");
-      const count = scriptsByMonth.get(key) || 0;
-      cumulativeSum += count;
-      return {
-        name: label.charAt(0).toUpperCase() + label.slice(1),
-        "Novos Roteiros": count,
-        "Total Acumulado": cumulativeSum,
-      };
-    });
-    setMonthlyAdoptionData(computedMonthlyData);
   };
 
-  const total = projectStats.reduce((sum, p) => sum + p.total, 0);
-  const totalRecorded = projectStats.reduce((sum, p) => sum + p.recorded, 0);
-  const totalEdited = projectStats.reduce((sum, p) => sum + p.edited, 0);
-  const totalReviewed = projectStats.reduce((sum, p) => sum + p.reviewed, 0);
+  // Resumo geral vindo do backend (getReports), fonte de verdade dos totais.
+  const statusCount = (status: string) => reports?.byStatus.find((s) => s.status === status)?.count ?? 0;
+  const total = reports?.totalScripts ?? 0;
+  const totalRecorded = statusCount("Gravado") + statusCount("Concluido");
+  const totalEdited = reports ? reports.totalScripts - statusCount("Rascunho") : 0;
+  const totalReviewed = statusCount("Aprovado") + statusCount("Gravado") + statusCount("Concluido");
 
   const completionRate = total > 0 ? Math.round((totalRecorded / total) * 100) : 0;
 

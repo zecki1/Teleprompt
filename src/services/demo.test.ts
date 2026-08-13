@@ -1,12 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
-
-vi.mock("@/lib/firebase", () => ({
-  firebaseConfig: { apiKey: "test", projectId: "test" },
-  db: {},
-  auth: {},
-  app: {},
-  googleProvider: {},
-}));
+import { describe, it, expect } from "vitest";
 
 import { parseScript } from "@/lib/parser";
 import { DEMO_RAW_CONTENT, DEMO_EMAIL, DEMO_PASSWORD, DEMO_PROJECT_NAME, DEMO_SCRIPT_TITLE, DEMO_WORKSPACE_NAME } from "@/services/demo";

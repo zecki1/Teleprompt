@@ -1,6 +1,4 @@
 import { ScriptDoc, FolderNode, MAX_PATH_DEPTH } from "@/types/script";
-import { doc, updateDoc, writeBatch } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 
 /**
  * Returns the canonical path[] for a script, falling back to legacy fields.
@@ -26,7 +24,7 @@ export function buildTree(scripts: ScriptDoc[]): Record<string, FolderNode> {
   const root: Record<string, FolderNode> = {};
 
   // Scripts at the root level (no path)
-  const rootScripts = scripts.filter(s => getScriptPath(s).length === 0);
+  const rootScripts = scripts.filter((s) => getScriptPath(s).length === 0);
   if (rootScripts.length > 0) {
     root[""] = {
       name: "",
@@ -39,7 +37,7 @@ export function buildTree(scripts: ScriptDoc[]): Record<string, FolderNode> {
   }
 
   // Scripts with paths
-  const pathedScripts = scripts.filter(s => getScriptPath(s).length > 0);
+  const pathedScripts = scripts.filter((s) => getScriptPath(s).length > 0);
 
   for (const script of pathedScripts) {
     const path = getScriptPath(script);
@@ -74,7 +72,6 @@ function insertIntoTree(
   if (tail.length === 0) {
     tree[head].scripts.push(script);
   } else {
-    // Update fullPath as we go deeper
     insertIntoSubTree(tree[head], tail, script, [head]);
   }
 }
@@ -112,15 +109,13 @@ function calcTotals(tree: Record<string, FolderNode>): number {
   let total = 0;
   for (const node of Object.values(tree)) {
     const childTotal = calcTotals(node.children);
-    
-    // allScriptsRecursive should include placeholders (so we can delete empty folders)
-    const descendantScripts = Object.values(node.children).flatMap(c => c.allScriptsRecursive);
+
+    const descendantScripts = Object.values(node.children).flatMap((c) => c.allScriptsRecursive);
     node.allScriptsRecursive = [...node.scripts, ...descendantScripts];
-    
-    // totalScripts usually excludes placeholders for UI count, let's keep that logic
-    const scriptCount = node.scripts.filter(s => !s.isPlaceholder).length;
+
+    const scriptCount = node.scripts.filter((s) => !s.isPlaceholder).length;
     node.totalScripts = scriptCount + childTotal;
-    
+
     total += node.totalScripts;
   }
   return total;
@@ -128,109 +123,44 @@ function calcTotals(tree: Record<string, FolderNode>): number {
 
 /** Validates that a path doesn't exceed the max depth */
 export function isValidPath(path: string[]): boolean {
-  return path.length <= MAX_PATH_DEPTH && path.every(p => p.trim().length > 0);
+  return path.length <= MAX_PATH_DEPTH && path.every((p) => p.trim().length > 0);
 }
 
-/** Moves a script to a new path (and optionally a different project) by updating Firestore */
-export async function moveScript(
-  scriptId: string,
-  newPath: string[],
-  targetProject?: { projectId: string; projectName: string }
-): Promise<void> {
-  const ref = doc(db, "scripts", scriptId);
-  const data: Record<string, unknown> = {
-    path: newPath,
-    // clear legacy fields when path is set
-    folder: newPath[0] ?? null,
-    subfolder: newPath[1] ?? null,
-    lesson: newPath[2] ?? null,
-    updatedAt: new Date(),
-  };
-  if (targetProject) {
-    data.projectId = targetProject.projectId;
-    data.projectName = targetProject.projectName;
-    data.project = targetProject.projectName;
-  }
-  await updateDoc(ref, data);
-}
-
-/** Moves multiple scripts to the same path (and optionally a different project) in a single batch */
-export async function moveScripts(
-  scripts: ScriptDoc[],
-  newPath: string[],
-  targetProject?: { projectId: string; projectName: string }
-): Promise<void> {
-  if (scripts.length === 0) return;
-  const batch = writeBatch(db);
-  for (const script of scripts) {
-    const ref = doc(db, "scripts", script.id);
-    const data: Record<string, unknown> = {
-      path: newPath,
-      folder: newPath[0] ?? null,
-      subfolder: newPath[1] ?? null,
-      lesson: newPath[2] ?? null,
-      updatedAt: new Date(),
-    };
-    if (targetProject) {
-      data.projectId = targetProject.projectId;
-      data.projectName = targetProject.projectName;
-      data.project = targetProject.projectName;
-    }
-    batch.update(ref, data);
-  }
-  await batch.commit();
-}
-
-/** Renames a folder in a script path (updates all scripts that have that segment) */
-export async function renameFolder(
-  scripts: ScriptDoc[],
-  targetPath: string[],
-  newName: string
-): Promise<void> {
-  const idx = targetPath.length - 1;
-  const updates = scripts
-    .filter(s => {
-      const sp = getScriptPath(s);
-      return targetPath.every((seg, i) => sp[i] === seg);
-    })
-    .map(s => {
-      const sp = getScriptPath(s);
-      const newPath = [...sp];
-      newPath[idx] = newName;
-      return moveScript(s.id, newPath);
-    });
-
-  await Promise.all(updates);
-}
-
-/** 
- * Moves an entire folder (and subfolders) into a new parent path 
- * (optionally to a different project)
+/**
+ * O back-end .NET não possui conceito de pastas/caminhos para roteiros.
+ * Estas funções de persistência são mantidas por compatibilidade de assinatura,
+ * mas não escrevem em lugar nenhum (a UI continua funcionando em modo plano).
  */
-export async function moveFolder(
-  scripts: ScriptDoc[],
-  sourcePath: string[],
-  destinationParentPath: string[],
-  targetProject?: { projectId: string; projectName: string }
-): Promise<void> {
-  const updates = scripts
-    .filter(s => {
-      const sp = getScriptPath(s);
-      // Only scripts that ARE in the sourcePath or its subdirectories
-      return sourcePath.every((seg, i) => sp[i] === seg);
-    })
-    .map(s => {
-      const sp = getScriptPath(s);
-      // Remove sourcePath part and prepend destinationParentPath
-      const relativePart = sp.slice(sourcePath.length);
-      const newPath = [...destinationParentPath, ...sourcePath.slice(-1), ...relativePart];
-      
-      if (newPath.length > MAX_PATH_DEPTH) {
-        throw new Error("Caminho resultante excede o limite de pastas.");
-      }
-      
-      return moveScript(s.id, newPath, targetProject);
-    });
 
-  await Promise.all(updates);
+export async function moveScript(
+  _scriptId: string,
+  _newPath: string[],
+  _targetProject?: { projectId: string; projectName: string }
+): Promise<void> {
+  console.warn("[pathUtils] Pastas não são persistidas no back-end .NET.");
+}
+
+export async function moveScripts(
+  _scripts: ScriptDoc[],
+  _newPath: string[],
+  _targetProject?: { projectId: string; projectName: string }
+): Promise<void> {
+  console.warn("[pathUtils] Pastas não são persistidas no back-end .NET.");
+}
+
+export async function renameFolder(
+  _scripts: ScriptDoc[],
+  _targetPath: string[],
+  _newName: string
+): Promise<void> {
+  console.warn("[pathUtils] Pastas não são persistidas no back-end .NET.");
+}
+
+export async function moveFolder(
+  _scripts: ScriptDoc[],
+  _sourcePath: string[],
+  _destinationParentPath: string[],
+  _targetProject?: { projectId: string; projectName: string }
+): Promise<void> {
+  console.warn("[pathUtils] Pastas não são persistidas no back-end .NET.");
 }

@@ -1,14 +1,16 @@
 /**
+ * Utilitários genéricos de dados (sem dependência de Firebase/Firestore).
+ */
+
+/**
  * Remove recursivamente valores 'undefined' de um objeto ou array,
  * substituindo-os por 'null' ou removendo a chave.
- * Isso é essencial para o Firestore, que não aceita 'undefined'.
  */
 export function sanitizeData<T>(data: T): T {
   if (data === undefined || data === null) return null as unknown as T;
 
-  // Se for um FieldValue (ex: serverTimestamp) ou Timestamp do Firestore, não sanitizar
   const anyData = data as Record<string, unknown>;
-  if (anyData?._methodName || (anyData?.seconds !== undefined && anyData?.nanoseconds !== undefined)) {
+  if (anyData?.seconds !== undefined && anyData?.nanoseconds !== undefined) {
     return data;
   }
 
@@ -18,7 +20,6 @@ export function sanitizeData<T>(data: T): T {
 
   if (typeof data === 'object' && data !== null) {
     const obj = data as Record<string, unknown>;
-    // Evita loop em objetos que não são POJOs (Plain Old JavaScript Objects)
     if (obj.constructor && obj.constructor.name !== 'Object' && obj.constructor.name !== 'Array') {
       return data;
     }
@@ -39,8 +40,9 @@ export function sanitizeData<T>(data: T): T {
 
   return data;
 }
+
 /**
- * Converte data do Firestore (Timestamp ou string ISO) para objeto Date
+ * Converte uma data (string ISO ou objeto com toDate) para objeto Date
  */
 export function toDate(date: unknown): Date {
   if (!date) return new Date();

@@ -80,7 +80,7 @@ public class ApiIntegrationTests : IClassFixture<ApiFactory>
             status = "Awaiting",
             bucket = "Backlog"
         }));
-        Assert.Equal(HttpStatusCode.OK, project.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, project.StatusCode);
         var projectBody = await project.Content.ReadAsStringAsync();
         using var projectDoc = JsonDocument.Parse(projectBody);
         var projectId = projectDoc.RootElement.GetProperty("id").GetString()!;
@@ -91,7 +91,7 @@ public class ApiIntegrationTests : IClassFixture<ApiFactory>
             title = "Roteiro Teste",
             content = "Cena1\nTempo: 30s\n[Locução]: Fala original"
         }));
-        Assert.Equal(HttpStatusCode.OK, script.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, script.StatusCode);
         using var scriptDoc = JsonDocument.Parse(await script.Content.ReadAsStringAsync());
         var scriptId = scriptDoc.RootElement.GetProperty("id").GetString()!;
 
@@ -113,7 +113,7 @@ public class ApiIntegrationTests : IClassFixture<ApiFactory>
         {
             body = "Revisar"
         }));
-        Assert.Equal(HttpStatusCode.OK, comment.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, comment.StatusCode);
 
         // Checklist (sem Id)
         var checklist = await _client.PutAsync($"/api/v1/scripts/{scriptId}/checklist", Json(new

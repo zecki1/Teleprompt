@@ -51,4 +51,34 @@ public class JwtTokenService
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
+
+    /// <summary>
+    /// Valida a assinatura e o lifetime de um JWT sem exigir autenticação.
+    /// Retorna o principal (claims) em caso de sucesso ou null se inválido/expirado.
+    /// </summary>
+    public ClaimsPrincipal? ValidateToken(string token)
+    {
+        try
+        {
+            var handler = new JwtSecurityTokenHandler();
+            var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings.Key));
+            return handler.ValidateToken(token, new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidIssuer = _settings.Issuer,
+                ValidateAudience = true,
+                ValidAudience = _settings.Audience,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = securityKey,
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.FromMinutes(1),
+                NameClaimType = "sub",
+                RoleClaimType = "role"
+            }, out _);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

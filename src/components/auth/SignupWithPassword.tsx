@@ -27,7 +27,10 @@ const SignupWithPassword: React.FC<SignupWithPasswordProps> = ({ inviteWorkspace
 
     try {
       if (!name.trim()) throw new Error("O nome é obrigatório.");
-      if (password.length < 6) throw new Error("A senha deve ter pelo menos 6 caracteres.");
+      if (password.length < 8) throw new Error("A senha deve ter pelo menos 8 caracteres.");
+      if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
+        throw new Error("A senha deve conter maiúsculas, minúsculas e números.");
+      }
 
       await signUp(email, password, name, inviteWorkspaceId);
       toast.success("Conta criada! Redirecionando...");
@@ -76,7 +79,7 @@ const SignupWithPassword: React.FC<SignupWithPasswordProps> = ({ inviteWorkspace
             type={showPassword ? "text" : "password"}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Mínimo 6 caracteres"
+            placeholder="Mínimo 8 caracteres, com maiúscula, minúscula e número"
             required
             className="pr-10 bg-background/50"
             disabled={loading}

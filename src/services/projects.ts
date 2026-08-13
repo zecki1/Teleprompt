@@ -1,7 +1,15 @@
 "use client";
 
-import { collection, query, where, getDocs, orderBy, addDoc, updateDoc, deleteDoc, doc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import {
+  listProjects,
+  createProject as apiCreateProject,
+  updateProject as apiUpdateProject,
+  deleteProject as apiDeleteProject,
+  listProjectScripts,
+} from "@/api/projects";
+import { listScripts } from "@/api/scripts";
+import { toProject, toScriptDoc } from "@/lib/script-mappers";
+import type { ProjectDto } from "@/api/types";
 import { ScriptDoc } from "@/types/script";
 
 export interface ProjectLink {
@@ -21,13 +29,23 @@ export interface Project {
   updatedAt?: string;
 }
 
+function mapProject(dto: ProjectDto): Project {
+  const base = toProject(dto);
+  return {
+    id: base.id,
+    name: base.name,
+    code: base.code ?? undefined,
+    externalLink: base.externalLink ?? undefined,
+    workspaceId: base.workspaceId,
+    status: base.status ?? undefined,
+    createdAt: base.createdAt,
+  };
+}
+
 export async function fetchProjects(workspaceId: string, isSuperAdmin?: boolean): Promise<Project[]> {
   try {
-    const projectsRef = collection(db, "projects");
-    const constraints = isSuperAdmin ? [orderBy("name")] : [where("workspaceId", "==", workspaceId), orderBy("name")];
-    const q = query(projectsRef, ...constraints);
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Project[];
+    const dtos = await listProjects(isSuperAdmin ? undefined : workspaceId);
+    return dtos.map(mapProject);
   } catch (error) {
     console.error("Erro ao buscar projetos:", error);
     return [];
@@ -35,32 +53,32 @@ export async function fetchProjects(workspaceId: string, isSuperAdmin?: boolean)
 }
 
 export async function createProject(data: Partial<Project>): Promise<Project> {
-  const docRef = await addDoc(collection(db, "projects"), {
-    ...data,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+  const dto = await apiCreateProject({
+    name: data.name || "",
+    code: data.code,
+    externalLink: data.externalLink,
+    status: data.status,
   });
-  return { id: docRef.id, ...data } as Project;
+  return mapProject(dto);
 }
 
 export async function updateProject(projectId: string, data: Partial<Project>): Promise<void> {
-  await updateDoc(doc(db, "projects", projectId), {
-    ...data,
-    updatedAt: new Date().toISOString(),
+  await apiUpdateProject(projectId, {
+    name: data.name || "",
+    code: data.code,
+    externalLink: data.externalLink,
+    status: data.status,
   });
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  await deleteDoc(doc(db, "projects", projectId));
+  await apiDeleteProject(projectId);
 }
 
 export async function getScriptsByWorkspace(workspaceId: string, isSuperAdmin?: boolean): Promise<ScriptDoc[]> {
   try {
-    const scriptsRef = collection(db, "scripts");
-    const constraints = isSuperAdmin ? [] : [where("workspaceId", "==", workspaceId)];
-    const q = query(scriptsRef, ...constraints);
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as ScriptDoc[];
+    const dtos = await listScripts({ workspaceId: isSuperAdmin ? undefined : workspaceId });
+    return dtos.map(toScriptDoc);
   } catch (error) {
     console.error("Erro ao buscar scripts:", error);
     return [];
@@ -69,10 +87,8 @@ export async function getScriptsByWorkspace(workspaceId: string, isSuperAdmin?: 
 
 export async function getScriptsByProject(projectId: string): Promise<ScriptDoc[]> {
   try {
-    const scriptsRef = collection(db, "scripts");
-    const q = query(scriptsRef, where("projectId", "==", projectId));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as ScriptDoc[];
+    const dtos = await listProjectScripts(projectId);
+    return dtos.map(toScriptDoc);
   } catch (error) {
     console.error("Erro ao buscar roteiros do projeto:", error);
     return [];

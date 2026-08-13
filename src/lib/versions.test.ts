@@ -1,25 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@/lib/firebase", () => ({
-  db: {},
-}));
+const listVersionsMock = vi.fn();
+const revertVersionMock = vi.fn();
 
-const getDocsMock = vi.fn();
-const getDocMock = vi.fn();
-const addDocMock = vi.fn();
-const setDocMock = vi.fn();
-
-vi.mock("firebase/firestore", () => ({
-  collection: vi.fn(() => "collection-ref"),
-  query: vi.fn(() => "query"),
-  orderBy: vi.fn(),
-  limit: vi.fn(),
-  doc: vi.fn(() => "doc-ref"),
-  getDocs: (...args: unknown[]) => getDocsMock(...args),
-  getDoc: (...args: unknown[]) => getDocMock(...args),
-  addDoc: (...args: unknown[]) => addDocMock(...args),
-  setDoc: (...args: unknown[]) => setDocMock(...args),
-  serverTimestamp: vi.fn(() => "SERVER_TS"),
+vi.mock("@/api/versions", () => ({
+  listVersions: (...args: unknown[]) => listVersionsMock(...args),
+  revertVersion: (...args: unknown[]) => revertVersionMock(...args),
 }));
 
 import { getVersions, getVersionById, restoreVersion } from "./versions";
@@ -28,72 +14,74 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+const dto = (overrides: Partial<{ id: string; versionNumber: number; content: string; createdBy: string | null }>) => ({
+  id: "v1",
+  versionNumber: 1,
+  content: "a",
+  createdBy: "u1",
+  createdAt: "2024-01-01T00:00:00.000Z",
+  ...overrides,
+});
+
 describe("getVersions", () => {
   it("retorna versões com id", async () => {
-    getDocsMock.mockResolvedValue({
-      docs: [
-        { id: "v1", data: () => ({ content: "a", scenes: [] }) },
-        { id: "v2", data: () => ({ content: "b", scenes: [] }) },
-      ],
-    });
+    listVersionsMock.mockResolvedValue([dto({}), dto({ id: "v2", versionNumber: 2, content: "b" })]);
     const versions = await getVersions("script-1");
     expect(versions).toHaveLength(2);
     expect(versions[0].id).toBe("v1");
     expect(versions[0].content).toBe("a");
-    expect(getDocsMock).toHaveBeenCalled();
+    expect(versions[0].createdAt).toBe("2024-01-01T00:00:00.000Z");
+    expect(listVersionsMock).toHaveBeenCalledWith("script-1");
+  });
+
+  it("limita o número de versões pelo parâmetro max", async () => {
+    listVersionsMock.mockResolvedValue([dto({}), dto({ id: "v2", versionNumber: 2 })]);
+    const versions = await getVersions("script-1", 1);
+    expect(versions).toHaveLength(1);
+  });
+
+  it("retorna [] em caso de erro", async () => {
+    listVersionsMock.mockRejectedValue(new Error("network"));
+    expect(await getVersions("s")).toEqual([]);
   });
 });
 
 describe("getVersionById", () => {
   it("retorna a versão quando existe", async () => {
-    getDocMock.mockResolvedValue({
-      exists: () => true,
-      id: "v1",
-      data: () => ({ content: "x" }),
-    });
+    listVersionsMock.mockResolvedValue([dto({ content: "x" })]);
     const v = await getVersionById("s", "v1");
     expect(v?.id).toBe("v1");
     expect(v?.content).toBe("x");
   });
 
   it("retorna null quando não existe", async () => {
-    getDocMock.mockResolvedValue({ exists: () => false });
+    listVersionsMock.mockResolvedValue([dto({})]);
+    expect(await getVersionById("s", "nao-existe")).toBeNull();
+  });
+
+  it("retorna null em caso de erro", async () => {
+    listVersionsMock.mockRejectedValue(new Error("network"));
     expect(await getVersionById("s", "v1")).toBeNull();
   });
 });
 
 describe("restoreVersion", () => {
-  it("restaura e cria nova versão no sucesso", async () => {
-    getDocMock
-      .mockResolvedValueOnce({ exists: () => true, id: "v1", data: () => ({ content: "raw", scenes: [{ id: "c1" }] }) })
-      .mockResolvedValueOnce({ exists: () => true });
-    addDocMock.mockResolvedValue({ id: "new-version" });
-    setDocMock.mockResolvedValue(undefined);
-
+  it("reverte para a versão no sucesso", async () => {
+    listVersionsMock.mockResolvedValue([dto({ versionNumber: 3 })]);
+    revertVersionMock.mockResolvedValue({});
     const ok = await restoreVersion("s", "v1", "u1", "João");
     expect(ok).toBe(true);
-    expect(setDocMock).toHaveBeenCalledWith("doc-ref", expect.objectContaining({ restoredFrom: "v1" }), { merge: true });
-    expect(addDocMock).toHaveBeenCalledWith(
-      "collection-ref",
-      expect.objectContaining({ content: "raw", restoredFrom: "v1", createdBy: "u1" })
-    );
+    expect(revertVersionMock).toHaveBeenCalledWith("s", 3);
   });
 
   it("retorna false quando a versão não existe", async () => {
-    getDocMock.mockResolvedValueOnce({ exists: () => false });
-    expect(await restoreVersion("s", "v1", "u1", "João")).toBe(false);
-    expect(addDocMock).not.toHaveBeenCalled();
-  });
-
-  it("retorna false quando o roteiro atual não existe", async () => {
-    getDocMock
-      .mockResolvedValueOnce({ exists: () => true, id: "v1", data: () => ({ content: "raw", scenes: [] }) })
-      .mockResolvedValueOnce({ exists: () => false });
-    expect(await restoreVersion("s", "v1", "u1", "João")).toBe(false);
+    listVersionsMock.mockResolvedValue([dto({})]);
+    expect(await restoreVersion("s", "nao-existe", "u1", "João")).toBe(false);
+    expect(revertVersionMock).not.toHaveBeenCalled();
   });
 
   it("retorna false e não lança em caso de erro", async () => {
-    getDocMock.mockRejectedValue(new Error("network"));
+    listVersionsMock.mockRejectedValue(new Error("network"));
     expect(await restoreVersion("s", "v1", "u1", "João")).toBe(false);
   });
 });

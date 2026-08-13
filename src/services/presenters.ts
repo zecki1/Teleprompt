@@ -1,53 +1,41 @@
+"use client";
+
 import {
-  collection,
-  addDoc,
-  getDocs,
-  deleteDoc,
-  doc,
-  updateDoc,
-  query,
-  where,
-  serverTimestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+  listPresenters,
+  createPresenter,
+  updatePresenter as apiUpdatePresenter,
+  deletePresenter as apiDeletePresenter,
+} from "@/api/presenters";
+import { toPresenter } from "@/lib/script-mappers";
+import type { PresenterDto } from "@/api/types";
 
 export interface Presenter {
   id: string;
   name: string;
   workspaceId: string;
   createdBy: string;
-  createdAt?: any;
+  createdAt?: string;
 }
 
-export const addPresenter = async (name: string, workspaceId: string, userId: string): Promise<string> => {
-  const docRef = await addDoc(collection(db, "presenters"), {
-    name,
-    workspaceId,
-    createdBy: userId,
-    createdAt: serverTimestamp(),
-  });
-  return docRef.id;
+export const addPresenter = async (name: string, _workspaceId: string, _userId: string): Promise<string> => {
+  const dto = await createPresenter({ name });
+  return dto.id;
 };
 
 export const getPresenters = async (workspaceId: string): Promise<Presenter[]> => {
-  const q = query(
-    collection(db, "presenters"),
-    where("workspaceId", "==", workspaceId)
-  );
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => ({
-    id: doc.id,
-    ...doc.data(),
-  })) as Presenter[];
+  try {
+    const dtos = await listPresenters();
+    return dtos.map((dto: PresenterDto) => ({ ...toPresenter(dto), workspaceId }));
+  } catch (error) {
+    console.error("Erro ao buscar apresentadores:", error);
+    return [];
+  }
 };
 
 export const deletePresenter = async (presenterId: string): Promise<void> => {
-  await deleteDoc(doc(db, "presenters", presenterId));
+  await apiDeletePresenter(presenterId);
 };
 
 export const updatePresenter = async (presenterId: string, data: Partial<Presenter>): Promise<void> => {
-  await updateDoc(doc(db, "presenters", presenterId), {
-    ...data,
-    updatedAt: serverTimestamp(),
-  });
+  await apiUpdatePresenter(presenterId, { name: data.name || "" });
 };

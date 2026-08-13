@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { ExtendedUser, Role, ROLES } from "@/services/schemas";
-import { updateUserRole, updateUserPermissions, mapUserDoc } from "@/services/users";
+import { getUsers, updateUserRole, updateUserPermissions } from "@/services/users";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -67,21 +67,11 @@ import {
 } from "@/components/ui/select";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { doc, deleteDoc, collection, getDocs, query, orderBy, limit, where, onSnapshot } from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import { toDate } from "@/lib/firebase-utils";
-import { backfillActivitiesWorkspaceId, BackfillResult } from "@/lib/migrate-activities";
+import { toDate } from "@/lib/data-utils";
+import { usePolling } from "@/lib/polling";
+import { listActivities } from "@/api/activities";
+import { toActivity } from "@/lib/script-mappers";
 import { Presenter, getPresenters, addPresenter, deletePresenter, updatePresenter as updatePresenterService } from "@/services/presenters";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { DebugLogsPanel } from "@/components/admin/DebugLogsPanel";
 import { DemoSetupPanel } from "@/components/admin/DemoSetupPanel";
 
@@ -120,6 +110,21 @@ const actionConfig: Record<string, { label: string; color: string; icon: React.E
    Saiu: { label: "Saiu", color: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400", icon: LogOut },
  };
 
+// Mapeia os ActivityType do backend (.NET) para as ações exibidas pela UI.
+const activityTypeToAction: Record<string, string> = {
+  Create: "Criou",
+  Update: "Editou",
+  Delete: "ExcluiuRoteiro",
+  Comment: "Comentou",
+  Version: "Editou",
+  Revert: "Reverteu",
+  Assign: "Editou",
+  Record: "Gravou",
+  Login: "Entrou",
+  Permission: "Editou",
+  Other: "Entrou",
+};
+
 interface ActivityItem {
   id: string;
   userId?: string;
@@ -147,10 +152,7 @@ export default function AdminPage() {
   const [updating, setUpdating] = useState<string | null>(null);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(true);
-  const [revertingId, setRevertingId] = useState<string | null>(null);
-  const [revertConfirmId, setRevertConfirmId] = useState<string | null>(null);
   const [actionFilter, setActionFilter] = useState<string>("all");
-  const [backfilling, setBackfilling] = useState(false);
   const [presenters, setPresenters] = useState<Presenter[]>([]);
   const [loadingPresenters, setLoadingPresenters] = useState(true);
   const [newPresenterName, setNewPresenterName] = useState("");
@@ -182,105 +184,43 @@ export default function AdminPage() {
     }
   }, [user, router]);
 
-  // Lista de usuários em tempo real (permite refletir mudanças de permissões sem reload)
-  useEffect(() => {
+  // Lista de usuários via REST (atualização periódica para refletir mudanças de permissões sem reload)
+  const loadUsers = async () => {
     if (!user) return;
-    const constraints: Parameters<typeof query>[1][] = user?.isSuperAdmin
-      ? []
-      : [where("workspaceId", "==", user?.workspaceId || "")];
-    const q = query(collection(db, "users"), ...constraints);
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs
-        .map(doc => mapUserDoc(doc))
-        .filter((u): u is ExtendedUser => u !== null)
-        .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
+    try {
+      const list = await getUsers(user.workspaceId, user.isSuperAdmin);
       setUsersList(list);
-      setLoading(false);
-    }, (error) => {
+    } catch (error) {
       console.error("Erro ao carregar usuários:", error);
       toast.error("Erro ao carregar usuários.");
+    } finally {
       setLoading(false);
-    });
-    return () => unsub();
+    }
+  };
+
+  useEffect(() => {
+    loadUsers();
   }, [user?.uid, user?.workspaceId, user?.isSuperAdmin]);
+
+  usePolling(loadUsers, 5000, [user?.uid, user?.workspaceId, user?.isSuperAdmin]);
 
   const loadActivities = async () => {
     try {
-      const constraints: Parameters<typeof query>[1][] = [
-        orderBy("timestamp", "desc"),
-        limit(100),
-      ];
-      if (user?.workspaceId) {
-        constraints.unshift(where("workspaceId", "==", user.workspaceId));
-      }
-      const q = query(collection(db, "activities"), ...constraints);
-      const snapshot = await getDocs(q);
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setActivities(data);
+      const data = await listActivities({ page: 1, pageSize: 100 });
+      setActivities(data.map((dto) => {
+        const local = toActivity(dto);
+        return {
+          id: local.id,
+          userId: local.userId || undefined,
+          action: activityTypeToAction[local.type] || "Editou",
+          timestamp: local.createdAt,
+          metadata: local.description,
+        } as ActivityItem;
+      }));
     } catch (error) {
       console.error("Erro ao carregar atividades:", error);
     } finally {
       setLoadingActivities(false);
-    }
-  };
-
-  const handleRevert = async () => {
-    if (!revertConfirmId) return;
-    const id = revertConfirmId;
-    setRevertConfirmId(null);
-    setRevertingId(id);
-    try {
-      const { revertActivity } = await import("@/lib/activity");
-      const success = await revertActivity(id);
-      if (success) {
-        if (user) {
-          const { logActivity } = await import("@/lib/activity");
-          await logActivity({
-            userId: user.uid,
-            userName: user.displayName || user.name || user.email || "Usuário",
-            userAvatar: user.photoURL || null,
-            action: "Reverteu",
-            metadata: `Reverteu atividade ${id}`,
-            workspaceId: user.workspaceId || "",
-          });
-        }
-        toast.success("Item restaurado com sucesso!");
-        loadActivities();
-      } else {
-        toast.error("Não foi possível reverter. Pode ter excedido 30 dias.");
-      }
-    } catch (e) {
-      console.error(e);
-      toast.error("Erro ao reverter.");
-    } finally {
-      setRevertingId(null);
-    }
-  };
-
-  const handleDeleteActivity = async (activityId: string) => {
-    if (!confirm("Tem certeza que deseja excluir esta atividade?")) return;
-    try {
-      await deleteDoc(doc(db, "activities", activityId));
-      setActivities(prev => prev.filter(a => a.id !== activityId));
-      toast.success("Atividade excluída!");
-    } catch (e) {
-      console.error(e);
-      toast.error("Erro ao excluir atividade.");
-    }
-  };
-
-  const handleBackfillActivities = async () => {
-    if (!confirm("Isso vai preencher o workspaceId nas atividades antigas. Continuar?")) return;
-    setBackfilling(true);
-    try {
-      const result = await backfillActivitiesWorkspaceId();
-      toast.success(`${result.updated} atividades atualizadas.`);
-      loadActivities();
-    } catch (e) {
-      console.error(e);
-      toast.error("Erro ao migrar atividades.");
-    } finally {
-      setBackfilling(false);
     }
   };
 
@@ -381,19 +321,6 @@ export default function AdminPage() {
   const getInitials = (name: string | null | undefined) => {
     if (!name) return "U";
     return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
-  };
-
-  const isRevertible = (action: string | undefined): boolean => {
-    return action === "ExcluiuRoteiro" || action === "ExcluiuPasta" || action === "ExcluiuProjeto"
-      || action === "EditouProjeto" || action === "Editou" || action === "Criou" || action === "Gravou";
-  };
-
-  const isWithin30Days = (timestamp: unknown): boolean => {
-    if (!timestamp) return false;
-    const date = toDate(timestamp);
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    return date > thirtyDaysAgo;
   };
 
   const filteredActivities = actionFilter === "all"
@@ -736,17 +663,6 @@ export default function AdminPage() {
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
-                  {(user?.role === "SuperAdmin" || user?.isSuperAdmin) && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleBackfillActivities}
-                      disabled={backfilling}
-                      className="h-9 rounded-xl text-[10px] font-black uppercase tracking-widest border-zinc-200 dark:border-zinc-800"
-                    >
-                      {backfilling ? "Migrando..." : "Migrar Activities"}
-                    </Button>
-                  )}
                   <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Filtrar:</span>
                   <Select value={actionFilter} onValueChange={setActionFilter}>
                     <SelectTrigger className="w-[180px] h-9 rounded-xl border-zinc-200 dark:border-zinc-800 text-xs font-bold">
@@ -771,19 +687,18 @@ export default function AdminPage() {
                     <TableHead className="font-bold text-zinc-900 dark:text-zinc-100">Roteiro / Detalhes</TableHead>
                     <TableHead className="w-[180px] font-bold text-zinc-900 dark:text-zinc-100">Projeto / Pasta</TableHead>
                     <TableHead className="text-right px-8 font-bold text-zinc-900 dark:text-zinc-100">Data/Hora</TableHead>
-                    <TableHead className="w-[100px] text-center font-bold text-zinc-900 dark:text-zinc-100">Ação</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loadingActivities ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="h-32 text-center">
+                      <TableCell colSpan={5} className="h-32 text-center">
                         <LoadingScreen fullScreen={false} className="py-8" />
                       </TableCell>
                     </TableRow>
                   ) : filteredActivities.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="h-32 text-center text-muted-foreground italic">
+                      <TableCell colSpan={5} className="h-32 text-center text-muted-foreground italic">
                         Nenhuma atividade registrada ainda.
                       </TableCell>
                     </TableRow>
@@ -791,17 +706,19 @@ export default function AdminPage() {
                     filteredActivities.map((act) => {
                       const actionConf = actionConfig[act.action || ""] || { label: act.action || "Desconhecido", color: "", icon: Activity };
                       const ActionIcon = actionConf.icon;
-                      const canRevert = isRevertible(act.action) && isWithin30Days(act.timestamp) && (user?.canRevert || user?.role === "SuperAdmin");
+                      const actingUser = usersList.find(u => u.uid === act.userId);
+                      const displayName = act.userName || actingUser?.displayName || "Usuário";
+                      const avatarUrl = act.userAvatar || actingUser?.avatarUrl || undefined;
 
                       return (
                         <TableRow key={act.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 border-zinc-100 dark:border-zinc-900 transition-colors group">
                           <TableCell className="px-8 py-4">
                             <div className="flex items-center gap-3">
                               <Avatar className="h-8 w-8">
-                                <AvatarImage src={act.userAvatar} />
-                                <AvatarFallback className="text-[10px] bg-zinc-100">{getInitials(act.userName)}</AvatarFallback>
+                                <AvatarImage src={avatarUrl} />
+                                <AvatarFallback className="text-[10px] bg-zinc-100">{getInitials(displayName)}</AvatarFallback>
                               </Avatar>
-                              <span className="font-bold text-sm">{act.userName}</span>
+                              <span className="font-bold text-sm">{displayName}</span>
                             </div>
                           </TableCell>
                           <TableCell>
@@ -835,37 +752,6 @@ export default function AdminPage() {
                               hour: '2-digit',
                               minute: '2-digit'
                             }) : "N/A"}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              {canRevert ? (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-700 hover:bg-blue-50"
-                                  onClick={() => setRevertConfirmId(act.id)}
-                                  disabled={revertingId === act.id}
-                                >
-                                  {revertingId === act.id ? (
-                                    <span className="w-3 h-3 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
-                                  ) : (
-                                    <RotateCcw className="w-3 h-3 mr-1" />
-                                  )}
-                                  Reverter
-                                </Button>
-                              ) : null}
-                              {(user?.role === "SuperAdmin" || user?.isSuperAdmin) && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 w-7 p-0 text-zinc-400 hover:text-red-500 hover:bg-red-50"
-                                  onClick={() => handleDeleteActivity(act.id)}
-                                  title="Excluir atividade"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
-                              )}
-                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -1026,24 +912,6 @@ export default function AdminPage() {
         )}
 
       </Tabs>
-
-      {/* Revert Confirmation */}
-      <AlertDialog open={revertConfirmId !== null} onOpenChange={(open) => !open && setRevertConfirmId(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Reverter Ação</AlertDialogTitle>
-            <AlertDialogDescription>
-              Tem certeza que deseja reverter esta ação? O estado anterior será restaurado. Esta ação é registrada no histórico.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRevert} className="bg-blue-600 hover:bg-blue-700">
-              Reverter
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

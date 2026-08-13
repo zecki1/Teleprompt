@@ -2,8 +2,7 @@
 
 import React, { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { doc, updateDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { updateProfile } from "@/api/users";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -39,10 +38,9 @@ export default function ProfilePage() {
     }
     setSaving(true);
     try {
-      await updateDoc(doc(db, "users", user.uid), {
-        name: name.trim(),
+      await updateProfile({
         displayName: name.trim(),
-        updatedAt: new Date().toISOString(),
+        avatarUrl: user.photoURL || undefined,
       });
       toast.success("Nome atualizado com sucesso!");
     } catch {

@@ -1,8 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState, useCallback } from "react";
-import { collection, getDocs, query, orderBy, limit, doc, writeBatch } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { Fragment, useEffect, useState, useCallback } from "react";
+import { listDebugLogs } from "@/api/admin";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,8 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
 import { debugLog as clientDebugLog, setDebugLogEnabled, isDebugLogEnabled } from "@/lib/debug-log";
-import { toDate } from "@/lib/firebase-utils";
-import { RefreshCw, Trash2, Download, ChevronDown, ChevronRight, Bug } from "lucide-react";
+import { toDebugLog } from "@/lib/script-mappers";
+import { toDate } from "@/lib/data-utils";
+import { usePolling } from "@/lib/polling";
+import { RefreshCw, Download, ChevronDown, ChevronRight, Bug } from "lucide-react";
 import { toast } from "sonner";
 
 const LEVELS = ["all", "debug", "info", "warn", "error"] as const;
@@ -67,9 +68,7 @@ export function DebugLogsPanel() {
   const [levelFilter, setLevelFilter] = useState<Level>("all");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [clearing, setClearing] = useState(false);
   const [debugEnabled, setDebugEnabled] = useState(true);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     setDebugEnabled(isDebugLogEnabled());
@@ -77,12 +76,20 @@ export function DebugLogsPanel() {
 
   const loadLogs = useCallback(async () => {
     try {
-      const q = query(collection(db, "debug_logs"), orderBy("t", "desc"), limit(PER_PAGE));
-      const snap = await getDocs(q);
-      setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }) as LogDoc));
+      const dtos = await listDebugLogs(PER_PAGE);
+      setLogs(dtos.map(dto => {
+        const local = toDebugLog(dto);
+        return {
+          id: local.id,
+          level: local.level as Level,
+          context: local.source,
+          message: local.message,
+          ts: local.createdAt,
+        } as LogDoc;
+      }));
     } catch (e) {
       clientDebugLog("warn", "admin.debuglogs", "Falha ao carregar logs", undefined, e);
-      toast.error("Erro ao carregar logs. Verifique as regras do Firestore.");
+      toast.error("Erro ao carregar logs.");
     } finally {
       setLoading(false);
     }
@@ -90,38 +97,14 @@ export function DebugLogsPanel() {
 
   useEffect(() => {
     loadLogs();
-    pollRef.current = setInterval(loadLogs, 5000);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
   }, [loadLogs]);
+
+  usePolling(loadLogs, 5000, []);
 
   const isSuperAdmin = user?.isSuperAdmin === true || user?.role === "SuperAdmin";
   const canSeeLogs = isSuperAdmin || user?.canViewDebugLogs === true;
 
   if (!canSeeLogs) return null;
-
-  const handleClear = async () => {
-    if (!isSuperAdmin) return;
-    if (!confirm("Apagar TODOS os debug logs? Esta ação não pode ser desfeita.")) return;
-    setClearing(true);
-    try {
-      const q = query(collection(db, "debug_logs"), limit(400));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const batch = writeBatch(db);
-        snap.docs.forEach(d => batch.delete(doc(db, "debug_logs", d.id)));
-        await batch.commit();
-      }
-      setLogs([]);
-      toast.success("Logs apagados.");
-    } catch (e) {
-      clientDebugLog("error", "admin.debuglogs", "Falha ao limpar logs", undefined, e);
-      toast.error("Erro ao limpar logs.");
-    } finally {
-      setClearing(false);
-    }
-  };
 
   const handleExport = () => {
     const blob = new Blob([JSON.stringify(logs, null, 2)], { type: "application/json" });
@@ -176,18 +159,6 @@ export function DebugLogsPanel() {
           <Bug className="w-3.5 h-3.5 mr-1.5" />
           {debugEnabled ? "Desativar debug" : "Ativar debug"}
         </Button>
-        {isSuperAdmin && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleClear}
-            disabled={clearing}
-            className="h-9 rounded-xl text-[10px] font-black uppercase tracking-widest border-red-200 dark:border-red-900 text-red-500 hover:text-red-600"
-          >
-            <Trash2 className="w-3.5 h-3.5 mr-1.5" />
-            {clearing ? "Limpando..." : "Limpar tudo"}
-          </Button>
-        )}
         <div className="flex-1" />
         <Input
           placeholder="Buscar por mensagem, contexto, e-mail, usuário..."
@@ -208,7 +179,7 @@ export function DebugLogsPanel() {
       </div>
 
       <p className="text-xs text-zinc-400 font-medium">
-        {filtered.length} de {logs.length} logs · gravação no Firestore + console · atualização automática a cada 5s
+        {filtered.length} de {logs.length} logs · gravação no servidor + console · atualização automática a cada 5s
       </p>
 
       <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-950">

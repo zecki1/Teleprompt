@@ -1,5 +1,10 @@
-import { collection, addDoc, serverTimestamp, doc, setDoc, getDoc, Timestamp, deleteDoc, query, where, getDocs, writeBatch } from "firebase/firestore";
-import { db } from "./firebase";
+/**
+ * Registro de atividades.
+ *
+ * O back-end .NET grava as atividades no servidor automaticamente (cada controller
+ * adiciona um Activity ao operar). Estes helpers permanecem apenas para manter a
+ * compatibilidade de assinatura com a UI — não escrevem mais no Firestore.
+ */
 
 export type ActivityAction =
   | "Editou" | "Gravou" | "Criou" | "Revisou" | "Comentou"
@@ -27,154 +32,19 @@ export interface ActivityData {
   timestamp?: unknown;
 }
 
-function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
-  const cleaned: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (value !== undefined) {
-      cleaned[key] = value;
-    }
-  }
-  return cleaned;
-}
-
-export async function logActivity(data: ActivityData) {
-  try {
-    const activityRef = collection(db, "activities");
-    await addDoc(activityRef, {
-      ...stripUndefined(data as unknown as Record<string, unknown>),
-      timestamp: serverTimestamp(),
-    });
-    if (data.workspaceId) {
-      cleanupExpiredActivities(data.workspaceId).catch(() => {});
-    }
-  } catch (error) {
-    console.error("Error logging activity:", error);
-  }
+/**
+ * No-op: as atividades são registradas pelo back-end .NET.
+ * Mantida para compatibilidade com os pontos de chamada existentes.
+ */
+export async function logActivity(_data: ActivityData): Promise<void> {
+  // O back-end registra as atividades automaticamente nos controllers.
+  return;
 }
 
 /**
- * TTL: remove atividades com mais de 30 dias do workspace.
- * Executa no máximo 1x por dia por workspace (via localStorage) para não
- * adicionar leituras/escritas ao fluxo normal.
+ * Reverter uma atividade a partir do snapshot não é suportado pelo back-end .NET
+ * (as atividades não armazenam snapshots). Retorna false para manter o contrato.
  */
-async function cleanupExpiredActivities(workspaceId: string) {
-  const key = `activity_cleanup_${workspaceId}`;
-  const lastRun = Number(localStorage.getItem(key) || 0);
-  const DAY = 24 * 60 * 60 * 1000;
-  if (Date.now() - lastRun < DAY) return;
-
-  try {
-    const cutoff = Timestamp.fromDate(new Date(Date.now() - 30 * DAY));
-    const q = query(
-      collection(db, "activities"),
-      where("workspaceId", "==", workspaceId),
-      where("timestamp", "<", cutoff)
-    );
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const batch = writeBatch(db);
-      snap.docs.forEach(d => batch.delete(doc(db, "activities", d.id)));
-      await batch.commit();
-    }
-  } catch (error) {
-    console.error("Error cleaning expired activities:", error);
-  } finally {
-    localStorage.setItem(key, String(Date.now()));
-  }
-}
-
-export async function revertActivity(activityId: string): Promise<boolean> {
-  try {
-    const actRef = doc(db, "activities", activityId);
-    const actSnap = await getDoc(actRef);
-    if (!actSnap.exists()) return false;
-
-    const act = actSnap.data() as ActivityData;
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const timestamp = (act.timestamp as Timestamp)?.toDate?.() || new Date();
-    if (timestamp < thirtyDaysAgo) return false;
-
-    if (act.action === "ExcluiuRoteiro" && act.snapshot && act.scriptId) {
-      await setDoc(doc(db, "scripts", act.scriptId), act.snapshot);
-      if (act.snapshotIds) {
-        for (const subId of act.snapshotIds) {
-          await setDoc(doc(db, "scripts", act.scriptId, "versions", subId), { restored: true });
-        }
-      }
-      return true;
-    }
-
-    if (act.action === "ExcluiuPasta" && act.snapshot) {
-      for (const scriptId of act.snapshotIds || []) {
-        const snapKey = `snapshot_${scriptId}`;
-        const scriptData = act.snapshot[snapKey] as Record<string, unknown> | undefined;
-        if (scriptData) {
-          await setDoc(doc(db, "scripts", scriptId), scriptData);
-        }
-      }
-      return true;
-    }
-
-    if (act.action === "ExcluiuProjeto" && act.projectId) {
-      if (act.snapshot) {
-        await setDoc(doc(db, "projects", act.projectId), {
-          ...act.snapshot,
-          isDeleted: false,
-          deletedAt: null,
-          restoredAt: new Date().toISOString(),
-        }, { merge: true });
-      } else {
-        await setDoc(doc(db, "projects", act.projectId), {
-          isDeleted: false,
-          deletedAt: null,
-          restoredAt: new Date().toISOString(),
-        }, { merge: true });
-      }
-      return true;
-    }
-
-    if (act.action === "EditouProjeto" && act.projectId && act.snapshot) {
-      const previousName = act.snapshot.previousName as string | undefined;
-      const previousCode = act.snapshot.previousCode as string | undefined;
-
-      const restoreData: Record<string, unknown> = {};
-      if (previousName) restoreData.name = previousName;
-      if (previousCode !== undefined) restoreData.code = previousCode;
-
-      if (Object.keys(restoreData).length > 0) {
-        await setDoc(doc(db, "projects", act.projectId), restoreData, { merge: true });
-      }
-
-      if (previousName && act.projectName) {
-        const scriptsRef = collection(db, "scripts");
-        const q = query(scriptsRef, where("projectName", "==", act.projectName));
-        const snapshot = await getDocs(q);
-        const batch = writeBatch(db);
-        snapshot.docs.forEach(d => batch.update(doc(db, "scripts", d.id), { projectName: previousName }));
-        await batch.commit();
-      }
-      return true;
-    }
-
-    if (act.action === "Editou" && act.snapshot && act.scriptId) {
-      await setDoc(doc(db, "scripts", act.scriptId), act.snapshot);
-      return true;
-    }
-
-    if (act.action === "Criou" && act.scriptId) {
-      await deleteDoc(doc(db, "scripts", act.scriptId));
-      return true;
-    }
-
-    if (act.action === "Gravou" && act.snapshot && act.scriptId) {
-      await setDoc(doc(db, "scripts", act.scriptId), act.snapshot);
-      return true;
-    }
-
-    return false;
-  } catch (error) {
-    console.error("Error reverting activity:", error);
-    return false;
-  }
+export async function revertActivity(_activityId: string): Promise<boolean> {
+  return false;
 }

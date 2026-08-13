@@ -29,14 +29,12 @@ public class WorkspacesController : ControllerBase
     {
         var userId = User.UserId()!;
         var memberships = await _db.WorkspaceMembers
-            .Where(m => m.UserId == userId)
-            .Select(m => m.Workspace)
-            .Where(w => w != null)
+            .Where(m => m.UserId == userId && m.Workspace != null)
+            .Select(m => m.Workspace!)
             .AsNoTracking()
             .ToListAsync();
 
-        return Ok(memberships.Select(w => new WorkspaceDto(
-            w.Id, w.Name, w.OwnerId, w.Plan.ToString(), w.CreatedAt.ToString("O"))));
+        return Ok(memberships.Select(ToDto));
     }
 
     [HttpPost]
@@ -64,8 +62,72 @@ public class WorkspacesController : ControllerBase
 
         await _db.SaveChangesAsync();
 
-        return CreatedAtAction(nameof(Mine), new { id = workspace.Id },
-            new WorkspaceDto(workspace.Id, workspace.Name, workspace.OwnerId, workspace.Plan.ToString(), workspace.CreatedAt.ToString("O")));
+        return CreatedAtAction(nameof(Mine), new { id = workspace.Id }, ToDto(workspace));
+    }
+
+    [HttpGet("{id}")]
+    public async Task<ActionResult<WorkspaceDto>> Get(string id)
+    {
+        var workspace = await _db.Workspaces.AsNoTracking().FirstOrDefaultAsync(w => w.Id == id);
+        if (workspace == null)
+            return NotFound();
+        return Ok(ToDto(workspace));
+    }
+
+    [HttpPut("{id}")]
+    public async Task<ActionResult<WorkspaceDto>> Update(string id, [FromBody] CreateWorkspaceRequest request)
+    {
+        var workspace = await _db.Workspaces.FindAsync(id);
+        if (workspace == null)
+            return NotFound();
+
+        if (!string.IsNullOrWhiteSpace(request.Name))
+            workspace.Name = request.Name.Trim();
+        if (!string.IsNullOrWhiteSpace(request.Plan))
+            workspace.Plan = Enum.TryParse<WorkspacePlan>(request.Plan, true, out var plan) ? plan : workspace.Plan;
+
+        await _db.SaveChangesAsync();
+        return Ok(ToDto(workspace));
+    }
+
+    [HttpPost("join")]
+    public async Task<ActionResult<WorkspaceDto>> Join([FromBody] JoinWorkspaceRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Token))
+            return BadRequest(new ApiMessage("Token de convite é obrigatório."));
+
+        var token = request.Token.Trim();
+        // Aceita o ID do workspace ou um token de convite (quando existir).
+        var workspace = await _db.Workspaces.AsNoTracking()
+            .FirstOrDefaultAsync(w => w.Id == token);
+
+        if (workspace == null)
+            return NotFound(new ApiMessage("Link de convite inválido ou expirado."));
+
+        var userId = User.UserId()!;
+        var already = await _db.WorkspaceMembers
+            .AnyAsync(m => m.WorkspaceId == workspace.Id && m.UserId == userId);
+        if (!already)
+        {
+            _db.WorkspaceMembers.Add(new WorkspaceMember { WorkspaceId = workspace.Id, UserId = userId });
+            _db.Activities.Add(new Activity
+            {
+                WorkspaceId = workspace.Id,
+                UserId = userId,
+                Type = ActivityType.Other,
+                Description = "Usuário entrou no workspace"
+            });
+            await _db.SaveChangesAsync();
+        }
+
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user != null && string.IsNullOrEmpty(user.WorkspaceId))
+        {
+            user.WorkspaceId = workspace.Id;
+            await _userManager.UpdateAsync(user);
+        }
+
+        return Ok(ToDto(workspace));
     }
 
     [HttpPost("{id}/members")]
@@ -107,4 +169,7 @@ public class WorkspacesController : ControllerBase
         var users = await _db.Users.Where(u => userIds.Contains(u.Id)).AsNoTracking().ToListAsync();
         return Ok(users.Select(AuthController.ToDto));
     }
+
+    private static WorkspaceDto ToDto(Workspace w) =>
+        new(w.Id, w.Name, w.OwnerId, w.Plan.ToString(), w.CreatedAt.ToString("O"));
 }

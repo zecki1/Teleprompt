@@ -1,5 +1,7 @@
 # Teleprompt — Criação e gravação de roteiros com teleprompter integrado
 
+> **Em migração para .NET:** o backend está sendo reconstruído em **ASP.NET Core + SQL Server** (pasta `backend/`), mantendo Next.js apenas como frontend. A autenticação já foi trocada do Firebase para a API .NET (`src/contexts/AuthContext.tsx` + camada `src/api/*`). Detalhes e planejamento: [`README-PLANO.NET.md`](./README-PLANO.NET.md) e [`PLANEJAMENTO-NET.md`](./PLANEJAMENTO-NET.md).
+
 Aplicação web completa para **criar, revisar, aprovar e gravar roteiros de vídeo** com teleprompter embutido. O texto é estruturado em **cenas** com marcadores especiais (locução, lettering, pronúncia, imagem, fonte e abertura/encerramento), com revisão em fluxo, histórico de versões e gravação assistida com rolagem controlada por teclado, tela cheia e espelhos sincronizados.
 
 - **Stack:** Next.js 15 (App Router) + TypeScript + Firebase (Auth, Firestore, Storage/Blob) + Tailwind CSS + Vitest

@@ -2,9 +2,12 @@
 
 import React, { useEffect, useState, use } from "react";
 import Image from "next/image";
-import { Scene } from "@/lib/parser";
-import { doc, getDoc, collection, query, orderBy, limit, getDocs, updateDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { Scene, parseScript } from "@/lib/parser";
+import { getScript, updateScript } from "@/api/scripts";
+import { getProject } from "@/api/projects";
+import { ApiError } from "@/api/client";
+import { BACKEND_TO_LOCAL_STATUS, LOCAL_TO_BACKEND_STATUS } from "@/lib/script-mappers";
+import type { ScriptStatus } from "@/types/script";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
@@ -33,10 +36,7 @@ interface ScriptData {
   project?: string;
   projectId?: string;
   status: string;
-  isPublic: boolean;
-  lockedForEditing: boolean;
   createdAt?: string;
-  validatedAt?: string;
   workspaceId?: string;
 }
 
@@ -93,38 +93,30 @@ export default function PublicScriptPage({
   useEffect(() => {
     async function loadScript() {
       try {
-        const scriptRef = doc(db, "scripts", resolvedParams.id);
-        const scriptSnap = await getDoc(scriptRef);
+        const dto = await getScript(resolvedParams.id);
 
-        if (!scriptSnap.exists()) {
-          setError("Roteiro não encontrado");
-          setLoading(false);
-          return;
+        let project: string | undefined;
+        if (dto.projectId) {
+          try {
+            const proj = await getProject(dto.projectId);
+            project = proj.name;
+          } catch {}
         }
 
-        const data = scriptSnap.data() as ScriptData;
-        setScript({ ...data, id: resolvedParams.id });
-        
-        if (!data.isPublic && !user) {
-          setError("Este roteiro não está disponível para acesso público. Faça login para visualizar.");
-          setLoading(false);
-          return;
-        }
+        setScript({
+          id: dto.id,
+          title: dto.title,
+          project,
+          projectId: dto.projectId,
+          status: BACKEND_TO_LOCAL_STATUS[dto.status] ?? "rascunho",
+          createdAt: dto.createdAt,
+          workspaceId: dto.workspaceId,
+        });
 
-        const vQ = query(
-          collection(db, "scripts", resolvedParams.id, "versions"),
-          orderBy("createdAt", "desc"),
-          limit(1)
-        );
-        const vSnap = await getDocs(vQ);
-
-        if (!vSnap.empty) {
-          const vData = vSnap.docs[0].data();
-          setScenes(vData.scenes || []);
-        }
+        setScenes(parseScript(dto.content || ""));
       } catch (e) {
         console.error(e);
-        setError("Erro ao carregar roteiro");
+        setError(e instanceof ApiError && e.status === 404 ? "Roteiro não encontrado" : "Erro ao carregar roteiro");
       } finally {
         setLoading(false);
       }
@@ -137,14 +129,10 @@ export default function PublicScriptPage({
     if (!script) return;
     setIsUpdating(true);
     try {
-      const scriptRef = doc(db, "scripts", script.id);
-      await updateDoc(scriptRef, {
-        status: newStatus,
-        updatedAt: serverTimestamp(),
-        validatedBy: user?.uid,
-        validatedAt: new Date().toISOString()
+      await updateScript(script.id, {
+        status: LOCAL_TO_BACKEND_STATUS[newStatus as ScriptStatus],
       });
-      
+
       setScript({ ...script, status: newStatus });
 
       toast.success(`Roteiro movido para: ${statusConfig[newStatus]?.label}`);

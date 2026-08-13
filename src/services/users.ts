@@ -1,112 +1,180 @@
-import { 
-  collection, 
-  getDocs, 
-  doc, 
-  getDoc, 
-  updateDoc, 
-  deleteDoc,
-  query,
-  where,
-  serverTimestamp 
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+"use client";
+
+import {
+  listUsers,
+  getUser,
+  updatePermissions,
+  deleteUser as apiDeleteUser,
+} from "@/api/users";
+import type { UserDto } from "@/api/types";
+import { toUser } from "@/lib/script-mappers";
 import { ExtendedUser, ExtendedUserSchema, Role } from "@/services/schemas";
 
-
-
 const restrictedEmails = [
-  'milinhacmldias@gmail.com',
-  'ederson.gui@gmail.com',
-  'zecki1@hotmail.com'
-].map(e => e.toLowerCase());
+  "milinhacmldias@gmail.com",
+  "ederson.gui@gmail.com",
+  "zecki1@hotmail.com",
+].map((e) => e.toLowerCase());
 
-type FirestoreDocLike = { id: string; data(): { [key: string]: unknown } };
-
-export const mapUserDoc = (doc: FirestoreDocLike): ExtendedUser | null => {
-  const data = doc.data();
-  if (data.email && restrictedEmails.includes(String(data.email).toLowerCase())) {
+export const mapUserDto = (dto: UserDto): ExtendedUser | null => {
+  if (dto.email && restrictedEmails.includes(String(dto.email).toLowerCase())) {
     return null;
   }
 
   try {
-    return ExtendedUserSchema.parse({ uid: doc.id, ...data });
+    return ExtendedUserSchema.parse({
+      uid: dto.id,
+      email: dto.email || "",
+      displayName: dto.displayName || "Usuário",
+      name: dto.displayName || "",
+      role: (dto.role as Role) || "Docente",
+      status: (dto.status || "Active").toLowerCase(),
+      workspaceId: dto.workspaceId || "",
+      workspaces: dto.workspaceId ? [dto.workspaceId] : [],
+      canCollaborate: dto.canCollaborate,
+      isEditor: dto.isEditor,
+      isRevisor: dto.isRevisor,
+      canRevert: dto.canRevert,
+      canViewAdmin: dto.canViewAdmin,
+      canViewReports: dto.canViewReports,
+      canViewActivityHistory: dto.canViewActivityHistory,
+      canViewDebugLogs: dto.canViewDebugLogs,
+      canAssign: dto.canAssign,
+      requiresChecklist: dto.requiresChecklist ?? true,
+      createdAt: null,
+      updatedAt: null,
+    });
   } catch {
     return {
-      uid: doc.id,
-      email: data.email || "",
-      displayName: data.displayName || data.name || "Usuário",
-      name: data.name || "",
-      role: (data.role as Role) || "Docente",
-      status: data.status || "active",
-      workspaceId: data.workspaceId || "",
-      workspaces: data.workspaces || [],
-      canCollaborate: data.canCollaborate || false,
-      isEditor: data.isEditor || false,
-      isRevisor: data.isRevisor || false,
-      canRevert: data.canRevert || false,
-      canViewAdmin: data.canViewAdmin || false,
-      canViewReports: data.canViewReports || false,
-      canViewActivityHistory: data.canViewActivityHistory || false,
-      canViewDebugLogs: data.canViewDebugLogs || false,
-      canAssign: data.canAssign || false,
-      requiresChecklist: data.requiresChecklist ?? true,
-      createdAt: data.createdAt,
-      updatedAt: data.updatedAt,
+      uid: dto.id,
+      email: dto.email || "",
+      displayName: dto.displayName || "Usuário",
+      name: dto.displayName || "",
+      role: (dto.role as Role) || "Docente",
+      status: (dto.status || "Active").toLowerCase(),
+      workspaceId: dto.workspaceId || "",
+      workspaces: dto.workspaceId ? [dto.workspaceId] : [],
+      canCollaborate: dto.canCollaborate,
+      isEditor: dto.isEditor,
+      isRevisor: dto.isRevisor,
+      canRevert: dto.canRevert,
+      canViewAdmin: dto.canViewAdmin,
+      canViewReports: dto.canViewReports,
+      canViewActivityHistory: dto.canViewActivityHistory,
+      canViewDebugLogs: dto.canViewDebugLogs,
+      canAssign: dto.canAssign,
+      requiresChecklist: dto.requiresChecklist ?? true,
+      createdAt: null,
+      updatedAt: null,
     } as ExtendedUser;
   }
 };
 
 export const getUsers = async (workspaceId?: string, isSuperAdmin?: boolean): Promise<ExtendedUser[]> => {
-  const constraints = isSuperAdmin ? [] : [where("workspaceId", "==", workspaceId || "")];
-  if (!isSuperAdmin && !workspaceId) return [];
-  
-  const q = query(
-    collection(db, "users"), 
-    ...constraints
-  );
-  
-  const snapshot = await getDocs(q);
-  
-  const users = snapshot.docs
-    .map(doc => mapUserDoc(doc))
-    .filter((u): u is ExtendedUser => u !== null);
-
-  return users.sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
+  try {
+    const dtos = await listUsers();
+    const users = dtos
+      .map((dto) => mapUserDto(dto))
+      .filter((u): u is ExtendedUser => u !== null);
+    if (!isSuperAdmin && workspaceId) {
+      return users
+        .filter((u) => !u.workspaceId || u.workspaceId === workspaceId)
+        .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
+    }
+    return users.sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
+  } catch (error) {
+    console.error("Erro ao buscar usuários:", error);
+    return [];
+  }
 };
 
 export const getUserById = async (uid: string): Promise<ExtendedUser | null> => {
-  const docRef = doc(db, "users", uid);
-  const docSnap = await getDoc(docRef);
-  
-  if (!docSnap.exists()) return null;
-  
-  return mapUserDoc(docSnap);
+  try {
+    const dto = await getUser(uid);
+    return mapUserDto(dto);
+  } catch (error) {
+    console.error("Erro ao buscar usuário:", error);
+    return null;
+  }
 };
 
 export const updateUserRole = async (uid: string, role: string): Promise<void> => {
-  const docRef = doc(db, "users", uid);
-  await updateDoc(docRef, {
+  const user = await getUser(uid);
+  const current = toUser(user);
+  await updatePermissions(uid, {
     role,
-    updatedAt: serverTimestamp(),
+    isSuperAdmin: current.isSuperAdmin,
+    canManagePermissions: false,
+    canCollaborate: current.canCollaborate,
+    isEditor: current.isEditor,
+    isRevisor: current.isRevisor,
+    canRevert: current.canRevert,
+    canViewAdmin: current.canViewAdmin,
+    canViewReports: current.canViewReports,
+    canViewActivityHistory: current.canViewActivityHistory,
+    canViewDebugLogs: current.canViewDebugLogs,
+    canAssign: current.canAssign,
+    requiresChecklist: current.requiresChecklist,
+    status: current.status,
   });
 };
 
 export const updateUserWorkspace = async (uid: string, workspaceId: string): Promise<void> => {
-  const docRef = doc(db, "users", uid);
-  await updateDoc(docRef, {
-    workspaceId,
-    updatedAt: serverTimestamp(),
+  const user = await getUser(uid);
+  const current = toUser(user);
+  await updatePermissions(uid, {
+    role: current.role,
+    isSuperAdmin: current.isSuperAdmin,
+    canManagePermissions: false,
+    canCollaborate: current.canCollaborate,
+    isEditor: current.isEditor,
+    isRevisor: current.isRevisor,
+    canRevert: current.canRevert,
+    canViewAdmin: current.canViewAdmin,
+    canViewReports: current.canViewReports,
+    canViewActivityHistory: current.canViewActivityHistory,
+    canViewDebugLogs: current.canViewDebugLogs,
+    canAssign: current.canAssign,
+    requiresChecklist: current.requiresChecklist,
+    status: current.status,
   });
 };
 
-export const updateUserPermissions = async (uid: string, permissions: { canCollaborate?: boolean; isEditor?: boolean; isRevisor?: boolean; canRevert?: boolean; canAssign?: boolean; canViewAdmin?: boolean; canViewReports?: boolean; canViewActivityHistory?: boolean; canViewDebugLogs?: boolean; requiresChecklist?: boolean }): Promise<void> => {
-  const docRef = doc(db, "users", uid);
-  await updateDoc(docRef, {
-    ...permissions,
-    updatedAt: serverTimestamp(),
+export const updateUserPermissions = async (
+  uid: string,
+  permissions: {
+    canCollaborate?: boolean;
+    isEditor?: boolean;
+    isRevisor?: boolean;
+    canRevert?: boolean;
+    canAssign?: boolean;
+    canViewAdmin?: boolean;
+    canViewReports?: boolean;
+    canViewActivityHistory?: boolean;
+    canViewDebugLogs?: boolean;
+    requiresChecklist?: boolean;
+  },
+): Promise<void> => {
+  const user = await getUser(uid);
+  const current = toUser(user);
+  await updatePermissions(uid, {
+    role: current.role,
+    isSuperAdmin: current.isSuperAdmin,
+    canManagePermissions: false,
+    canCollaborate: permissions.canCollaborate ?? current.canCollaborate,
+    isEditor: permissions.isEditor ?? current.isEditor,
+    isRevisor: permissions.isRevisor ?? current.isRevisor,
+    canRevert: permissions.canRevert ?? current.canRevert,
+    canViewAdmin: permissions.canViewAdmin ?? current.canViewAdmin,
+    canViewReports: permissions.canViewReports ?? current.canViewReports,
+    canViewActivityHistory: permissions.canViewActivityHistory ?? current.canViewActivityHistory,
+    canViewDebugLogs: permissions.canViewDebugLogs ?? current.canViewDebugLogs,
+    canAssign: permissions.canAssign ?? current.canAssign,
+    requiresChecklist: permissions.requiresChecklist ?? current.requiresChecklist,
+    status: current.status,
   });
 };
 
 export const deleteUser = async (uid: string): Promise<void> => {
-  await deleteDoc(doc(db, "users", uid));
+  await apiDeleteUser(uid);
 };

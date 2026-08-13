@@ -2,10 +2,9 @@
 
 import React, { useEffect, useState, use, Suspense, useRef, useMemo, useCallback, memo } from "react";
 import dynamic from "next/dynamic";
-import { Scene, parseScript, stripHtml } from "@/lib/parser";
+import { Scene, stripHtml } from "@/lib/parser";
 import DOMPurify from "dompurify";
-import { sanitizeData } from "@/lib/firebase-utils";
-import { ScriptDoc } from "@/types/script";
+import { sanitizeData } from "@/lib/data-utils";
 import type { Comment } from "@/components/tp/CommentsPanel";
 
 import { useAuth } from "@/contexts/AuthContext";
@@ -51,20 +50,9 @@ import {
   Ear,
 } from "lucide-react";
 import { useSearchParams, useRouter } from "next/navigation";
-import {
-  collection,
-  addDoc,
-  doc,
-  getDoc,
-  getDocs,
-  query,
-  orderBy,
-  limit,
-  updateDoc,
-  serverTimestamp,
-  where,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { getScript, updateScript, createScript, parseScript } from "@/api/scripts";
+import { listComments } from "@/api/comments";
+import { toScriptDoc, toComment, LOCAL_TO_BACKEND_STATUS, BACKEND_TO_LOCAL_STATUS } from "@/lib/script-mappers";
 import { logActivity } from "@/lib/activity";
 import { debugInfo, debugWarn, debugError, debugPerf } from "@/lib/debug-log";
 import { fetchProjects, Project, createProject } from "@/services/projects";
@@ -898,39 +886,31 @@ function EditorContent({ id }: { id: string }) {
     return total;
   };
 
-  useEffect(() => {
+  const loadComments = useCallback(async () => {
     if (isNew || !id) return;
-    let cancelled = false;
-    async function loadComments() {
-      try {
-        const q = query(collection(db, "scripts", id, "comments"));
-        const snapshot = await getDocs(q);
-        if (cancelled) return;
-        const counts: Record<number, number> = {};
-        const allComments: Comment[] = [];
-        snapshot.docs.forEach(d => {
-          const data = d.data();
-          allComments.push({ 
-            id: d.id, 
-            text: data.text || "", 
-            userId: data.userId || "", 
-            userName: data.userName || "", 
-            marker: data.marker,
-            createdAt: data.createdAt || null 
-          });
-          if (data.marker) {
-            counts[data.marker] = (counts[data.marker] || 0) + 1;
-          }
-        });
-        setCommentCounts(counts);
-        setComments(allComments);
-      } catch {
-        // Silently fail - comments are non-critical
-      }
+    try {
+      const dtos = await listComments(id);
+      const counts: Record<number, number> = {};
+      const allComments: Comment[] = dtos.map((dto) => {
+        const c = toComment(dto);
+        return {
+          id: c.id,
+          text: c.body || "",
+          userId: c.authorId || "",
+          userName: c.authorId || "",
+          createdAt: null,
+        };
+      });
+      setCommentCounts(counts);
+      setComments(allComments);
+    } catch {
+      // Silently fail - comments are non-critical
     }
-    loadComments();
-    return () => { cancelled = true; };
   }, [id, isNew]);
+
+  useEffect(() => {
+    loadComments();
+  }, [loadComments]);
 
   const renumberScenes = useCallback((sceneList: Scene[]) => {
     let count = 1;
@@ -1032,69 +1012,44 @@ function EditorContent({ id }: { id: string }) {
       const loadStartedAt = performance.now();
       debugInfo("editor.load", "Iniciando carregamento do roteiro", { scriptId: id });
       try {
-        const scriptRef = doc(db, "scripts", id);
-        const vQ = query(
-          collection(db, "scripts", id, "versions"),
-          orderBy("createdAt", "desc"),
-          limit(1)
-        );
-
         const LOAD_TIMEOUT = 20000;
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Tempo limite excedido ao carregar roteiro. Verifique sua conexão.")), LOAD_TIMEOUT)
         );
 
-        const [scriptSnap, vSnap] = await Promise.race([
-          Promise.all([
-            getDoc(scriptRef),
-            getDocs(vQ),
-          ]),
+        const script = await Promise.race([
+          getScript(id),
           timeoutPromise,
         ]);
 
-        if (!cancelled && scriptSnap.exists()) {
-          const data = scriptSnap.data();
+        if (!cancelled && script) {
+          setTitle(script.title || "");
+          setProject("Geral");
+          setProjectId(script.projectId || null);
 
-          setTitle(data.title || "");
-          const pName = data.projectName || data.project || "Geral";
-          setProject(pName);
-          setProjectId(data.projectId || null);
-          
-          const scriptPath = getScriptPath(data as ScriptDoc);
+          const scriptPath = getScriptPath(toScriptDoc(script));
           setPath(scriptPath);
-          
-          setFolder(data.folder || scriptPath[0] || "Raiz");
-          setSubfolder(data.subfolder || scriptPath[1] || "");
-          setLesson(data.lesson || scriptPath[2] || "");
-          setScriptStatus(data.status || "rascunho");
-          setCategory(data.category || "video");
-          setIsPublic(data.isPublic || false);
-          setLockedForEditing(data.lockedForEditing || false);
-          setWorkspaceId(data.workspaceId || userRef.current?.workspaceId || "senai");
-          setReviewerId(data.reviewerId || null);
-          setReviewerName(data.reviewerName || null);
-          setEditorId(data.editorId || null);
-          setEditorName(data.editorName || null);
-          setVideomakerId(data.videomakerId || null);
-          setVideomakerName(data.videomakerName || null);
-          setIsMirrored(data.isMirrored || false);
 
-          if (!cancelled && !vSnap.empty) {
-            const vData = vSnap.docs[0].data();
-            const rawContent = vData.content || "";
-            let loadedScenes = vData.scenes || [];
-            if (loadedScenes.length === 0 && rawContent) {
-              loadedScenes = parseScript(rawContent);
-            }
-            const finalScenes = loadedScenes.map((s: Scene) => ({ ...s, observation: s.observation || "" }));
-            setScenesWithRenumbering(finalScenes);
+          setFolder("Raiz");
+          setSubfolder(scriptPath[1] || "");
+          setLesson(scriptPath[2] || "");
+          setScriptStatus((BACKEND_TO_LOCAL_STATUS[script.status] ?? "rascunho") as ScriptStatus);
+          setCategory("video");
+          setIsPublic(false);
+          setLockedForEditing(script.isLocked || false);
+          setWorkspaceId(script.workspaceId || userRef.current?.workspaceId || "senai");
+
+          if (script.content) {
+            const parsed = await parseScript(script.content);
+            const loadedScenes = (parsed.scenes as unknown as Scene[]).map((s) => ({ ...s, observation: s.observation || "" }));
+            setScenesWithRenumbering(loadedScenes);
             debugPerf("editor.load", "Roteiro carregado com sucesso", loadStartedAt, {
               scriptId: id,
-              sceneCount: finalScenes.length,
+              sceneCount: loadedScenes.length,
               hasVersion: true,
             });
           } else {
-            debugPerf("editor.load", "Roteiro carregado sem versão", loadStartedAt, { scriptId: id });
+            debugPerf("editor.load", "Roteiro carregado sem conteúdo", loadStartedAt, { scriptId: id });
           }
         } else {
           debugWarn("editor.load", "Documento do roteiro não encontrado", { scriptId: id });
@@ -1127,35 +1082,7 @@ function EditorContent({ id }: { id: string }) {
       setExistingFolders([]);
       return;
     }
-
-    let cancelled = false;
-
-    async function fetchFolders() {
-      try {
-        const q = query(
-          collection(db, "scripts"),
-          ...(user?.isSuperAdmin ? [] : [where("workspaceId", "==", workspaceId || user?.workspaceId || "senai")]),
-          where("projectName", "==", project),
-          limit(500)
-        );
-        const snap = await getDocs(q);
-        if (cancelled) return;
-        const folders = new Set<string>();
-        snap.docs.forEach(d => {
-          const data = d.data();
-          if (data.folder) folders.add(data.folder);
-          if (data.path && Array.isArray(data.path)) {
-            data.path.forEach(p => { if (p) folders.add(p); });
-          }
-        });
-        setExistingFolders(Array.from(folders).sort());
-      } catch (e) {
-        debugWarn("editor.folders", "Falha ao carregar lista de pastas", { project }, e);
-      }
-    }
-
-    fetchFolders();
-    return () => { cancelled = true; };
+    setExistingFolders([]);
   }, [project, workspaceId, user?.workspaceId, user?.isSuperAdmin]);
 
   useEffect(() => {
@@ -1221,82 +1148,30 @@ function EditorContent({ id }: { id: string }) {
       const finalWorkspaceId = workspaceId || user?.workspaceId || "senai";
       let currentScriptId = id;
       const rawContent = generateRawTextFromBlocks(scenes);
-      
-      const finalEditorId = user?.uid || editorId;
-      const finalEditorName = user?.displayName || user?.email || editorName;
-      let finalReviewerId = reviewerId;
-      let finalReviewerName = reviewerName;
-      
-      if (saveStatus === "revisao_realizada" || saveStatus === "aguardando_gravacao") {
-        finalReviewerId = user?.uid || null;
-        finalReviewerName = user?.displayName || user?.email || null;
-      }
-
-      let finalVideomakerId = videomakerId;
-      let finalVideomakerName = videomakerName;
-      if (saveStatus === "gravado") {
-        finalVideomakerId = user?.uid || null;
-        finalVideomakerName = user?.displayName || user?.name || user?.email || null;
-      }
-
-      const saveData = sanitizeData({
-        title,
-        project,
-        projectName: project,
-        projectId,
-        folder: folder || "Raiz",
-        subfolder: subfolder || "",
-        category,
-        workspaceId: finalWorkspaceId,
-        status: saveStatus,
-        updatedAt: serverTimestamp(),
-        isPublic: isPublic,
-        path: path,
-        reviewerId: finalReviewerId,
-        reviewerName: finalReviewerName,
-        editorId: finalEditorId,
-        editorName: finalEditorName,
-        videomakerId: finalVideomakerId,
-        videomakerName: finalVideomakerName,
-        isMirrored,
-        editingDuration: getEditingDuration(),
-        charCount: scenes.reduce((sum, sc) => sum + (typeof sc.spokenText === "string" ? sc.spokenText.length : 0), 0),
-        wordCount: scenes.reduce((sum, sc) => sum + (typeof sc.spokenText === "string" ? sc.spokenText.trim().split(/\s+/).filter(Boolean).length : 0), 0),
-        sceneCount: scenes.length,
-      });
+      const backendStatus = LOCAL_TO_BACKEND_STATUS[saveStatus];
 
       if (isNew) {
-        const docRef = await addDoc(collection(db, "scripts"), {
-          ...saveData,
-          createdBy: user?.uid,
-          createdByName: user?.displayName || user?.email || "Unknown",
-          createdAt: serverTimestamp(),
-          lockedForEditing: false,
+        const created = await createScript({
+          projectId: projectId || "geral",
+          title: title || "Novo Roteiro",
+          content: rawContent,
         });
-        currentScriptId = docRef.id;
+        currentScriptId = created.id;
+        await updateScript(currentScriptId, { status: backendStatus });
       } else {
-        await updateDoc(doc(db, "scripts", currentScriptId), saveData);
+        await updateScript(currentScriptId, {
+          title,
+          content: rawContent,
+          status: backendStatus,
+        });
       }
-
-      const versionPayload = sanitizeData({
-        content: rawContent as string,
-        scenes: scenes as Scene[],
-        createdBy: user?.uid,
-        createdByName: user?.displayName || user?.email || "Usuário",
-        createdAt: serverTimestamp(),
-      });
-
-      await addDoc(
-        collection(db, "scripts", currentScriptId as string, "versions"), 
-        versionPayload
-      );
 
       logActivity({
         userId: user?.uid || "",
         userName: user?.displayName || user?.name || user?.email || "Usuário",
         userAvatar: user?.photoURL || null,
         action: isNew ? "Criou" : "Editou",
-        scriptId: currentScriptId as string,
+        scriptId: currentScriptId,
         scriptTitle: title,
         projectId: projectId || null,
         projectName: project || null,
@@ -1479,23 +1354,30 @@ function EditorContent({ id }: { id: string }) {
     setIsImporting(true);
     debugInfo("editor.import", "Iniciando processamento do texto bruto", { chars: text.length });
 
-    setTimeout(() => {
+    setTimeout(async () => {
       const parseStartedAt = performance.now();
-      const importedScenes = parseScript(text).map(s => ({ ...s, observation: s.observation || "" }));
-      debugPerf("editor.import", "Texto processado em cenas", parseStartedAt, {
-        chars: text.length,
-        sceneCount: importedScenes.length,
-      });
+      try {
+        const result = await parseScript(text);
+        const importedScenes = (result.scenes as unknown as Scene[]).map(s => ({ ...s, observation: s.observation || "" }));
+        debugPerf("editor.import", "Texto processado em cenas", parseStartedAt, {
+          chars: text.length,
+          sceneCount: importedScenes.length,
+        });
 
-      if (scenes.length > 0) {
-        setImportedScenesPending(importedScenes);
-        setShowImportConfirmModal(true);
+        if (scenes.length > 0) {
+          setImportedScenesPending(importedScenes);
+          setShowImportConfirmModal(true);
+          setIsImporting(false);
+        } else {
+          setScenesWithRenumbering(importedScenes);
+          setShowImportModal(false);
+          setIsImporting(false);
+          showToast("Roteiro processado!");
+        }
+      } catch (e) {
+        debugError("editor.import", "Falha ao processar texto", e);
+        sonnerToast.error("Falha ao processar o texto.");
         setIsImporting(false);
-      } else {
-        setScenesWithRenumbering(importedScenes);
-        setShowImportModal(false);
-        setIsImporting(false);
-        showToast("Roteiro processado!");
       }
     }, 50);
   };

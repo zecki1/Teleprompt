@@ -4,6 +4,8 @@ public record RegisterRequest(string Email, string Password, string? DisplayName
 
 public record LoginRequest(string Email, string Password);
 
+public record RefreshRequest(string Token);
+
 public record AuthResponse(string Token, UserDto User);
 
 public record UserDto(
@@ -21,7 +23,7 @@ public record UpdatePermissionsRequest(
     bool CanViewReports, bool CanViewActivityHistory, bool CanViewDebugLogs,
     bool CanAssign, bool RequiresChecklist, string Status);
 
-public record CreateWorkspaceRequest(string Name, string Plan);
+public record CreateWorkspaceRequest(string Name, string Plan = "Free");
 public record WorkspaceDto(string Id, string Name, string OwnerId, string Plan, string CreatedAt);
 public record JoinWorkspaceRequest(string Token);
 public record AddMemberRequest(string Email);
@@ -37,7 +39,7 @@ public record ProjectDto(
     string Id, string Name, string? Code, string? ExternalLink,
     string WorkspaceId, string? Status, string? Bucket, string CreatedAt);
 
-public record CreateScriptRequest(string ProjectId, string Title, string Content);
+public record CreateScriptRequest(string ProjectId, string Title, string? Content = null);
 public record UpdateScriptRequest(string? Title, string? Content, string? Status);
 public record ScriptDto(
     string Id, string ProjectId, string WorkspaceId, string Title,
@@ -57,7 +59,7 @@ public record UpdateChecklistRequest(List<ChecklistItemDto> Items);
 
 public record ActivityDto(string Id, string Type, string Description, string? UserId, string CreatedAt);
 
-public record CreateTpSessionRequest(string ScriptId, string Mode, double Speed);
+public record CreateTpSessionRequest(string ScriptId, string Mode = "Paragraph", double Speed = 1.0);
 public record TpSessionDto(string Id, string ScriptId, string OwnerId, string Mode, double Speed, string ScrollStateJson);
 public record UpdateTpSessionRequest(string Mode, double Speed, string? ScrollStateJson);
 public record MarkRecordedRequest(string ScriptId);

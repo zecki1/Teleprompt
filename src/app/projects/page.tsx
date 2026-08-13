@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { LoadingScreen } from "@/components/PageTransitionLoader";
-import { fetchProjects, Project, ProjectLink, createProject, deleteProject, updateProject } from "@/services/projects";
+import { fetchProjects, Project, ProjectLink, createProject, deleteProject, updateProject, getScriptsByProject } from "@/services/projects";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -46,8 +46,6 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { collection, query, where, getDocs, writeBatch, doc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { ScriptDoc } from "@/types/script";
 
 export default function ProjectsPage() {
@@ -372,23 +370,17 @@ export default function ProjectsPage() {
       const projectsData = await fetchProjects(workspaceId, !!user?.isSuperAdmin);
       setProjects(projectsData);
 
-      const scriptsRef = collection(db, "scripts");
-      const q = user?.isSuperAdmin
-        ? query(scriptsRef)
-        : query(scriptsRef, where("workspaceId", "==", workspaceId));
-      const snapshot = await getDocs(q);
-      const allScripts = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as ScriptDoc[];
-
-      const grouped: Record<string, ScriptDoc[]> = {};
-      allScripts.forEach(s => {
-        const pName = s.projectName || s.project || "Geral";
-        if (!grouped[pName]) grouped[pName] = [];
-        grouped[pName].push(s);
+      const scriptsByProject: Record<string, ScriptDoc[]> = {};
+      const results = await Promise.all(
+        projectsData.map(async (p) => {
+          const scripts = await getScriptsByProject(p.id);
+          return { name: p.name, scripts };
+        })
+      );
+      results.forEach(({ name, scripts }) => {
+        scriptsByProject[name] = scripts;
       });
-      setScriptsByProject(grouped);
+      setScriptsByProject(scriptsByProject);
     } catch (error) {
       console.error("Erro ao carregar projetos:", error);
     } finally {
@@ -416,8 +408,7 @@ export default function ProjectsPage() {
         name: newProject.name,
         code: newProject.code,
         externalLink: newProject.externalLink || undefined,
-        workspaceId,
-        status: "active",
+        status: "InProgress",
       });
 
       setProjects([created, ...projects]);
@@ -520,13 +511,6 @@ export default function ProjectsPage() {
       await updateProject(projectId, { name: newName });
       setProjects(projects.map(p => p.id === projectId ? { ...p, name: newName } : p));
 
-      const scriptsRef = collection(db, "scripts");
-      const q = query(scriptsRef, where("projectName", "==", oldName));
-      const snapshot = await getDocs(q);
-      const fbBatch = writeBatch(db);
-      snapshot.docs.forEach(d => fbBatch.update(doc(db, "scripts", d.id), { projectName: newName }));
-      await fbBatch.commit();
-
       if (user) {
         const { logActivity } = await import("@/lib/activity");
         const project = projects.find(p => p.id === projectId);
@@ -553,21 +537,11 @@ export default function ProjectsPage() {
     if (!editingProject || !editProjectName.trim()) return;
     setSavingEdit(true);
     try {
-      const oldName = editingProject.name;
       const newName = editProjectName.trim();
       const newCode = editProjectCode.trim();
       const newLink = editProjectLink.trim();
 
       await updateProject(editingProject.id, { name: newName, code: newCode || undefined, externalLink: newLink || undefined });
-
-      if (newName !== oldName) {
-        const scriptsRef = collection(db, "scripts");
-        const q = query(scriptsRef, where("projectName", "==", oldName));
-        const snapshot = await getDocs(q);
-        const fbBatch = writeBatch(db);
-        snapshot.docs.forEach(d => fbBatch.update(doc(db, "scripts", d.id), { projectName: newName }));
-        await fbBatch.commit();
-      }
 
       setProjects(projects.map(p => p.id === editingProject.id ? { ...p, name: newName, code: newCode || undefined, externalLink: newLink || undefined } : p));
       setEditingProject(null);

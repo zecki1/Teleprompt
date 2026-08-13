@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace Teleprompt.Infrastructure.Data;
@@ -9,8 +10,6 @@ namespace Teleprompt.Infrastructure.Data;
 /// </summary>
 public static class RlsSetup
 {
-    private const string FilterFn = "dbo.fn_workspace_rls";
-
     private static readonly string[] ScopedTables =
     [
         "Projects", "Scripts", "Presenters", "Teams", "Activities", "TpSessions"
@@ -26,10 +25,11 @@ public static class RlsSetup
         if (db.Database.GetPendingMigrations().Any())
             return;
 
-        db.Database.ExecuteSqlRaw($"""
-            IF OBJECT_ID(N'{FilterFn}') IS NULL
+        db.Database.ExecuteSqlRaw(
+            """
+            IF OBJECT_ID('dbo.fn_workspace_rls') IS NULL
             BEGIN
-                EXEC(N'CREATE FUNCTION {FilterFn}(@WorkspaceId nvarchar(36))
+                EXEC(N'CREATE FUNCTION dbo.fn_workspace_rls(@WorkspaceId nvarchar(36))
                     RETURNS TABLE WITH SCHEMABINDING AS
                     RETURN SELECT 1 AS result
                     WHERE @WorkspaceId = CAST(SESSION_CONTEXT(N''WorkspaceId'') AS nvarchar(36))
@@ -40,18 +40,20 @@ public static class RlsSetup
 
         foreach (var table in ScopedTables)
         {
-            db.Database.ExecuteSqlRaw($"""
+            db.Database.ExecuteSqlRaw(
+                """
                 IF NOT EXISTS (
-                    SELECT 1 FROM sys.security_policies WHERE name = N'rls_{table}'
+                    SELECT 1 FROM sys.security_policies WHERE name = 'rls_' + @table
                 )
                 BEGIN
                     DECLARE @sql nvarchar(max) = N'
-                        CREATE SECURITY POLICY [rls_{table}]
-                        ADD FILTER PREDICATE {FilterFn}(WorkspaceId) ON dbo.[{table}],
-                        ADD BLOCK PREDICATE {FilterFn}(WorkspaceId) ON dbo.[{table}] AFTER UPDATE';
+                        CREATE SECURITY POLICY [rls_' + @table + N']
+                        ADD FILTER PREDICATE dbo.fn_workspace_rls(WorkspaceId) ON dbo.[' + @table + N'],
+                        ADD BLOCK PREDICATE dbo.fn_workspace_rls(WorkspaceId) ON dbo.[' + @table + N'] AFTER UPDATE';
                     EXEC sp_executesql @sql;
                 END;
-                """);
+                """,
+                new SqlParameter("@table", table));
         }
     }
 }
