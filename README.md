@@ -220,12 +220,76 @@ Estimativas para um roteiro típico de 10 cenas (apresentação de ~3 min):
 
 ## 10. Rodando localmente
 
+### Backend (.NET)
+
+```bash
+cd backend/src/Teleprompt.Api
+dotnet run
+```
+
+O backend roda em `http://localhost:5026` (porta padrão).
+
+### Frontend Next.js
+
 ```bash
 npm install
 npm run dev        # http://localhost:3000
-npm run test       # Vitest (63 casos)
-npm run build      # build de produção
-npm run lint       # ESLint
+```
+
+### Frontend Angular
+
+```bash
+cd frontend-angular
+npm install
+npx ng serve       # http://localhost:4201
+```
+
+### Todos ao mesmo tempo
+
+```bash
+npm install           # instala dependências do root
+cd frontend-angular && npm install   # instala dependências do Angular
+cd ..
+npm run dev:all       # roda Next.js + Angular simultaneamente
+```
+
+O comando `dev:all` usa `concurrently` para iniciar:
+- **Next.js** em `http://localhost:3000` (cor azul no terminal)
+- **Angular** em `http://localhost:4201` (cor vermelha no terminal)
+
+Ambos os frontends consomem o backend em `http://localhost:5026` (configurado no CORS e nos environments).
+
+### Migração de dados do Firebase
+
+Para migrar dados existentes do Firebase Firestore para o banco .NET:
+
+```bash
+cd backend/src/Teleprompt.Migration
+
+# 1. Configure o appsettings.json:
+#    - Firebase:ProjectId → seu Project ID do Firebase
+#    - Firebase:ServiceAccountKey → caminho para o JSON da service account
+
+# 2. Baixe a service account key:
+#    Firebase Console → Project Settings → Service accounts → Generate new private key
+#    Salve como serviceAccountKey.json nesta pasta
+
+# 3. Execute a migração:
+dotnet run
+```
+
+A migração cria:
+- Usuários (senha temporária: `Migrated@Temp123!`)
+- Workspaces e membros
+- Projetos
+- Roteiros
+- Atividades
+
+### Testes
+
+```bash
+npm run test       # Vitest (Next.js)
+cd frontend-angular && npm run test   # Karma (Angular)
 ```
 
 Variáveis de ambiente necessárias (`.env.local`): configuração do Firebase (client) e, para uploads, `FIREBASE_SERVICE_ACCOUNT` + `BLOB_READ_WRITE_TOKEN`.

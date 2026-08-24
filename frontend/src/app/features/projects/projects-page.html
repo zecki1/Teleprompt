@@ -1,0 +1,131 @@
+<div class="page">
+  <header class="page-head">
+    <div>
+      <h1>Projetos</h1>
+      <p class="sub">{{ totals().active }} ativo(s) · {{ totals().scripts }} roteiros no total</p>
+    </div>
+    <div class="row">
+      <div class="view-toggle">
+        <button type="button" [class.on]="view() === 'grid'" (click)="view.set('grid')" title="Cartões">▦</button>
+        <button type="button" [class.on]="view() === 'list'" (click)="view.set('list')" title="Lista">☰</button>
+      </div>
+      <button type="button" class="btn btn-primary" (click)="openCreate()">+ Novo Projeto</button>
+    </div>
+  </header>
+
+  @if (error()) {
+    <div class="alert-error" style="margin-bottom: 1rem">{{ error() }}</div>
+  }
+
+  @if (loading()) {
+    <div class="grid">
+      @for (i of [1, 2, 3, 4]; track i) {
+        <div class="skeleton" style="height: 10rem"></div>
+      }
+    </div>
+  } @else if (sorted().length === 0) {
+    <div class="empty-state">
+      <h3>Nenhum projeto encontrado</h3>
+      <p>Crie seu primeiro projeto para organizar os roteiros.</p>
+      <br />
+      <button type="button" class="btn btn-primary" (click)="openCreate()">Criar Projeto</button>
+    </div>
+  } @else if (view() === 'grid') {
+    <div class="grid">
+      @for (p of sorted(); track p.id) {
+        <article class="card project-card" [class.done-card]="p.done" (click)="open(p)">
+          <header class="row" style="justify-content: space-between">
+            @if (p.code) { <span class="tag mono">{{ p.code }}</span> }
+            @else { <span></span> }
+            <span class="pill" [style]="p.done ? doneStyle : activeStyle">
+              {{ p.done ? 'Concluído' : 'Ativo' }}
+            </span>
+          </header>
+
+          <h2 class="truncate">{{ p.name }}</h2>
+          @if (p.externalLink) {
+            <a class="small link-ext" [href]="p.externalLink" target="_blank" rel="noopener"
+               (click)="$event.stopPropagation()">🔗 link externo</a>
+          }
+
+          <div class="mini-stats">
+            <span><strong>{{ p.total }}</strong> roteiro(s)</span>
+            <span style="color: var(--blue)"><strong>{{ p.recorded }}</strong> gravados</span>
+          </div>
+
+          <div class="progress"><div [style.width.%]="p.progress"></div></div>
+          <p class="faint small">{{ p.progress }}% concluído · {{ p.createdAt | date: 'dd/MM/yyyy' }}</p>
+
+          <footer class="actions" (click)="$event.stopPropagation()">
+            <button type="button" class="icon-btn" title="Editar" (click)="openEdit(p)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            </button>
+            <button type="button" class="icon-btn danger" title="Excluir" (click)="deleteTarget.set(p)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+            </button>
+          </footer>
+        </article>
+      }
+    </div>
+  } @else {
+    <div class="card list">
+      @for (p of sorted(); track p.id) {
+        <div class="list-row" (click)="open(p)">
+          @if (p.code) { <span class="tag mono">{{ p.code }}</span> }
+          <span class="grow truncate name">{{ p.name }}</span>
+          <span class="faint small">{{ p.total }} roteiro(s)</span>
+          <span class="faint small" style="width: 5rem">{{ p.recorded }} gravados</span>
+          <div class="progress grow-limited"><div [style.width.%]="p.progress"></div></div>
+          <span class="pill" [style]="p.done ? doneStyle : activeStyle">{{ p.done ? 'Concluído' : 'Ativo' }}</span>
+          <span class="faint small">{{ p.createdAt | date: 'dd/MM/yyyy' }}</span>
+          <button type="button" class="icon-btn" title="Editar" (click)="openEdit(p); $event.stopPropagation()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          </button>
+          <button type="button" class="icon-btn danger" title="Excluir" (click)="deleteTarget.set(p); $event.stopPropagation()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+          </button>
+        </div>
+      }
+    </div>
+  }
+
+  <!-- Modal criar/editar -->
+  @if (formOpen()) {
+    <app-modal
+      [open]="true"
+      (openChange)="formOpen.set(null)"
+      [title]="formOpen() === 'create' ? 'Criar Novo Projeto' : 'Editar Projeto'"
+    >
+      <label class="field-label" for="pr-name">Nome</label>
+      <input id="pr-name" class="input" [ngModel]="name()" (ngModelChange)="nameChanged($event)" placeholder="Nome do projeto" />
+
+      <label class="field-label" for="pr-code">Código</label>
+      <input id="pr-code" class="input mono" [ngModel]="code()" (ngModelChange)="codeChanged($event)" placeholder="ABC-001" />
+
+      <label class="field-label" for="pr-link">Link de referência (opcional)</label>
+      <input id="pr-link" class="input" [(ngModel)]="link" placeholder="https://…" />
+
+      <div footer style="display: contents">
+        <button type="button" class="btn btn-secondary" (click)="formOpen.set(null)">Cancelar</button>
+        <button type="button" class="btn btn-primary" [disabled]="saving() || !name().trim()" (click)="save()">
+          {{ saving() ? 'Salvando…' : 'Salvar' }}
+        </button>
+      </div>
+    </app-modal>
+  }
+
+  <!-- Modal excluir -->
+  @if (deleteTarget(); as target) {
+    <app-modal [open]="true" (openChange)="deleteTarget.set(null)" title="Excluir projeto">
+      <p>
+        Excluir <strong>“{{ target.name }}”</strong>? Os roteiros vinculados continuarão existindo, mas ficarão sem projeto.
+      </p>
+      <div footer style="display: contents">
+        <button type="button" class="btn btn-secondary" (click)="deleteTarget.set(null)">Cancelar</button>
+        <button type="button" class="btn btn-danger" [disabled]="saving()" (click)="confirmDelete()">
+          {{ saving() ? 'Excluindo…' : 'Excluir' }}
+        </button>
+      </div>
+    </app-modal>
+  }
+</div>

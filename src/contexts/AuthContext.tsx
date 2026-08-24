@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useState, ReactNode } from
 import { ExtendedUser, Workspace, Role, UserStatus } from "@/services/schemas";
 import { toast } from "sonner";
 
-import { clearStoredToken, getStoredToken, setStoredToken } from "@/api/client";
+import { clearStoredToken, getStoredToken, setStoredToken, useFirebase } from "@/api/client";
 import { login as apiLogin, register as apiRegister, me as apiMe, logout as apiLogout } from "@/api/auth";
 import { listMyWorkspaces, createWorkspace as apiCreateWorkspace, joinWorkspaceByToken as apiJoinWorkspace } from "@/api/workspace";
 import { listTeams } from "@/api/teams";
@@ -103,9 +103,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [isDataLoading, setIsDataLoading] = useState(false);
 
-  // Hydrata a sessão a partir do token armazenado.
+  // Hydrata a sessão a partir do token armazenado / Firebase Auth state.
   useEffect(() => {
     let cancelled = false;
+
+    if (useFirebase) {
+      let unsub: (() => void) | undefined;
+      (async () => {
+        const { getFirebaseAuth } = await import("@/lib/firebase");
+        const { onAuthStateChanged } = await import("firebase/auth");
+        const auth = getFirebaseAuth();
+        unsub = onAuthStateChanged(auth, async (fbUser) => {
+          if (cancelled) return;
+          if (!fbUser) {
+            clearStoredToken();
+            setUser(null);
+            setLoading(false);
+            return;
+          }
+          try {
+            const dto = await apiMe();
+            if (cancelled) return;
+            const u = dtoToExtendedUser(dto);
+            setUser(u);
+            setDebugUserContext(buildDebugContext(u));
+            addKnownAccount({
+              uid: u.uid,
+              email: u.email,
+              displayName: u.displayName || u.name || null,
+              photoURL: u.photoURL || null,
+            });
+          } catch {
+            clearStoredToken();
+          } finally {
+            if (!cancelled) setLoading(false);
+          }
+        });
+      })();
+      return () => {
+        cancelled = true;
+        unsub?.();
+      };
+    }
+
     const hydrate = async () => {
       if (!getStoredToken()) {
         setLoading(false);
@@ -124,7 +164,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           photoURL: u.photoURL || null,
         });
       } catch {
-        // Token inválido/expirado e refresh falhou -> limpa sessão.
         clearStoredToken();
       } finally {
         if (!cancelled) setLoading(false);

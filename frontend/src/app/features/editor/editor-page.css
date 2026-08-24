@@ -1,0 +1,111 @@
+:host { display: block; height: 100%; }
+
+.editor {
+  height: calc(100dvh - 3.5rem - 2.75rem);
+  display: flex;
+  flex-direction: column;
+  max-width: 80rem;
+  margin-inline: auto;
+}
+
+/* ---------- Topbar ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5625rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.title-input {
+  border: 0;
+  outline: none;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--text);
+  background: transparent;
+  min-width: 8rem;
+
+  &:focus { box-shadow: none; }
+}
+
+/* ---------- Corpo ---------- */
+.body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 21.5rem;
+  gap: 0.75rem;
+
+  @media (max-width: 1000px) { grid-template-columns: 1fr; }
+}
+
+.pane { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
+.content-input {
+  flex: 1;
+  resize: none;
+  border: 0;
+  border-radius: var(--radius-lg);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.8750rem;
+  line-height: 1.65;
+  padding: 1rem;
+}
+
+/* ---------- Abas laterais ---------- */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+
+  button {
+    flex: 1;
+    border: 0;
+    background: transparent;
+    padding: 0.625rem 0.25rem;
+    font-size: 0.7813rem;
+    font-weight: 700;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+
+    &.on { color: var(--primary); border-bottom-color: var(--primary); }
+    &:hover:not(.on) { background: #f7f8fb; }
+  }
+}
+
+.scroll-area { flex: 1; overflow-y: auto; }
+
+.scene {
+  padding: 0.6875rem 0.875rem;
+  border-bottom: 1px solid var(--border);
+
+  .spoken {
+    margin-top: 0.4375rem;
+    font-size: 0.8438rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+  }
+
+  .meta { margin-top: 0.25rem; font-size: 0.7813rem; color: var(--muted); word-break: break-word; }
+}
+
+.version, .comment {
+  padding: 0.625rem 0.875rem;
+  border-bottom: 1px solid var(--border);
+
+  &.resolved { opacity: 0.55; }
+}
+
+.vnum {
+  width: 2.125rem;
+  height: 2.125rem;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 0.75rem;
+  background: var(--primary-soft);
+  color: var(--primary);
+}

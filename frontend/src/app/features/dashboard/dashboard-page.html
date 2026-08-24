@@ -1,0 +1,260 @@
+<div class="page">
+  <header class="page-head">
+    <div>
+      <h1>Dashboard</h1>
+      <p class="sub">
+        @if (auth.user(); as u) { Olá, {{ u.displayName }}. } Todos os seus roteiros em um só lugar.
+      </p>
+    </div>
+    <button type="button" class="btn btn-primary" (click)="showNewProject.set(true)">
+      + Novo Projeto
+    </button>
+  </header>
+
+  @if (error()) {
+    <div class="alert-error" style="margin-bottom: 1rem">{{ error() }}</div>
+  }
+
+  @if (openProjectFilter(); as pf) {
+    <div class="card row" style="padding: 0.5625rem 0.875rem; margin-bottom: 1rem; justify-content: space-between">
+      <span class="small">
+        Mostrando apenas o projeto <strong>{{ projectNameOf(pf) || 'selecionado' }}</strong>
+      </span>
+      <button type="button" class="btn btn-ghost btn-sm" (click)="openProjectFilter.set(null)">
+        Ver todos ✕
+      </button>
+    </div>
+  }
+
+  <!-- Estatísticas -->
+  @if (!loading()) {
+    <section class="stats">
+      <div class="card stat">
+        <span class="stat-num" style="color: var(--primary)">{{ stats().projects }}</span>
+        <span class="stat-label">Projetos</span>
+      </div>
+      <div class="card stat">
+        <span class="stat-num" style="color: var(--sky)">{{ stats().scripts }}</span>
+        <span class="stat-label">Roteiros</span>
+      </div>
+      <div class="card stat">
+        <span class="stat-num" style="color: var(--blue)">{{ stats().recorded }}</span>
+        <span class="stat-label">Gravados</span>
+      </div>
+      <div class="card stat">
+        <span class="stat-num" style="color: var(--orange)">{{ stats().reviewing }}</span>
+        <span class="stat-label">Em produção</span>
+      </div>
+      <div class="card stat progress-stat">
+        <span class="stat-num small-num">{{ stats().progress }}%</span>
+        <div class="progress grow"><div [style.width.%]="stats().progress"></div></div>
+        <span class="stat-label">Progresso geral</span>
+      </div>
+    </section>
+
+    <!-- Faixa de projetos (carrossel ou lista) -->
+    @if (projects().length > 0) {
+      <section class="projects-strip card">
+        <div class="strip-head">
+          <h2>Projetos</h2>
+          <div class="strip-toggle">
+            <button type="button" [class.on]="viewMode() === 'carrossel'"
+                    (click)="setViewMode('carrossel')" title="Carrossel">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+            </button>
+            <button type="button" [class.on]="viewMode() === 'lista'"
+                    (click)="setViewMode('lista')" title="Lista">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+            </button>
+          </div>
+        </div>
+
+        @if (viewMode() === 'carrossel') {
+          <div class="proj-scroll">
+            @for (p of projects(); track p.id) {
+              <button type="button" class="proj-chip"
+                      [class.active]="openProjectFilter() === p.id"
+                      (click)="toggleProjectFilter(p.id)">
+                <span class="tag mono">{{ p.code || 'PRJ' }}</span>
+                <span class="truncate">{{ p.name }}</span>
+              </button>
+            }
+          </div>
+        } @else {
+          <div class="proj-list">
+            @for (p of projects(); track p.id) {
+              <button type="button" class="proj-row"
+                      [class.active]="openProjectFilter() === p.id"
+                      (click)="toggleProjectFilter(p.id)">
+                <span class="tag mono">{{ p.code || 'PRJ' }}</span>
+                <span class="truncate grow" style="text-align: left">{{ p.name }}</span>
+                <span class="faint small">{{ scriptCountOf(p.id) }} roteiro(s)</span>
+              </button>
+            }
+          </div>
+        }
+      </section>
+    }
+
+    <!-- Filtros -->
+    <section class="filters card">
+      <input
+        class="input search"
+        type="search"
+        placeholder="Buscar roteiro ou projeto…"
+        [ngModel]="search()"
+        (ngModelChange)="search.set($event)"
+      />
+      <div class="chips">
+        @for (s of statuses; track s.value) {
+          @if (counts().get(s.value)) {
+            <button
+              type="button"
+              class="chip"
+              [class.chip-on]="activeStatuses().has(s.value)"
+              [style.--c]="s.color"
+              (click)="toggleStatus(s.value)"
+            >
+              {{ s.label }} · {{ counts().get(s.value) }}
+            </button>
+          }
+        }
+        @if (activeStatuses().size > 0) {
+          <button type="button" class="btn btn-ghost btn-sm" (click)="clearFilters()">
+            Limpar filtros
+          </button>
+        }
+      </div>
+    </section>
+
+    <!-- Grupos por projeto -->
+    @if (loading()) {} @else if (groups().length === 0) {
+      <div class="empty-state">
+        <h3>Nenhum roteiro encontrado</h3>
+        <p>Crie um projeto e depois o primeiro roteiro para começar a produzir.</p>
+      </div>
+    } @else {
+      @for (group of groups(); track group.project.id) {
+        <section class="project-block">
+          <header
+            class="project-head"
+            (click)="openProjectId.update((v) => (v === group.project.id ? null : group.project.id))"
+          >
+            <svg
+              class="caret"
+              [class.caret-open]="openProjectId() !== group.project.id"
+              width="12" height="12" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="3" stroke-linecap="round"
+            ><path d="m6 9 6 6 6-6"/></svg>
+            <h2>{{ group.project.name }}</h2>
+            @if (group.project.code) {
+              <span class="tag mono">{{ group.project.code }}</span>
+            }
+            <span class="faint small">{{ group.scripts.length }} roteiro(s)</span>
+            <div class="grow"></div>
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm"
+              (click)="scriptModal.set({ project: group.project }); newScriptTitle.set(''); $event.stopPropagation()"
+            >
+              + Roteiro
+            </button>
+          </header>
+
+          @if (openProjectId() !== group.project.id) {
+            <div class="cards">
+              @for (s of group.scripts; track s.id) {
+                <article class="card script-card" [style.--ring]="meta(s.localStatus).color">
+                  <div class="row" style="justify-content: space-between">
+                    @if (canAssign()) {
+                      <select
+                        class="status-select"
+                        [ngModel]="s.localStatus"
+                        [style.--c]="meta(s.localStatus).color"
+                        (change)="changeStatus(s, $event)"
+                        (click)="$event.stopPropagation()"
+                      >
+                        @for (opt of statuses; track opt.value) {
+                          <option [value]="opt.value">{{ opt.label }}</option>
+                        }
+                      </select>
+                    } @else {
+                      <span class="pill" [style]="pillStyle(s.localStatus)">
+                        {{ meta(s.localStatus).label }}
+                      </span>
+                    }
+                  </div>
+
+                  <a class="title truncate" [routerLink]="['/editor', s.id]">{{ s.title }}</a>
+                  <p class="faint small">{{ s.createdAt | date: "dd/MM/yyyy" }} · v{{ s.version }}</p>
+
+                  <footer class="row" style="gap: 0.25rem">
+                    <a class="btn btn-secondary btn-sm grow" [routerLink]="['/editor', s.id]">Abrir editor</a>
+                    <a class="btn btn-primary btn-sm" [routerLink]="['/tp', s.id]" title="Teleprompter">
+                      TP
+                    </a>
+                    <button type="button" class="icon-btn danger" title="Excluir"
+                            (click)="deleteTarget.set(s)">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+                    </button>
+                  </footer>
+                </article>
+              }
+            </div>
+          }
+        </section>
+      }
+    }
+  }
+
+  @if (loading()) {
+    <div class="skeleton-grid">
+      @for (i of [1, 2, 3, 4, 5, 6]; track i) {
+        <div class="skeleton" style="height: 8.5rem"></div>
+      }
+    </div>
+  }
+
+  <!-- Modal novo projeto -->
+  <app-modal [(open)]="showNewProject" title="Criar Novo Projeto">
+    <label class="field-label" for="pj-name">Nome</label>
+    <input id="pj-name" class="input" [(ngModel)]="newProjectName" placeholder="Ex.: Curso de Eletrônica" />
+    <label class="field-label" for="pj-code">Código (opcional)</label>
+    <input id="pj-code" class="input mono" [(ngModel)]="newProjectCode" placeholder="Gerado automaticamente" />
+    <div footer style="display: contents">
+      <button type="button" class="btn btn-secondary" (click)="showNewProject.set(false)">Cancelar</button>
+      <button type="button" class="btn btn-primary" [disabled]="saving() || !newProjectName().trim()" (click)="createProject()">
+        {{ saving() ? 'Criando…' : 'Criar Projeto' }}
+      </button>
+    </div>
+  </app-modal>
+
+  <!-- Modal novo roteiro -->
+  @if (scriptModal(); as target) {
+    <app-modal [open]="true" (openChange)="scriptModal.set(null)" [title]="'Novo roteiro — ' + target.project.name">
+      <label class="field-label" for="sc-title">Título</label>
+      <input id="sc-title" class="input" [(ngModel)]="newScriptTitle" placeholder="Roteiro Inicial" />
+      <div footer style="display: contents">
+        <button type="button" class="btn btn-secondary" (click)="scriptModal.set(null)">Cancelar</button>
+        <button type="button" class="btn btn-primary" [disabled]="saving()" (click)="createScript()">
+          {{ saving() ? 'Criando…' : 'Criar e abrir editor' }}
+        </button>
+      </div>
+    </app-modal>
+  }
+
+  <!-- Modal excluir -->
+  @if (deleteTarget(); as target) {
+    <app-modal [open]="true" (openChange)="deleteTarget.set(null)" title="Excluir roteiro">
+      <p>
+        Tem certeza que deseja excluir <strong>“{{ target.title }}”</strong>? Esta ação não pode ser desfeita.
+      </p>
+      <div footer style="display: contents">
+        <button type="button" class="btn btn-secondary" (click)="deleteTarget.set(null)">Cancelar</button>
+        <button type="button" class="btn btn-danger" [disabled]="saving()" (click)="confirmDelete()">
+          {{ saving() ? 'Excluindo…' : 'Excluir' }}
+        </button>
+      </div>
+    </app-modal>
+  }
+</div>

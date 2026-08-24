@@ -1,0 +1,156 @@
+:host { display: block; height: 100dvh; background: #000; color: #fff; }
+
+.tp { position: relative; height: 100%; outline: none; }
+
+.center-msg {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: #9ca3b5;
+}
+
+/* ---------- Área de rolagem ---------- */
+.scroll-view {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar { display: none; }
+
+  .text {
+    padding: 45vh 12vw 60vh;
+    font-weight: 700;
+    line-height: 1.45;
+    text-align: center;
+    letter-spacing: 0.01em;
+    white-space: pre-wrap;
+  }
+
+  &.mirrored { transform: scaleX(-1); }
+}
+
+.end-space { height: 30vh; }
+
+/* ---------- Barras flutuantes ---------- */
+.bar {
+  position: absolute;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.4375rem 0.625rem;
+  border-radius: 999px;
+  background: rgb(20 22 34 / 0.82);
+  backdrop-filter: blur(6px);
+  box-shadow: var(--shadow-md);
+  max-width: calc(100vw - 2rem);
+
+  &.top { top: 0.875rem; width: min(46rem, calc(100vw - 2rem)); }
+  &.bottom { bottom: 0.875rem; flex-wrap: nowrap; }
+}
+
+.title { font-weight: 700; font-size: 0.8438rem; opacity: 0.85; max-width: 18rem; }
+.grow { flex: 1; }
+
+.chip-btn {
+  border: 1px solid rgb(255 255 255 / 0.16);
+  background: transparent;
+  color: #dfe2ec;
+  border-radius: 999px;
+  padding: 0.28125rem 0.6875rem;
+  font-size: 0.7813rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover { background: rgb(255 255 255 / 0.08); }
+  &.on { background: #6161ff; border-color: #6161ff; color: #fff; }
+}
+
+.play-btn {
+  width: 2.375rem;
+  height: 2.375rem;
+  border-radius: 999px;
+  border: 0;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: #fff;
+  background: linear-gradient(135deg, #6161ff, #a25ddc);
+
+  &:hover { filter: brightness(1.12); }
+}
+
+.ctrl {
+  display: flex;
+  align-items: center;
+  gap: 0.4375rem;
+
+  .lbl { font-size: 0.7188rem; font-weight: 700; color: #9ca3b5; text-transform: uppercase; letter-spacing: 0.04em; }
+  .val { font-size: 0.7813rem; font-weight: 700; min-width: 2.25rem; }
+
+  input[type='range'] {
+    accent-color: #6161ff;
+    width: 8.75rem;
+    cursor: pointer;
+  }
+}
+
+.record-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.46875rem 1rem;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  background: linear-gradient(135deg, #e2445c, #c4354d);
+
+  &:hover { filter: brightness(1.1); }
+}
+
+.feedback {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #00c875;
+  white-space: nowrap;
+}
+
+.chip-btn.accent {
+  background: rgb(97 97 255 / 0.25);
+  border-color: rgb(97 97 255 / 0.6);
+  color: #c9c9ff;
+
+  &:hover { background: rgb(97 97 255 / 0.4); }
+}
+
+/* ---------- Janela espelho ---------- */
+.mirror-badge {
+  position: absolute;
+  top: 0.75rem;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 10;
+  font-size: 0.6563rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: rgb(255 255 255 / 0.35);
+  user-select: none;
+}
+
+.mirror-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.875rem;
+  z-index: 10;
+  color: rgb(255 255 255 / 0.4);
+  font-size: 1.5rem;
+  line-height: 1;
+  text-decoration: none;
+
+  &:hover { color: #fff; }
+}

@@ -1,0 +1,75 @@
+<div class="page">
+  <header class="page-head">
+    <div>
+      <h1>Perfil</h1>
+      <p class="sub">Suas informações, permissões e workspaces</p>
+    </div>
+  </header>
+
+  <div class="cols">
+    <!-- Identidade + edição -->
+    <section class="card panel">
+      @if (auth.user(); as u) {
+        <div class="identity">
+          <div class="big-avatar">{{ initials() }}</div>
+          <div>
+            <h2>{{ u.displayName }}</h2>
+            <p class="muted">{{ u.email }}</p>
+            <span class="tag" style="margin-top: 0.25rem">{{ u.role }}</span>
+          </div>
+        </div>
+
+        <hr />
+
+        <label class="field-label" for="pf-name">Nome de exibição</label>
+        <div class="row">
+          <input id="pf-name" class="input" [(ngModel)]="displayName" />
+          <button type="button" class="btn btn-primary" [disabled]="saving()" (click)="saveName()">
+            {{ saving() ? 'Salvando…' : 'Salvar' }}
+          </button>
+        </div>
+        @if (message(); as m) {
+          <p class="msg" [class.msg-ok]="m.ok" [class.msg-err]="!m.ok">{{ m.text }}</p>
+        }
+      }
+    </section>
+
+    <!-- Permissões + Workspaces -->
+    <div style="display: grid; gap: 1rem; align-content: start">
+      @if (auth.user(); as u) {
+        <section class="card panel">
+          <h3 class="panel-title">Função &amp; Permissões</h3>
+          <ul class="perm-list">
+            @for (p of perms; track p.key) {
+              <li>
+                {{ p.label }}
+                <span class="state" [class.on]="has(p.key)" [class.off]="!has(p.key)">
+                  {{ has(p.key) ? 'Ativo' : 'Inativo' }}
+                </span>
+              </li>
+            }
+          </ul>
+        </section>
+
+        <section class="card panel">
+          <h3 class="panel-title">Workspaces</h3>
+          @if (workspaces().length === 0) {
+            <p class="muted small">Você ainda não tem nenhum workspace.</p>
+          } @else {
+            <ul class="ws-list">
+              @for (ws of workspaces(); track ws.id) {
+                <li>
+                  <strong>{{ ws.name }}</strong>
+                  <span class="faint mono small">{{ ws.id }}</span>
+                  @if (ws.id === u.workspaceId) {
+                    <span class="pill ws-active">Ativo</span>
+                  }
+                </li>
+              }
+            </ul>
+          }
+        </section>
+      }
+    </div>
+  </div>
+</div>

@@ -118,6 +118,17 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("frontend");
+
+// ---- Site estático: hub (/) + SPA Angular (/app) ----
+// O build do Angular é copiado para wwwroot/app pelo script build-frontend
+// (ou manualmente: ng build --output-path ../backend/src/Teleprompt.Api/wwwroot/app --base-href /app/).
+var wwwroot = Path.Combine(builder.Environment.ContentRootPath, "wwwroot");
+if (Directory.Exists(wwwroot))
+{
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+}
+
 app.UseMiddleware<WorkspaceContextMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -125,6 +136,10 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapHub<ScriptHub>("/hubs/script");
 app.MapHub<TpHub>("/hubs/tp");
+
+// Fallback da SPA Angular em /app/** (rotas de cliente, ex.: /app/editor/123).
+if (Directory.Exists(Path.Combine(wwwroot, "app")))
+    app.MapFallbackToFile("/app/{*path}", Path.Combine("app", "index.html"));
 
 // Migrações + RLS + seed no startup (ambiente controlado).
 using (var scope = app.Services.CreateScope())

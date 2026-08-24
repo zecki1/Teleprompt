@@ -1,0 +1,77 @@
+<div class="login-wrap">
+  <div class="login-card">
+    <header class="brand">
+      <div class="brand-mark">TP</div>
+      <h1>Teleprompt</h1>
+      <p class="subtitle">
+        {{
+          isRegister ? 'Crie sua conta para começar' : 'Acesse sua conta'
+        }}
+      </p>
+    </header>
+
+    @if (error()) {
+      <div class="alert" role="alert">{{ error() }}</div>
+    }
+
+    <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+      @if (isRegister) {
+        <label class="field">
+          <span>Nome</span>
+          <input
+            type="text"
+            formControlName="displayName"
+            placeholder="Seu nome"
+            autocomplete="name"
+          />
+        </label>
+      }
+
+      <label class="field">
+        <span>E-mail</span>
+        <input
+          type="email"
+          formControlName="email"
+          placeholder="voce@exemplo.com"
+          autocomplete="email"
+          required
+        />
+      </label>
+
+      <label class="field">
+        <span>Senha</span>
+        <input
+          type="password"
+          formControlName="password"
+          placeholder="••••••••"
+          autocomplete="{{ isRegister ? 'new-password' : 'current-password' }}"
+          required
+        />
+      </label>
+
+      <button class="primary" type="submit" [disabled]="submitting()">
+        @if (submitting()) {
+          Entrando…
+        } @else if (isRegister) {
+          Criar conta
+        } @else {
+          Entrar
+        }
+      </button>
+    </form>
+
+    <footer class="switch">
+      @if (isRegister) {
+        Já tem conta?
+        <button type="button" class="link" (click)="toggleMode()">Entrar</button>
+      } @else {
+        Não tem conta?
+        <button type="button" class="link" (click)="toggleMode()">
+          Criar agora
+        </button>
+      }
+    </footer>
+
+    <p class="hint">Usuário demo: demo&#64;teleprompt.app / Demo&#64;12345</p>
+  </div>
+</div>

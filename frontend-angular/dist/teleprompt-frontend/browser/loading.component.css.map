@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["angular:styles/component:css;8472f5066ff40b86753c821bd5153972a110d514a298a78236158119143b5610;C:/Users/zecki/OneDrive/Documentos/workspace/senai/Teleprompt/frontend-angular/src/app/shared/components/loading/loading.component.ts"],
+  "sourcesContent": ["\n    .loading-overlay {\n      position: fixed; top: 0; left: 0; width: 100%; height: 100%;\n      background: rgba(0,0,0,0.7); display: flex; justify-content: center;\n      align-items: center; z-index: 9999;\n    }\n    .loading-spinner { text-align: center; }\n    .spinner {\n      width: 40px; height: 40px; border: 4px solid #333;\n      border-top-color: #e94560; border-radius: 50%;\n      animation: spin 1s linear infinite; margin: 0 auto 1rem;\n    }\n    @keyframes spin { to { transform: rotate(360deg); } }\n    p { color: #ccc; }\n  "],
+  "mappings": ";AACI,CAAC;AACC,YAAU;AAAO,OAAK;AAAG,QAAM;AAAG,SAAO;AAAM,UAAQ;AACvD,cAAY,KAAK,CAAC,EAAC,CAAC,EAAC,CAAC,EAAC;AAAM,WAAS;AAAM,mBAAiB;AAC7D,eAAa;AAAQ,WAAS;AAChC;AACA,CAAC;AAAkB,cAAY;AAAQ;AACvC,CAAC;AACC,SAAO;AAAM,UAAQ;AAAM,UAAQ,IAAI,MAAM;AAC7C,oBAAkB;AAAS,iBAAe;AAC1C,aAAW,KAAK,GAAG,OAAO;AAAU,UAAQ,EAAE,KAAK;AACrD;AACA,WAFa;AAEK;AAAK,eAAW,OAAO;AAAS;AAAE;AACpD;AAAI,SAAO;AAAM;",
+  "names": []
+}

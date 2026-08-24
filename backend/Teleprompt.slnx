@@ -4,6 +4,7 @@
     <Project Path="src/Teleprompt.Application/Teleprompt.Application.csproj" />
     <Project Path="src/Teleprompt.Domain/Teleprompt.Domain.csproj" />
     <Project Path="src/Teleprompt.Infrastructure/Teleprompt.Infrastructure.csproj" />
+    <Project Path="src/Teleprompt.Migration/Teleprompt.Migration.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Teleprompt.Tests/Teleprompt.Tests.csproj" />

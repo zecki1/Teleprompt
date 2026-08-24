@@ -1,0 +1,63 @@
+<div class="page">
+  <header class="page-head">
+    <div>
+      <h1>Atividades</h1>
+      <p class="sub">Últimas {{ rows().length }} atividades registradas</p>
+    </div>
+    <button type="button" class="btn btn-secondary" (click)="load()">↻ Atualizar</button>
+  </header>
+
+  @if (error()) {
+    <div class="alert-error" style="margin-bottom: 1rem">{{ error() }}</div>
+  }
+
+  <section class="card filters">
+    <input
+      class="input"
+      style="max-width: 18rem"
+      type="search"
+      placeholder="Buscar por usuário, roteiro…"
+      [ngModel]="search()"
+      (ngModelChange)="search.set($event)"
+    />
+    <select class="select" style="max-width: 13rem" [ngModel]="action()" (ngModelChange)="action.set($event)">
+      <option value="">Todas as ações</option>
+      @for (a of actions; track a.key) {
+        <option [value]="a.key">{{ a.label }}</option>
+      }
+    </select>
+  </section>
+
+  @if (loading()) {
+    <div class="timeline card" style="padding: 1rem">
+      @for (i of [1, 2, 3, 4, 5]; track i) {
+        <div class="skeleton" style="height: 2.75rem; margin-bottom: 0.5rem"></div>
+      }
+    </div>
+  } @else if (rows().length === 0) {
+    <div class="empty-state">
+      <h3>Nenhuma atividade encontrada</h3>
+      <p>As ações da equipe aparecerão aqui conforme o sistema for usado.</p>
+    </div>
+  } @else {
+    <ol class="timeline card">
+      @for (r of rows(); track r.id) {
+        <li class="entry">
+          <span class="dot" [style.background]="r.action.color"></span>
+          <div class="grow">
+            <p class="line">
+              <strong>{{ r.userName }}</strong>
+              <span class="muted">· {{ r.action.label.toLowerCase() }}</span>
+              @if (r.targetTitle) {
+                — “{{ r.targetTitle }}”
+              } @else {
+                <span class="muted small truncate-inline">{{ r.description }}</span>
+              }
+            </p>
+            <p class="faint small">{{ r.createdAt | date: "dd/MM/yyyy 'às' HH:mm" }}</p>
+          </div>
+        </li>
+      }
+    </ol>
+  }
+</div>

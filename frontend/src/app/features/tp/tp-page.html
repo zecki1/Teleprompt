@@ -1,0 +1,64 @@
+<div class="tp" tabindex="0" (keydown)="onKeydown($event)">
+  @if (loading()) {
+    <div class="center-msg">Carregando…</div>
+  } @else if (error()) {
+    <div class="center-msg">{{ error() }}</div>
+  } @else if (script(); as s) {
+    <div class="scroll-view" [class.mirrored]="mirrored()" [style.font-size.rem]="fontSize()">
+      <div class="text">
+        <p>{{ s.content || 'Este roteiro está vazio. Abra no editor para escrever o conteúdo.' }}</p>
+        <div class="end-space"></div>
+      </div>
+    </div>
+
+    @if (!isMirror) {
+      <!-- ====== JANELA MASTER (controlador) ====== -->
+      <header class="bar top">
+        <a routerLink="/dashboard" class="chip-btn" title="Voltar ao dashboard">← Sair</a>
+        <span class="title truncate">{{ s.title }}</span>
+        <div class="grow"></div>
+        <button type="button" class="chip-btn" [class.on]="mirrored()" (click)="mirrored.set(!mirrored())"
+                title="Espelhar nesta janela (M)">⇄ Espelho</button>
+        <button type="button" class="chip-btn accent" (click)="openMirror()"
+                title="Abre uma janela espelhada para a tela do teleprompter, sincronizada em tempo real">
+          ⧉ Abrir janela espelhada
+        </button>
+        <button type="button" class="chip-btn" (click)="toggleFullscreen()" title="Tela cheia (F)">⛶</button>
+      </header>
+
+      <footer class="bar bottom">
+        <button type="button" class="play-btn" (click)="togglePlay()" [class.playing]="playing()">
+          {{ playing() ? '❚❚' : '▶' }}
+        </button>
+
+        <div class="ctrl">
+          <span class="lbl">Velocidade</span>
+          <input type="range" min="0.2" max="5" step="0.1" [value]="speed()"
+                 (input)="speed.set(+$any($event.target).value); broadcastState()" />
+          <span class="val">{{ speed().toFixed(1) }}×</span>
+        </div>
+
+        <div class="ctrl">
+          <span class="lbl">Fonte</span>
+          <button type="button" class="chip-btn" (click)="decFont()">A−</button>
+          <button type="button" class="chip-btn" (click)="incFont()">A+</button>
+        </div>
+
+        <button type="button" class="chip-btn" (click)="resetScroll()">↺ Início</button>
+
+        <div class="grow"></div>
+
+        @if (recordedFeedback()) {
+          <span class="feedback">{{ recordedFeedback() }}</span>
+        }
+        <button type="button" class="record-btn" (click)="markRecorded()">
+          ● Marcar como gravado
+        </button>
+      </footer>
+    } @else {
+      <!-- ====== JANELA ESPELHO (tela do teleprompter) ====== -->
+      <div class="mirror-badge">ESPELHO · controlado pela outra janela</div>
+      <a routerLink="/dashboard" class="mirror-close" title="Fechar espelho">×</a>
+    }
+  }
+</div>
