@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+    networks:
+      - teleprompt-network
+
+  frontend:
+    build:
+      context: ./frontend-angular
+      dockerfile: docker/Dockerfile
+    ports:
+      - "4200:80"
+    depends_on:
+      - backend
+    networks:
+      - teleprompt-network
+
+networks:
+  teleprompt-network:
+    driver: bridge
