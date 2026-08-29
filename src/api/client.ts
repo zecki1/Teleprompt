@@ -344,7 +344,7 @@ async function firestoreRequest<T>(
     if (method === "GET") {
       const params = new URLSearchParams(pathStr.split("?")[1] || "");
       let q = query(colRef);
-      q = applyWhereClauses(q, params);
+      q = applyWhereClauses(q, params) as typeof q;
       q = query(q, orderBy("createdAt", "desc"));
       const limitVal = params.get("limit") || params.get("pageSize");
       if (limitVal) q = query(q, fbLimit(Number(limitVal)));
