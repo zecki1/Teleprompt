@@ -46,5 +46,7 @@ DEPLOY-VPS.md
 # chaves / segredos Firebase (nunca commitar)
 secrets/
 *-firebase-adminsdk-*.json
+# banco SQLite do compose (volume ./,data)
+/data
 # banco dev SQLite (local)
 **/teleprompt-dev.db

@@ -13,6 +13,8 @@ services:
       # CORS: origens EXATAS dos 3 frontends na Vercel (separadas por ;).
       # Troque logo após criar os projetos na Vercel (use os domínios de produção).
       - Cors__Origins=https://next.teleprompt.zecki1.com.br;https://angular22.teleprompt.zecki1.com.br;https://angular17.teleprompt.zecki1.com.br
+      # SQLite persistente fora do container (os dados não podem morrer em rebuild).
+      - ConnectionStrings__DefaultConnection=Data Source=/app/data/teleprompt-dev.db
       # Firebase (Firestore) — importa os dados existentes no boot (idempotente).
       # Coloque a service account JSON em ./secrets/firebase-service-account.json e
       # defina o ProjectId abaixo; se omitido, o sync fica desativado.
@@ -21,3 +23,4 @@ services:
       - Firebase__AutoImport=true
     volumes:
       - ./secrets:/app/secrets:ro
+      - ./data:/app/data
