@@ -1,0 +1,16 @@
+node_modules
+.next
+out
+.git
+backend
+frontend
+frontend-angular
+chooser
+deploy
+secrets
+data
+coverage
+tests
+*.db
+.env*
+*-firebase-adminsdk-*.json

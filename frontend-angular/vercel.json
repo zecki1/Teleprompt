@@ -1,9 +1,5 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "angular",
-  "buildCommand": "npm run build:prod",
-  "outputDirectory": "dist/teleprompt-frontend/browser",
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+  "buildCommand": "ng build --configuration production",
+  "outputDirectory": "dist/teleprompt-frontend/browser"
 }
