@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useTheme } from "next-themes";
 import { Sun, Moon, Info, LogOut, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Eye, UserCog, Wrench } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getKnownAccounts, removeKnownAccount } from "@/lib/account-storage";
@@ -40,7 +41,7 @@ const ThemeSwitcher = () => {
 };
 
 export default function LoginPage() {
-  const { user, loading, joinWorkspace } = useAuth();
+  const { user, loading, joinWorkspace, setDemoView } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectPath = searchParams.get("redirect") || "/dashboard";
@@ -174,12 +175,44 @@ export default function LoginPage() {
                 )}
               </AnimatePresence>
             </CardContent>
-            <CardFooter className="flex justify-center text-sm pb-8 pt-4">
-              {isSignup ? (
-                <p>Já tem uma conta? <button onClick={() => setIsSignup(false)} className="font-semibold text-primary hover:underline">Faça o login</button></p>
-              ) : (
-                <p>Não tem uma conta? <button onClick={() => setIsSignup(true)} className="font-semibold text-primary hover:underline">Cadastre-se</button></p>
-              )}
+            <CardFooter className="pb-6 pt-4">
+              <div className="w-full flex flex-col items-center gap-3">
+                <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
+                  <Eye className="h-3 w-3" /> Quer ver como é?
+                </div>
+                <div className="grid grid-cols-2 gap-2 w-full">
+                  <Button
+                    variant="outline"
+                    className="gap-2"
+                    onClick={() => {
+                      setDemoView("admin");
+                      router.push("/dashboard");
+                    }}
+                  >
+                    <UserCog className="h-4 w-4" /> Ver como Admin
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="gap-2"
+                    onClick={() => {
+                      setDemoView("tecnico");
+                      router.push("/dashboard");
+                    }}
+                  >
+                    <Wrench className="h-4 w-4" /> Ver como Técnico
+                  </Button>
+                </div>
+                <p className="text-[10px] text-muted-foreground/70 text-center leading-snug">
+                  Apenas uma visualização de demonstração — nenhum dado real é criado ou alterado.
+                </p>
+                <p className="text-center text-sm">
+                  {isSignup ? (
+                    <>Já tem uma conta? <button onClick={() => setIsSignup(false)} className="font-semibold text-primary hover:underline">Faça o login</button></>
+                  ) : (
+                    <>Não tem uma conta? <button onClick={() => setIsSignup(true)} className="font-semibold text-primary hover:underline">Cadastre-se</button></>
+                  )}
+                </p>
+              </div>
             </CardFooter>
           </Card>
         </div>

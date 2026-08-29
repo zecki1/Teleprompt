@@ -20,6 +20,7 @@ const PROTECTED_ROUTES = [
 ];
 
 const TOKEN_COOKIE = "tp_token";
+const DEMO_COOKIE = "tp_demo";
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -30,8 +31,9 @@ export function middleware(request: NextRequest) {
   }
 
   const token = request.cookies.get(TOKEN_COOKIE)?.value;
+  const demoView = request.cookies.get(DEMO_COOKIE)?.value;
   const isProtected = PROTECTED_ROUTES.some((route) => pathname.startsWith(route));
-  if (isProtected && !token) {
+  if (isProtected && !token && !(demoView === "admin" || demoView === "tecnico")) {
     const loginUrl = new URL("/login", request.url);
     if (pathname !== "/login") loginUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(loginUrl);

@@ -1,25 +1,94 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
+import { Store } from '@ngrx/store';
 import { Observable, tap, catchError, throwError } from 'rxjs';
 import { environment } from '@env/environment';
-import { User, AuthResponse, LoginRequest, RegisterRequest } from '../models/user.model';
+import { User, AuthResponse, LoginRequest, RegisterRequest, Role, UserStatus } from '../models/user.model';
+import * as AuthActions from '@store/auth/auth.actions';
+
+export type DemoView = 'admin' | 'tecnico';
+
+const DEMO_VIEW_KEY = 'tp_demo_view';
+
+function readStoredDemo(): DemoView | null {
+  try {
+    const v = localStorage.getItem(DEMO_VIEW_KEY);
+    return v === 'admin' || v === 'tecnico' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Usuário sintético da visualização demo (não toca o backend). */
+function demoUser(view: DemoView): User {
+  const admin = view === 'admin';
+  return {
+    id: `demo-${view}`,
+    email: 'demo@teleprompt.app',
+    displayName: admin ? 'Demonstração — Admin' : 'Demonstração — Técnico',
+    role: admin ? Role.SuperAdmin : Role.Tecnico,
+    isSuperAdmin: admin,
+    canManagePermissions: admin,
+    canCollaborate: true,
+    isEditor: true,
+    isRevisor: admin,
+    canRevert: admin,
+    canViewAdmin: admin,
+    canViewReports: admin,
+    canViewActivityHistory: admin,
+    canViewDebugLogs: admin,
+    canAssign: admin,
+    requiresChecklist: !admin,
+    status: UserStatus.Active,
+    avatarUrl: '',
+  };
+}
 
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly currentUser = signal<User | null>(null);
   private readonly token = signal<string | null>(null);
   private readonly isLoading = signal<boolean>(false);
+  private readonly demo = signal<DemoView | null>(readStoredDemo());
 
-  readonly user = this.currentUser.asReadonly();
-  readonly isAuthenticated = computed(() => !!this.token());
+  readonly user = computed<User | null>(() => {
+    const view = this.demo();
+    return view ? demoUser(view) : this.currentUser();
+  });
+  readonly isDemo = computed(() => this.demo() !== null);
+  readonly demoView = this.demo.asReadonly();
+  readonly isAuthenticated = computed(() => !!this.token() || !!this.demo());
   readonly loading = this.isLoading.asReadonly();
 
   constructor(
     private http: HttpClient,
-    private router: Router
+    private router: Router,
+    private store: Store
   ) {
     this.loadFromStorage();
+  }
+
+  /** Entra na visualização demo como admin/técnico (sem conta). */
+  startDemo(view: DemoView): void {
+    this.demo.set(view);
+    try {
+      localStorage.setItem(DEMO_VIEW_KEY, view);
+    } catch {
+      // ignore
+    }
+    this.store.dispatch(AuthActions.loadUserSuccess({ user: demoUser(view) }));
+  }
+
+  /** Sai da visualização demo. */
+  exitDemo(): void {
+    this.demo.set(null);
+    try {
+      localStorage.removeItem(DEMO_VIEW_KEY);
+    } catch {
+      // ignore
+    }
+    this.store.dispatch(AuthActions.logout());
   }
 
   loadFromStorage(): void {
@@ -63,8 +132,10 @@ export class AuthService {
     localStorage.removeItem(environment.jwt.tokenKey);
     localStorage.removeItem(environment.jwt.refreshTokenKey);
     localStorage.removeItem('teleprompt_user');
+    localStorage.removeItem(DEMO_VIEW_KEY);
     this.token.set(null);
     this.currentUser.set(null);
+    this.demo.set(null);
     this.router.navigate(['/auth/login']);
   }
 
@@ -92,7 +163,7 @@ export class AuthService {
   }
 
   hasPermission(permission: keyof User): boolean {
-    const user = this.currentUser();
+    const user = this.user();
     if (!user) return false;
     return !!user[permission];
   }

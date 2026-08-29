@@ -54,29 +54,35 @@ export type DemoView = "admin" | "tecnico" | null;
 
 const DEMO_VIEW_KEY = "tp_demo_view";
 
-/** Aplica a visão demo sobre o usuário real (não muta nada no backend). */
-function computeEffectiveUser(user: ExtendedUser | null, view: DemoView): ExtendedUser | null {
-  if (!user || !view) return user;
-  if (view === "admin") {
-    return {
-      ...user,
-      role: "SuperAdmin" as Role,
-      isSuperAdmin: true,
-      canCollaborate: true,
-      isEditor: true,
-      isRevisor: true,
-      canRevert: true,
-      canViewAdmin: true,
-      canViewReports: true,
-      canViewActivityHistory: true,
-      canViewDebugLogs: true,
-      canAssign: true,
-      requiresChecklist: false,
-    };
+// Cookie lido pelo middleware (Next) para liberar rotas protegidas no demo público.
+const DEMO_COOKIE = "tp_demo";
+
+function writeDemoCookie(view: DemoView) {
+  try {
+    if (view) document.cookie = `${DEMO_COOKIE}=${view}; path=/; max-age=86400; SameSite=Lax`;
+    else document.cookie = `${DEMO_COOKIE}=; path=/; max-age=0`;
+  } catch {
+    // ignore
   }
-  // "tecnico": pode editar e colaborar, sem acesso a admin/relatórios.
-  return {
-    ...user,
+}
+
+/** Sobrescritas de permissões para cada visualização demo. */
+const DEMO_OVERRIDES: Record<Exclude<DemoView, null>, Partial<ExtendedUser>> = {
+  admin: {
+    role: "SuperAdmin" as Role,
+    isSuperAdmin: true,
+    canCollaborate: true,
+    isEditor: true,
+    isRevisor: true,
+    canRevert: true,
+    canViewAdmin: true,
+    canViewReports: true,
+    canViewActivityHistory: true,
+    canViewDebugLogs: true,
+    canAssign: true,
+    requiresChecklist: false,
+  },
+  tecnico: {
     role: "Técnico" as Role,
     isSuperAdmin: false,
     canCollaborate: true,
@@ -89,7 +95,43 @@ function computeEffectiveUser(user: ExtendedUser | null, view: DemoView): Extend
     canViewDebugLogs: false,
     canAssign: false,
     requiresChecklist: true,
+  },
+};
+
+/** Usuário sintético para o preview demo sem conta (não toca o backend). */
+function demoUser(view: Exclude<DemoView, null>): ExtendedUser {
+  const isAdmin = view === "admin";
+  return {
+    uid: `demo-${view}`,
+    email: "demo@teleprompt.app",
+    displayName: isAdmin ? "Demo — Admin" : "Demo — Técnico",
+    name: isAdmin ? "Demo — Admin" : "Demo — Técnico",
+    role: (isAdmin ? "SuperAdmin" : "Técnico") as Role,
+    isSuperAdmin: false,
+    canCollaborate: false,
+    isEditor: false,
+    isRevisor: false,
+    canRevert: false,
+    canViewAdmin: false,
+    canViewReports: false,
+    canViewActivityHistory: false,
+    canViewDebugLogs: false,
+    canAssign: false,
+    status: "active",
+    requiresChecklist: true,
+    avatarUrl: "",
+    photoURL: null,
+    workspaces: [],
   };
+}
+
+/** Aplica a visão demo (não muta nada no backend). */
+function computeEffectiveUser(user: ExtendedUser | null, view: DemoView): ExtendedUser | null {
+  if (view === "admin" || view === "tecnico") {
+    const base = user ?? demoUser(view);
+    return { ...base, ...DEMO_OVERRIDES[view] };
+  }
+  return user;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -372,6 +414,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // ignore
     }
+    writeDemoCookie(null);
     setCurrentWorkspace(null);
     setUserWorkspacesDetailed([]);
     setAllUsers([]);
@@ -471,7 +514,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // ignore
     }
+    writeDemoCookie(view);
   };
+
+  // Mantém o cookie tp_demo em sincronia (inclusive reload com demo salva).
+  useEffect(() => {
+    writeDemoCookie(demoView);
+  }, [demoView]);
 
   const hasPermission = (allowedRoles: Role[]): boolean => {
     if (!user) return false;

@@ -2,7 +2,8 @@ import { Component, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 
-import { AuthStore } from '../../core/auth/auth.store';
+import { AuthStore, DemoView } from '../../core/auth/auth.store';
+import { API_BASE_URL } from '../../core/config';
 
 @Component({
   selector: 'app-login-page',
@@ -14,6 +15,7 @@ export class LoginPage {
   private readonly fb = inject(FormBuilder);
   private readonly auth = inject(AuthStore);
   private readonly router = inject(Router);
+  private readonly apiBase = inject(API_BASE_URL);
 
   protected readonly mode = signal<'login' | 'register'>('login');
   protected readonly submitting = signal(false);
@@ -57,11 +59,16 @@ export class LoginPage {
     }
   }
 
+  protected async enterDemo(view: DemoView): Promise<void> {
+    this.auth.startDemo(view);
+    await this.router.navigate(['/dashboard']);
+  }
+
   private humanize(e: unknown): string {
     const status = (e as { status?: number }).status;
     if (status !== undefined) {
       if (status === 0) {
-        return 'Não foi possível conectar à API. Verifique se o backend está rodando em http://localhost:5026.';
+        return `Não foi possível conectar à API ${this.apiBase}. Verifique a sua internet ou se o backend está no ar.`;
       }
       const serverMsg = (e as { error?: { message?: string } }).error?.message;
       return (

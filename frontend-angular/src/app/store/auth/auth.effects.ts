@@ -4,8 +4,18 @@ import { Actions, createEffect, ofType } from '@ngrx/effects';
 import { of } from 'rxjs';
 import { map, exhaustMap, catchError, tap } from 'rxjs/operators';
 import { AuthService } from '@core/auth/auth.service';
+import { environment } from '@env/environment';
 import { ObservabilityService } from '@core/services/observability.service';
 import * as AuthActions from './auth.actions';
+
+function friendlyAuthError(error: unknown, fallback: string): string {
+  const status = (error as { status?: number }).status;
+  // Erro de rede (status 0/undefined no HttpClient) → mostra a URL real da API.
+  if (status === 0 || status === undefined) {
+    return `Não foi possível conectar à API em ${environment.apiUrl}. Verifique sua internet ou se o backend está no ar.`;
+  }
+  return (error as { error?: { message?: string } }).error?.message || fallback;
+}
 
 @Injectable()
 export class AuthEffects {
@@ -23,7 +33,7 @@ export class AuthEffects {
           catchError(error => {
             this.observability.trackError(error, { context: 'login' });
             return of(AuthActions.loginFailure({
-              error: error.error?.message || 'Erro ao fazer login'
+              error: friendlyAuthError(error, 'Erro ao fazer login')
             }));
           })
         )
@@ -52,7 +62,7 @@ export class AuthEffects {
           catchError(error => {
             this.observability.trackError(error, { context: 'register' });
             return of(AuthActions.registerFailure({
-              error: error.error?.message || 'Erro ao criar conta'
+              error: friendlyAuthError(error, 'Erro ao criar conta')
             }));
           })
         )

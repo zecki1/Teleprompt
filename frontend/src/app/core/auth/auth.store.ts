@@ -1,4 +1,4 @@
-import { inject, Injectable, signal } from '@angular/core';
+import { computed, inject, Injectable, signal } from '@angular/core';
 import { Router } from '@angular/router';
 
 import { AuthService } from '../api/auth.service';
@@ -11,16 +11,64 @@ export type AuthStatus =
   | 'authenticated'
   | 'anonymous';
 
+export type DemoView = 'admin' | 'tecnico';
+
+const DEMO_VIEW_KEY = 'tp_demo_view';
+
+function readStoredDemo(): DemoView | null {
+  try {
+    const v = localStorage.getItem(DEMO_VIEW_KEY);
+    return v === 'admin' || v === 'tecnico' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Usuário sintético da visualização demo (não toca o backend). */
+function demoUser(view: DemoView): UserDto {
+  const admin = view === 'admin';
+  return {
+    id: `demo-${view}`,
+    email: 'demo@teleprompt.app',
+    displayName: admin ? 'Demonstração — Admin' : 'Demonstração — Técnico',
+    role: admin ? 'SuperAdmin' : 'Técnico',
+    isSuperAdmin: admin,
+    canManagePermissions: admin,
+    canCollaborate: true,
+    isEditor: true,
+    isRevisor: admin,
+    canRevert: admin,
+    canViewAdmin: admin,
+    canViewReports: admin,
+    canViewActivityHistory: admin,
+    canViewDebugLogs: admin,
+    canAssign: admin,
+    requiresChecklist: !admin,
+    status: 'active',
+    workspaceId: '',
+  };
+}
+
 @Injectable({ providedIn: 'root' })
 export class AuthStore {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
 
-  private readonly _user = signal<UserDto | null>(null);
+  private readonly _real = signal<UserDto | null>(null);
+  private readonly _demo = signal<DemoView | null>(readStoredDemo());
   private readonly _status = signal<AuthStatus>('idle');
 
-  readonly user = this._user.asReadonly();
-  readonly status = this._status.asReadonly();
+  /** Usuário efetivo: a visualização demo (se ativa) sobrepõe o usuário real. */
+  readonly user = computed<UserDto | null>(() => {
+    const view = this._demo();
+    return view ? demoUser(view) : this._real();
+  });
+  readonly isDemo = computed(() => this._demo() !== null);
+  readonly demoView = this._demo.asReadonly();
+  /** Demo conta como sessão autenticada para os guards. */
+  readonly status = computed<AuthStatus>(() =>
+    this._demo() ? 'authenticated' : this._status(),
+  );
 
   get token(): string | null {
     return getStoredToken();
@@ -35,39 +83,60 @@ export class AuthStore {
     this._status.set('loading');
     try {
       const user = await this.auth.me();
-      this._user.set(user);
+      this._real.set(user);
       this._status.set('authenticated');
     } catch {
       setStoredToken(null);
-      this._user.set(null);
+      this._real.set(null);
       this._status.set('anonymous');
     }
   }
 
   /** Atualiza o usuário em memória (ex.: após editar o perfil). */
   refresh(user: UserDto): void {
-    this._user.set(user);
+    this._real.set(user);
     this._status.set('authenticated');
+  }
+
+  /** Entra na visualização demo como admin/técnico (sem conta). */
+  startDemo(view: DemoView): void {
+    this._demo.set(view);
+    try {
+      localStorage.setItem(DEMO_VIEW_KEY, view);
+    } catch {
+      // ignore
+    }
+  }
+
+  /** Sai da visualização demo. */
+  exitDemo(): void {
+    this._demo.set(null);
+    try {
+      localStorage.removeItem(DEMO_VIEW_KEY);
+    } catch {
+      // ignore
+    }
   }
 
   async login(input: LoginRequest): Promise<void> {
     const res = await this.auth.login(input);
     setStoredToken(res.token);
-    this._user.set(res.user);
+    this._real.set(res.user);
     this._status.set('authenticated');
   }
 
   async register(input: RegisterRequest): Promise<void> {
     const res = await this.auth.register(input);
     setStoredToken(res.token);
-    this._user.set(res.user);
+    this._real.set(res.user);
     this._status.set('authenticated');
   }
 
   async logout(): Promise<void> {
     await this.auth.logout();
+    this.exitDemo();
     setStoredToken(null);
-    this._user.set(null);
+    this._real.set(null);
     this._status.set('anonymous');
     void this.router.navigate(['/login']);
   }

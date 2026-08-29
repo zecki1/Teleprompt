@@ -36,6 +36,11 @@ import { filter } from 'rxjs';
           </nav>
 
           <div class="header-right">
+            @if (authService.isDemo()) {
+              <span class="demo-badge">
+                Demo: {{ authService.demoView() === 'admin' ? 'Admin' : 'Técnico' }}
+              </span>
+            }
             <button class="theme-toggle" (click)="toggleTheme()" [title]="isDark() ? 'Modo claro' : 'Modo escuro'">
               @if (isDark()) {
                 <span class="icon-sun">☀</span>
@@ -222,6 +227,23 @@ import { filter } from 'rxjs';
     .theme-toggle:hover { color: #fff; background: var(--zinc-800); }
     .dark .theme-toggle:hover { color: var(--zinc-900); background: var(--zinc-200); }
     .icon-sun, .icon-moon { font-size: 16px; }
+
+    .demo-badge {
+      font-size: 0.6875rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.25rem 0.625rem;
+      border-radius: 999px;
+      border: 1px solid #7c3aed;
+      color: #a78bfa;
+      background: rgb(124 58 237 / 0.15);
+      white-space: nowrap;
+    }
+    .dark .demo-badge {
+      color: #c4b5fd;
+      background: rgb(139 92 246 / 0.18);
+    }
 
     .user-menu {
       display: flex;
@@ -428,7 +450,7 @@ import { filter } from 'rxjs';
 })
 export class AppComponent implements OnInit {
   private store = inject(Store);
-  private authService = inject(AuthService);
+  protected authService = inject(AuthService);
   private router = inject(Router);
 
   menuOpen = signal(false);

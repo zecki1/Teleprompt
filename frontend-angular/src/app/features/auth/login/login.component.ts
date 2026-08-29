@@ -5,6 +5,7 @@ import { Router, RouterLink } from '@angular/router';
 import { Store } from '@ngrx/store';
 import * as AuthActions from '@store/auth/auth.actions';
 import { selectLoading, selectError } from '@store/auth/auth.selectors';
+import { AuthService, DemoView } from '@core/auth/auth.service';
 
 @Component({
   selector: 'app-login',
@@ -74,6 +75,22 @@ import { selectLoading, selectError } from '@store/auth/auth.selectors';
           }
         </button>
       </form>
+
+      <div class="demo-entry">
+        <span class="demo-label">Quer ver como é?</span>
+        <div class="demo-actions">
+          <button type="button" class="demo-btn" (click)="enterDemo('admin')">
+            Ver como Admin
+          </button>
+          <button type="button" class="demo-btn" (click)="enterDemo('tecnico')">
+            Ver como Técnico
+          </button>
+        </div>
+        <p class="demo-note">
+          Apenas uma visualização de demonstração — nenhum dado real é criado ou
+          alterado.
+        </p>
+      </div>
 
       <div class="auth-footer">
         <p>Não tem uma conta?
@@ -244,6 +261,45 @@ import { selectLoading, selectError } from '@store/auth/auth.selectors';
 
     .font-semibold { font-weight: 600; }
 
+    .demo-entry {
+      text-align: center;
+      padding: 1rem 1.5rem 0;
+    }
+    .demo-label {
+      display: block;
+      font-size: 0.6875rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted-foreground);
+      margin-bottom: 0.625rem;
+    }
+    .demo-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+    .demo-btn {
+      border: 1px solid var(--primary);
+      background: color-mix(in srgb, var(--primary) 10%, transparent);
+      color: var(--primary);
+      border-radius: 8px;
+      padding: 0.5625rem;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .demo-btn:hover {
+      background: color-mix(in srgb, var(--primary) 18%, transparent);
+    }
+    .demo-note {
+      margin: 0.625rem 0 0;
+      font-size: 0.6875rem;
+      color: var(--muted-foreground);
+      line-height: 1.4;
+    }
+
     @keyframes spin { to { transform: rotate(360deg); } }
   `]
 })
@@ -251,6 +307,7 @@ export class LoginComponent {
   private fb = inject(FormBuilder);
   private store = inject(Store);
   private router = inject(Router);
+  private authService = inject(AuthService);
 
   showPassword = signal(false);
   loading$ = this.store.select(selectLoading);
@@ -260,6 +317,11 @@ export class LoginComponent {
     email: ['', [Validators.required, Validators.email]],
     password: ['', Validators.required]
   });
+
+  enterDemo(view: DemoView): void {
+    this.authService.startDemo(view);
+    this.router.navigate(['/dashboard']);
+  }
 
   onSubmit(): void {
     if (this.loginForm.valid) {

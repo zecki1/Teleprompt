@@ -49,9 +49,19 @@ public class FirebaseSyncService
     public async Task<FirebaseSyncReport> SyncAsync(CancellationToken ct = default)
     {
         if (!_enabled)
+        {
+            _logger.LogWarning("Firebase sync: ignorado (Firebase:ProjectId não configurado ou placeholder). Chave esperada em {KeyPath}",
+                _config["Firebase:ServiceAccountKey"]);
             return new FirebaseSyncReport { Message = "Firebase:ProjectId não configurado — sync ignorado." };
+        }
 
-        ResolveServiceAccount();
+        if (!TryResolveServiceAccount(out string? gacPath))
+        {
+            var err = $"Falha ao encontrar a service account do Firebase. Firebase:ServiceAccountKey={_config["Firebase:ServiceAccountKey"]} (existe={File.Exists(_config["Firebase:ServiceAccountKey"] ?? string.Empty)}), GOOGLE_APPLICATION_CREDENTIALS={Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS")}";
+            _logger.LogError("Firebase sync: {Err}", err);
+            return new FirebaseSyncReport { Message = err };
+        }
+        _logger.LogInformation("Firebase sync: service account resolvida em {GacPath}", gacPath);
 
         FirestoreDb firestore;
         try
@@ -66,15 +76,21 @@ public class FirebaseSyncService
         }
 
         var report = new FirebaseSyncReport { ProjectId = _projectId! };
-        _logger.LogInformation("Firebase sync: conectado em {ProjectId}", _projectId);
+        _logger.LogInformation("Firebase sync: conectado em {ProjectId}. Iniciando importação (workspaces → atividades).", _projectId);
 
         await SyncWorkspacesAsync(firestore, report, ct);
+        _logger.LogInformation("Firebase sync: workspaces {Imported}/{Skipped} → projetos", report.Workspaces, report.WorkspacesSkipped);
         await SyncUsersAsync(firestore, report, ct);
+        _logger.LogInformation("Firebase sync: usuários {Imported}/{Skipped} → projetos", report.Users, report.UsersSkipped);
         await SyncProjectsAsync(firestore, report, ct);
+        _logger.LogInformation("Firebase sync: projetos {Imported}/{Skipped} → scripts", report.Projects, report.ProjectsSkipped);
         await SyncScriptsAsync(firestore, report, ct);
+        _logger.LogInformation("Firebase sync: scripts {Imported}/{Skipped} → subcoleções", report.Scripts, report.ScriptsSkipped);
         await SyncScriptSubcollectionsAsync(firestore, report, ct);
         await SyncTeamsAsync(firestore, report, ct);
+        _logger.LogInformation("Firebase sync: equipes {Imported}/{Skipped} → apresentadores", report.Teams, report.TeamsSkipped);
         await SyncPresentersAsync(firestore, report, ct);
+        _logger.LogInformation("Firebase sync: apresentadores {Imported}/{Skipped} → atividades", report.Presenters, report.PresentersSkipped);
         await SyncActivitiesAsync(firestore, report, ct);
 
         report.Message = "Sincronização concluída (idempotente: itens já importados foram ignorados).";
@@ -82,16 +98,25 @@ public class FirebaseSyncService
         return report;
     }
 
-    private void ResolveServiceAccount()
+    private bool TryResolveServiceAccount(out string? resolvedPath)
     {
-        // Prioridade: Firebase:ServiceAccountKey (caminho local) OU GOOGLE_APPLICATION_CREDENTIALS
-        // já definida no ambiente (Docker/VM). Se nada for configurado, tenta ADC (Google Cloud).
-        var configured = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS");
-        if (!string.IsNullOrWhiteSpace(configured)) return;
-
+        // Prioridade: GOOGLE_APPLICATION_CREDENTIALS já definida OU Firebase:ServiceAccountKey.
+        var envCreds = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS");
         var saPath = _config["Firebase:ServiceAccountKey"];
+        if (!string.IsNullOrWhiteSpace(envCreds))
+        {
+            resolvedPath = envCreds;
+            return true;
+        }
         if (!string.IsNullOrWhiteSpace(saPath) && File.Exists(saPath))
-            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", Path.GetFullPath(saPath));
+        {
+            var full = Path.GetFullPath(saPath);
+            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", full);
+            resolvedPath = full;
+            return true;
+        }
+        resolvedPath = null;
+        return false;
     }
 
     private string? GetString(Dictionary<string, object> data, params string[] keys)

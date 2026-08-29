@@ -134,7 +134,18 @@ export async function httpFetch<T>(
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   };
 
-  let res = await fetch(buildUrl(path), init);
+  const url = buildUrl(path);
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (cause) {
+    // Erro de rede (DNS/DNS/TLS/backend fora): vira mensagem legível com a URL real.
+    throw new ApiError(
+      `Não foi possível conectar à API em ${apiBaseUrl()}. Verifique sua internet ou se o backend está no ar.`,
+      0,
+      { cause: cause instanceof Error ? cause.message : String(cause) },
+    );
+  }
 
   if (res.status === 401 && !skipAuth && !noRefresh) {
     const refreshed = await tryRefresh();

@@ -137,6 +137,12 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapHub<ScriptHub>("/hubs/script");
 app.MapHub<TpHub>("/hubs/tp");
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "ok",
+    time = DateTimeOffset.UtcNow,
+    env = app.Environment.EnvironmentName,
+}));
 
 // Fallback da SPA Angular em /app/** (rotas de cliente, ex.: /app/editor/123).
 if (Directory.Exists(Path.Combine(wwwroot, "app")))
@@ -152,10 +158,20 @@ using (var scope = app.Services.CreateScope())
 
     // Importa os dados existentes do Firebase (idempotente) se configurado.
     // Mantém o Firestore conectado para não perder nada durante a migração .NET.
+    var startupLog = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("FirebaseStartupSync");
+    var saPath = builder.Configuration["Firebase:ServiceAccountKey"];
+    startupLog.LogInformation(
+        "Firebase config: ProjectId={ProjectId} | ServiceAccountKey={KeyPath} (existe={KeyExists}) | GOOGLE_APPLICATION_CREDENTIALS={Gac} | AutoImport={AutoImport}",
+        builder.Configuration["Firebase:ProjectId"],
+        saPath,
+        !string.IsNullOrWhiteSpace(saPath) && File.Exists(saPath),
+        Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS") ?? "(não definida)",
+        builder.Configuration.GetValue("Firebase:AutoImport", true));
+
     var firebaseSync = scope.ServiceProvider.GetRequiredService<FirebaseSyncService>();
+    startupLog.LogInformation("Firebase sync: Enabled={Enabled}", firebaseSync.Enabled);
     if (firebaseSync.Enabled && builder.Configuration.GetValue("Firebase:AutoImport", true))
     {
-        var startupLog = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("FirebaseStartupSync");
         try
         {
             var syncReport = await firebaseSync.SyncAsync();

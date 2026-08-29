@@ -55,6 +55,11 @@
         </div>
       }
       <div class="grow"></div>
+      @if (auth.isDemo()) {
+        <span class="tag demo-tag">
+          Demo: {{ auth.demoView() === 'admin' ? 'Admin' : 'Técnico' }}
+        </span>
+      }
       @if (auth.user(); as u) {
         @if (u.isSuperAdmin || u.canViewAdmin) {
           <span class="tag">Admin</span>
