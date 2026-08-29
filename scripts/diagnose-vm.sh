@@ -28,6 +28,14 @@ echo "================= 5) Certificado ================="
 sudo test -d "/etc/letsencrypt/live/$DOMAIN" && echo "  CERT OK: /etc/letsencrypt/live/$DOMAIN" || echo "  SEM certificado (certbot ainda nao rodou)"
 
 echo
-echo "================= 6) Testes externos ================="
+echo "================= 6) Dados do SQLite (workspaces x projetos) ================="
+if command -v python3 >/dev/null 2>&1; then
+    python3 "$HOME/Teleprompt/scripts/db-stats.py"
+else
+    echo "(python3 indisponivel na VM)"
+fi
+
+echo
+echo "================= 7) Testes externos ================="
 curl -s -o /dev/null -w "  https://$DOMAIN/health -> HTTP %{http_code}\n" --max-time 8 "https://$DOMAIN/health" || echo "  https://$DOMAIN/health  -> SEM RESPOSTA"
 curl -s -o /dev/null -w "  http://$DOMAIN:80      -> HTTP %{http_code}\n" --max-time 8 "http://$DOMAIN/" || echo "  http://$DOMAIN          -> SEM RESPOSTA"
