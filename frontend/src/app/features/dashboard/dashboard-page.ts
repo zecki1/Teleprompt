@@ -262,9 +262,15 @@ export class DashboardPage {
     return `${letters}-${Math.floor(100 + Math.random() * 900)}`;
   }
 
+  private defaultScriptTitle(): string {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `Roteiro Sem Título — ${pad(now.getDate())}/${pad(now.getMonth() + 1)} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  }
+
   protected async createScript(): Promise<void> {
     const target = this.scriptModal();
-    const title = this.newScriptTitle().trim() || 'Roteiro Inicial';
+    const title = this.newScriptTitle().trim() || this.defaultScriptTitle();
     if (!target) return;
     this.saving.set(true);
     try {

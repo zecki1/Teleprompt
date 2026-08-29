@@ -72,22 +72,24 @@
       }
     </footer>
 
-    <div class="demo-entry">
-      <span class="demo-label">Quer ver como é?</span>
-      <div class="demo-actions">
-        <button type="button" class="demo-btn" (click)="enterDemo('admin')">
-          Ver como Admin
-        </button>
-        <button type="button" class="demo-btn" (click)="enterDemo('tecnico')">
-          Ver como Técnico
-        </button>
+    @if (auth.isDemoCustomer()) {
+      <div class="demo-entry">
+        <span class="demo-label">Quer ver como é?</span>
+        <div class="demo-actions">
+          <button type="button" class="demo-btn" (click)="enterDemo('admin')">
+            Ver como Admin
+          </button>
+          <button type="button" class="demo-btn" (click)="enterDemo('tecnico')">
+            Ver como Técnico
+          </button>
+        </div>
+        <p class="hint">
+          Apenas uma visualização de demonstração — nenhum dado real é criado ou
+          alterado.
+        </p>
       </div>
-      <p class="hint">
-        Apenas uma visualização de demonstração — nenhum dado real é criado ou
-        alterado.
-      </p>
-    </div>
 
-    <p class="hint">Usuário demo: demo&#64;teleprompt.app / Demo&#64;12345</p>
+      <p class="hint">Usuário demo: demo&#64;teleprompt.app / Demo&#64;12345</p>
+    }
   </div>
 </div>

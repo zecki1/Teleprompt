@@ -76,21 +76,23 @@ import { AuthService, DemoView } from '@core/auth/auth.service';
         </button>
       </form>
 
-      <div class="demo-entry">
-        <span class="demo-label">Quer ver como é?</span>
-        <div class="demo-actions">
-          <button type="button" class="demo-btn" (click)="enterDemo('admin')">
-            Ver como Admin
-          </button>
-          <button type="button" class="demo-btn" (click)="enterDemo('tecnico')">
-            Ver como Técnico
-          </button>
+      @if (authService.isDemoCustomer()) {
+        <div class="demo-entry">
+          <span class="demo-label">Quer ver como é?</span>
+          <div class="demo-actions">
+            <button type="button" class="demo-btn" (click)="enterDemo('admin')">
+              Ver como Admin
+            </button>
+            <button type="button" class="demo-btn" (click)="enterDemo('tecnico')">
+              Ver como Técnico
+            </button>
+          </div>
+          <p class="demo-note">
+            Apenas uma visualização de demonstração — nenhum dado real é criado ou
+            alterado.
+          </p>
         </div>
-        <p class="demo-note">
-          Apenas uma visualização de demonstração — nenhum dado real é criado ou
-          alterado.
-        </p>
-      </div>
+      }
 
       <div class="auth-footer">
         <p>Não tem uma conta?
@@ -307,7 +309,7 @@ export class LoginComponent {
   private fb = inject(FormBuilder);
   private store = inject(Store);
   private router = inject(Router);
-  private authService = inject(AuthService);
+  protected authService = inject(AuthService);
 
   showPassword = signal(false);
   loading$ = this.store.select(selectLoading);

@@ -13,7 +13,7 @@ import { API_BASE_URL } from '../../core/config';
 })
 export class LoginPage {
   private readonly fb = inject(FormBuilder);
-  private readonly auth = inject(AuthStore);
+  protected readonly auth = inject(AuthStore);
   private readonly router = inject(Router);
   private readonly apiBase = inject(API_BASE_URL);
 

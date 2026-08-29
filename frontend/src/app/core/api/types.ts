@@ -101,6 +101,10 @@ export interface ScriptDto {
   isLocked: boolean;
   lockedBy: string | null;
   version: number;
+  folder: string | null;
+  subfolder: string | null;
+  lesson: string | null;
+  isPlaceholder: boolean;
   createdAt: string;
   updatedAt: string;
 }

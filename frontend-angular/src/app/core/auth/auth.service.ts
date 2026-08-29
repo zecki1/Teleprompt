@@ -58,6 +58,11 @@ export class AuthService {
   });
   readonly isDemo = computed(() => this.demo() !== null);
   readonly demoView = this.demo.asReadonly();
+  /** Visitante anônimo ou conta @teleprompt.app: única parcela com recursos demo. */
+  readonly isDemoCustomer = computed(() => {
+    const real = this.currentUser();
+    return !real || /@teleprompt\.app$/i.test(real.email ?? '');
+  });
   readonly isAuthenticated = computed(() => !!this.token() || !!this.demo());
   readonly loading = this.isLoading.asReadonly();
 
@@ -97,6 +102,7 @@ export class AuthService {
     if (storedToken && storedUser) {
       this.token.set(storedToken);
       this.currentUser.set(JSON.parse(storedUser));
+      this.ensureNoDemoForRealUser();
     }
   }
 
@@ -153,6 +159,7 @@ export class AuthService {
     return this.http.get<User>(`${environment.apiUrl}/auth/me`).pipe(
       tap(user => {
         this.currentUser.set(user);
+        this.ensureNoDemoForRealUser();
         localStorage.setItem('teleprompt_user', JSON.stringify(user));
       })
     );
@@ -181,5 +188,21 @@ export class AuthService {
     localStorage.setItem('teleprompt_user', JSON.stringify(response.user));
     this.token.set(response.token);
     this.currentUser.set(response.user);
+    this.ensureNoDemoForRealUser();
+  }
+
+  /**
+   * Clientes reais fora do domínio da demonstração não herdam uma visão demo
+   * ativa de sessões anteriores.
+   */
+  private ensureNoDemoForRealUser(): void {
+    if (!/@teleprompt\.app$/i.test(this.currentUser()?.email ?? '')) {
+      this.demo.set(null);
+      try {
+        localStorage.removeItem(DEMO_VIEW_KEY);
+      } catch {
+        // ignore
+      }
+    }
   }
 }

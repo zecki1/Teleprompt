@@ -132,9 +132,15 @@ export class ProjectDetailComponent implements OnInit {
 
   createScript(): void {
     const projectId = this.route.snapshot.paramMap.get('id')!;
-    this.api.createScript({ projectId, title: 'Novo Roteiro' }).subscribe({
+    this.api.createScript({ projectId, title: this.defaultScriptTitle() }).subscribe({
       next: script => this.scripts.update(s => [...s, script])
     });
+  }
+
+  private defaultScriptTitle(): string {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const d = new Date();
+    return `Roteiro Sem Título — ${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
   getScriptStatusLabel(status: ScriptStatus): string {

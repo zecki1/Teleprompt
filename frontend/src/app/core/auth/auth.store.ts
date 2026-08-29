@@ -65,6 +65,14 @@ export class AuthStore {
   });
   readonly isDemo = computed(() => this._demo() !== null);
   readonly demoView = this._demo.asReadonly();
+  /**
+   * Cliente de demonstração: visitante anônimo ou conta @teleprompt.app.
+   * Botões "Ver como Admin/Técnico" e visões demo só existem para eles.
+   */
+  readonly isDemoCustomer = computed(() => {
+    const real = this._real();
+    return !real || /@teleprompt\.app$/i.test(real.email ?? '');
+  });
   /** Demo conta como sessão autenticada para os guards. */
   readonly status = computed<AuthStatus>(() =>
     this._demo() ? 'authenticated' : this._status(),
@@ -83,7 +91,7 @@ export class AuthStore {
     this._status.set('loading');
     try {
       const user = await this.auth.me();
-      this._real.set(user);
+      this.applyRealUser(user);
       this._status.set('authenticated');
     } catch {
       setStoredToken(null);
@@ -94,8 +102,19 @@ export class AuthStore {
 
   /** Atualiza o usuário em memória (ex.: após editar o perfil). */
   refresh(user: UserDto): void {
-    this._real.set(user);
+    this.applyRealUser(user);
     this._status.set('authenticated');
+  }
+
+  /**
+   * Aplica um usuário real à sessão. Clientes que não são de demonstração
+   * (ex.: SESI/SENAI) nunca devem herdar uma visualização demo ativa.
+   */
+  private applyRealUser(user: UserDto): void {
+    this._real.set(user);
+    if (!/@teleprompt\.app$/i.test(user.email ?? '')) {
+      this.exitDemo();
+    }
   }
 
   /** Entra na visualização demo como admin/técnico (sem conta). */
@@ -121,14 +140,14 @@ export class AuthStore {
   async login(input: LoginRequest): Promise<void> {
     const res = await this.auth.login(input);
     setStoredToken(res.token);
-    this._real.set(res.user);
+    this.applyRealUser(res.user);
     this._status.set('authenticated');
   }
 
   async register(input: RegisterRequest): Promise<void> {
     const res = await this.auth.register(input);
     setStoredToken(res.token);
-    this._real.set(res.user);
+    this.applyRealUser(res.user);
     this._status.set('authenticated');
   }
 

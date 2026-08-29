@@ -431,7 +431,7 @@ export class ScriptEditorComponent implements OnInit, OnDestroy {
   private createNewScript(projectId: string): void {
     this.api.createScript({
       projectId,
-      title: 'Novo Roteiro',
+      title: this.defaultScriptTitle(),
       content: ''
     }).subscribe({
       next: script => {
@@ -441,6 +441,12 @@ export class ScriptEditorComponent implements OnInit, OnDestroy {
         this.setupRealtime();
       }
     });
+  }
+
+  private defaultScriptTitle(): string {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const d = new Date();
+    return `Roteiro Sem Título — ${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
   private loadScript(): void {
