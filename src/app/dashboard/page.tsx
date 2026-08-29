@@ -443,20 +443,6 @@ function DashboardContent() {
     window.history.replaceState(null, "", newUrl);
   }, [statusFilter, filterCommenter, showConcluded, projectIdFilter, searchQuery]);
 
-  useEffect(() => {
-    if (loadingProjects) return;
-    const savedProjectId = localStorage.getItem("teleprompt_last_project_id");
-    if (!projectIdFilter && savedProjectId) {
-      const projectExists = projects.some(p => p.id === savedProjectId);
-      if (projectExists) {
-        const qs = searchQuery ? `&q=${encodeURIComponent(searchQuery)}` : "";
-        router.replace(`/dashboard?projectId=${savedProjectId}${qs}`);
-      } else {
-        localStorage.removeItem("teleprompt_last_project_id");
-      }
-    }
-  }, [loadingProjects, projectIdFilter, projects, router, searchQuery]);
-
   const loadProjects = useCallback(async () => {
     try {
       const workspaceId = user?.workspaceId || "";
