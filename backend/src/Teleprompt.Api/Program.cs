@@ -155,6 +155,7 @@ using (var scope = app.Services.CreateScope())
     if (builder.Configuration["Database:Provider"] != "Sqlite")
         RlsSetup.Apply(db);
     await SeedData.SeedAsync(scope.ServiceProvider);
+    await SeedExampleData.SeedAsync(scope.ServiceProvider);
 
     // Importa os dados existentes do Firebase (idempotente) se configurado.
     // Mantém o Firestore conectado para não perder nada durante a migração .NET.
