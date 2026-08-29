@@ -8,12 +8,48 @@ services:
     networks:
       - teleprompt-network
 
-  frontend:
+  next:
+    build:
+      context: .
+      dockerfile: Dockerfile.next
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - backend
+    networks:
+      - teleprompt-network
+
+  next-web:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./deploy/next-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - next
+      - backend
+    networks:
+      - teleprompt-network
+
+  frontend-angular:
     build:
       context: ./frontend-angular
       dockerfile: docker/Dockerfile
     ports:
       - "4200:80"
+    depends_on:
+      - backend
+    networks:
+      - teleprompt-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "4201:80"
+    volumes:
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - backend
     networks:

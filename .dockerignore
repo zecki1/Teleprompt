@@ -1,0 +1,10 @@
+.git
+.next
+node_modules
+backend
+frontend
+frontend-angular
+.env*
+*.md
+Dockerfile*
+docker-compose*.yml
