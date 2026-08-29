@@ -13,8 +13,13 @@ curl -s -o /dev/null -w "  /swagger  -> HTTP %{http_code}\n" --max-time 5 http:/
 
 echo
 echo "================= 3) Logs do backend (firebase/sync/erros) ================="
-docker compose -f "$HOME/Teleprompt/docker-compose.api.yml" logs --tail 300 backend 2>&1 \
-  | grep -iE "firebase|sync|error|fail|exception|warn|now listening" | tail -35 || echo "(sem logs ou container parado)"
+if docker compose -f "$HOME/Teleprompt/docker-compose.api.yml" logs --no-color --tail 120 backend 2>&1 \
+  | grep -iE "firebase|sync|workspace|usu|import|listen|error|fail|exception" | tail -40; then
+  :
+else
+  echo "  (nenhuma linha com sync/erro — mostrando fim do log:)"
+  docker compose -f "$HOME/Teleprompt/docker-compose.api.yml" logs --no-color --tail 25 backend 2>&1
+fi
 
 echo
 echo "================= 4) nginx ================="

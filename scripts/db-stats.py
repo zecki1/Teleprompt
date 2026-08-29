@@ -25,8 +25,11 @@ def cols(table):
 
 print("========== WORKSPACES (%s) ==========" % cur.execute(
     "SELECT COUNT(*) FROM Workspaces").fetchone()[0])
-for r in cur.execute("SELECT Id, Code, Name FROM Workspaces ORDER BY Code"):
-    print(f"  {r['Id']}  |  {r['Code'] or '-'}  |  {r['Name']}")
+wcols = cols("Workspaces")
+wsel = [c for c in ("Id", "Code", "Name") if c in wcols]
+order = "Code" if "Code" in wcols else "Id"
+for r in cur.execute(f"SELECT {', '.join(wsel)} FROM Workspaces ORDER BY {order}"):
+    print("  " + " | ".join(str(r[c]) for c in wsel))
 
 print()
 print("========== WORKSPACE_MEMBERS ==========")
