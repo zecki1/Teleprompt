@@ -95,6 +95,7 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddSignalR();
 
 builder.Services.AddScoped<JwtTokenService>();
+builder.Services.AddScoped<FirebaseSyncService>();
 
 builder.Services.AddCors(options =>
 {
@@ -148,6 +149,25 @@ using (var scope = app.Services.CreateScope())
     if (builder.Configuration["Database:Provider"] != "Sqlite")
         RlsSetup.Apply(db);
     await SeedData.SeedAsync(scope.ServiceProvider);
+
+    // Importa os dados existentes do Firebase (idempotente) se configurado.
+    // Mantém o Firestore conectado para não perder nada durante a migração .NET.
+    var firebaseSync = scope.ServiceProvider.GetRequiredService<FirebaseSyncService>();
+    if (firebaseSync.Enabled && builder.Configuration.GetValue("Firebase:AutoImport", true))
+    {
+        var startupLog = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("FirebaseStartupSync");
+        try
+        {
+            var syncReport = await firebaseSync.SyncAsync();
+            startupLog.LogInformation("Firebase startup sync: {Message}", string.IsNullOrWhiteSpace(syncReport.Message)
+                ? syncReport.ToSummary()
+                : syncReport.Message);
+        }
+        catch (Exception ex)
+        {
+            startupLog.LogError(ex, "Firebase startup sync: falha na importação inicial (o boot continua).");
+        }
+    }
 }
 
 app.Run();

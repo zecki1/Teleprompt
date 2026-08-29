@@ -16,8 +16,28 @@ namespace Teleprompt.Api.Controllers;
 public class AdminController : ControllerBase
 {
     private readonly TelepromptDbContext _db;
+    private readonly FirebaseSyncService _firebaseSync;
 
-    public AdminController(TelepromptDbContext db) => _db = db;
+    public AdminController(TelepromptDbContext db, FirebaseSyncService firebaseSync)
+    {
+        _db = db;
+        _firebaseSync = firebaseSync;
+    }
+
+    /// <summary>
+    /// Re-executa a importação dos dados do Firebase (idempotente: nunca sobrescreve
+    /// registros já existentes no SQLite, pois o Id do Firestore é preservado).
+    /// </summary>
+    [HttpPost("firebase/sync")]
+    [Authorize(Policy = PolicyNames.SuperAdmin)]
+    public async Task<ActionResult<FirebaseSyncReport>> FirebaseSync()
+    {
+        if (!_firebaseSync.Enabled)
+            return BadRequest(new FirebaseSyncReport { Message = "Firebase:ProjectId não configurado — sync indisponível." });
+
+        var report = await _firebaseSync.SyncAsync();
+        return Ok(report);
+    }
 
     [HttpGet("debug-logs")]
     [Authorize(Policy = PolicyNames.CanViewDebugLogs)]

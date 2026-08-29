@@ -13,3 +13,11 @@ services:
       # CORS: origens EXATAS dos 3 frontends na Vercel (separadas por ;).
       # Troque logo após criar os projetos na Vercel (use os domínios de produção).
       - Cors__Origins=https://next.teleprompt.zecki1.com.br;https://angular22.teleprompt.zecki1.com.br;https://angular17.teleprompt.zecki1.com.br
+      # Firebase (Firestore) — importa os dados existentes no boot (idempotente).
+      # Coloque a service account JSON em ./secrets/firebase-service-account.json e
+      # defina o ProjectId abaixo; se omitido, o sync fica desativado.
+      - Firebase__ProjectId=teleprompt-1
+      - Firebase__ServiceAccountKey=/app/secrets/firebase-service-account.json
+      - Firebase__AutoImport=true
+    volumes:
+      - ./secrets:/app/secrets:ro

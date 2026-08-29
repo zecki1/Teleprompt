@@ -101,6 +101,16 @@ npm run dev:all
 
 Config de infra: `docker-compose.api.yml` (backend-only), `deploy/api-nginx.conf` (proxy `/api` e `/hubs` → `127.0.0.1:5000`, websockets), `frontend/build-to-backend.sh` (embute build Angular em `wwwroot/app` para o formato legado).
 
+### Integração Firebase → .NET (migração)
+
+O backend conecta ao Firestore para migrar os dados existentes sem perder nada (depois o Firebase deixa de ser usado). O sync é **idempotente** e **automático no boot**:
+
+- Config via `Firebase__ProjectId` (ex.: `teleprompt-1`), `Firebase__ServiceAccountKey` (caminho da service account JSON) e `Firebase__AutoImport` (padrão: `true`). Sem `ProjectId` válido o sync é pulado sem derrubar o boot.
+- Na VM, monte a chave em `./secrets/firebase-service-account.json` (volume `:ro` já previsto no compose). Em dev local pode usar `dotnet user-secrets` ou `appsettings.Development.json`.
+- Importa (por `Id` do doc Firestore, nunca sobrescreve): workspaces, usuários, projetos, scripts (+ subcoleções `versions` e `comments`), times, apresentadores e atividades.
+- Usuários migrados ficam com senha temporária `Migrated@Temp123!` (troca obrigatória no login).
+- Força bruta manual: `POST /api/v1/admin/firebase/sync` (exige `SuperAdmin`).
+
 ---
 
 ## Scripts e Docker

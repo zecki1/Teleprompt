@@ -22,6 +22,8 @@ interface AuthContextType {
   teams: Team[];
   loading: boolean;
   isDataLoading: boolean;
+  demoView: DemoView;
+  setDemoView: (view: DemoView) => void;
   signIn: (email: string, password: string, inviteWorkspaceId?: string) => Promise<void>;
   signUp: (email: string, password: string, name: string, inviteWorkspaceId?: string) => Promise<void>;
   signInWithGoogle: (inviteWorkspaceId?: string) => Promise<void>;
@@ -42,6 +44,53 @@ type Team = {
   members: string[];
   workspaceId?: string;
 };
+
+/**
+ * Visualização de demonstração: simula (apenas na UI) os papéis
+ * "Admin" e "Técnico" para quem quer ver como ficam as duas telas,
+ * sem alterar as permissões reais do usuário no backend.
+ */
+export type DemoView = "admin" | "tecnico" | null;
+
+const DEMO_VIEW_KEY = "tp_demo_view";
+
+/** Aplica a visão demo sobre o usuário real (não muta nada no backend). */
+function computeEffectiveUser(user: ExtendedUser | null, view: DemoView): ExtendedUser | null {
+  if (!user || !view) return user;
+  if (view === "admin") {
+    return {
+      ...user,
+      role: "SuperAdmin" as Role,
+      isSuperAdmin: true,
+      canCollaborate: true,
+      isEditor: true,
+      isRevisor: true,
+      canRevert: true,
+      canViewAdmin: true,
+      canViewReports: true,
+      canViewActivityHistory: true,
+      canViewDebugLogs: true,
+      canAssign: true,
+      requiresChecklist: false,
+    };
+  }
+  // "tecnico": pode editar e colaborar, sem acesso a admin/relatórios.
+  return {
+    ...user,
+    role: "Técnico" as Role,
+    isSuperAdmin: false,
+    canCollaborate: true,
+    isEditor: true,
+    isRevisor: false,
+    canRevert: false,
+    canViewAdmin: false,
+    canViewReports: false,
+    canViewActivityHistory: false,
+    canViewDebugLogs: false,
+    canAssign: false,
+    requiresChecklist: true,
+  };
+}
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -95,7 +144,16 @@ const workspaceToDto = (w: { id: string; name: string; ownerId: string; plan: st
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<ExtendedUser | null>(null);
+  const [realUser, setRealUser] = useState<ExtendedUser | null>(null);
+  const [demoView, setDemoViewState] = useState<DemoView>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const stored = window.localStorage.getItem(DEMO_VIEW_KEY);
+      return stored === "admin" || stored === "tecnico" ? stored : null;
+    } catch {
+      return null;
+    }
+  });
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
   const [userWorkspacesDetailed, setUserWorkspacesDetailed] = useState<Workspace[]>([]);
   const [allUsers, setAllUsers] = useState<ExtendedUser[]>([]);
@@ -117,7 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (cancelled) return;
           if (!fbUser) {
             clearStoredToken();
-            setUser(null);
+            setRealUser(null);
             setLoading(false);
             return;
           }
@@ -125,7 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const dto = await apiMe();
             if (cancelled) return;
             const u = dtoToExtendedUser(dto);
-            setUser(u);
+            setRealUser(u);
             setDebugUserContext(buildDebugContext(u));
             addKnownAccount({
               uid: u.uid,
@@ -155,7 +213,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const dto = await apiMe();
         if (cancelled) return;
         const u = dtoToExtendedUser(dto);
-        setUser(u);
+        setRealUser(u);
         setDebugUserContext(buildDebugContext(u));
         addKnownAccount({
           uid: u.uid,
@@ -175,16 +233,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Carrega workspaces do usuário quando ele muda.
+  // Carrega workspaces do usuário quando ele muda (usa o usuário REAL,
+  // não a visualização demo: dados sempre seguem as permissões reais).
   useEffect(() => {
-    if (!user?.uid) {
+    if (!realUser?.uid) {
       setUserWorkspacesDetailed([]);
       setCurrentWorkspace(null);
       return;
     }
 
-    const workspaceId = user.workspaceId;
-    const isSuperAdmin = user.isSuperAdmin;
+    const workspaceId = realUser.workspaceId;
+    const isSuperAdmin = realUser.isSuperAdmin;
 
     let cancelled = false;
     const loadWorkspaces = async () => {
@@ -238,7 +297,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [user?.uid, user?.workspaceId, user?.isSuperAdmin]);
+  }, [realUser?.uid, realUser?.workspaceId, realUser?.isSuperAdmin]);
 
   const buildDebugContext = (u: ExtendedUser) => ({
     uid: u.uid,
@@ -264,7 +323,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const applySession = (dto: UserDto, token: string) => {
     setStoredToken(token);
     const u = dtoToExtendedUser(dto);
-    setUser(u);
+    setRealUser(u);
     setDebugUserContext(buildDebugContext(u));
     addKnownAccount({
       uid: u.uid,
@@ -306,7 +365,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // stateless: segue mesmo se a API falhar.
     }
     clearStoredToken();
-    setUser(null);
+    setRealUser(null);
+    setDemoViewState(null);
+    try {
+      window.localStorage.removeItem(DEMO_VIEW_KEY);
+    } catch {
+      // ignore
+    }
     setCurrentWorkspace(null);
     setUserWorkspacesDetailed([]);
     setAllUsers([]);
@@ -315,18 +380,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const switchWorkspace = async (workspaceId: string) => {
-    if (!user) return;
-    setUser((prev) => (prev ? { ...prev, workspaceId } : prev));
+    if (!realUser) return;
+    setRealUser((prev) => (prev ? { ...prev, workspaceId } : prev));
     const ws = userWorkspacesDetailed.find((w) => w.id === workspaceId);
     if (ws) setCurrentWorkspace(ws);
     toast.success("Workspace alterado!");
   };
 
   const leaveWorkspace = async () => {
-    if (!user || !user.workspaceId) return;
-    const remaining = userWorkspacesDetailed.filter((w) => w.id !== user.workspaceId);
+    if (!realUser || !realUser.workspaceId) return;
+    const remaining = userWorkspacesDetailed.filter((w) => w.id !== realUser.workspaceId);
     const nextWsId = remaining[0]?.id ?? "";
-    setUser((prev) =>
+    setRealUser((prev) =>
       prev ? { ...prev, workspaceId: nextWsId, workspaces: remaining.map((w) => w.id) } : prev,
     );
     setCurrentWorkspace(remaining[0] ?? null);
@@ -335,12 +400,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const joinWorkspace = async (workspaceId: string) => {
-    if (!user) return;
+    if (!realUser) return;
     try {
       const result = await apiJoinWorkspace(workspaceId);
       if (result.success) {
         const dto = await apiMe();
-        setUser(dtoToExtendedUser(dto));
+        setRealUser(dtoToExtendedUser(dto));
         toast.success("Bem-vindo ao novo workspace!");
       } else {
         toast.error("Não foi possível entrar no workspace.");
@@ -352,10 +417,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const setupInitialWorkspace = async (name: string): Promise<string> => {
-    if (!user) throw new Error("Usuário não autenticado.");
+    if (!realUser) throw new Error("Usuário não autenticado.");
     try {
       const ws = await apiCreateWorkspace({ name });
-      setUser((prev) =>
+      setRealUser((prev) =>
         prev
           ? {
               ...prev,
@@ -386,12 +451,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Atualiza a sessão para refletir o novo workspace.
       try {
         const dto = await apiMe();
-        setUser(dtoToExtendedUser(dto));
+        setRealUser(dtoToExtendedUser(dto));
       } catch {
         // mantém estado atual
       }
     }
     return result;
+  };
+
+  // Usuário efetivo: se uma visualização demo estiver ativa, sobrepõe (só na UI)
+  // o papel/permissões; o usuário real permanece intacto para login/dados.
+  const user = computeEffectiveUser(realUser, demoView);
+
+  const setDemoView = (view: DemoView) => {
+    setDemoViewState(view);
+    try {
+      if (view) window.localStorage.setItem(DEMO_VIEW_KEY, view);
+      else window.localStorage.removeItem(DEMO_VIEW_KEY);
+    } catch {
+      // ignore
+    }
   };
 
   const hasPermission = (allowedRoles: Role[]): boolean => {
@@ -410,6 +489,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         teams,
         loading,
         isDataLoading,
+        demoView,
+        setDemoView,
         signIn,
         signUp,
         signInWithGoogle,

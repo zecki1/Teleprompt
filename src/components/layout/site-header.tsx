@@ -29,6 +29,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter, usePathname } from "next/navigation";
 import { GlobalSearch } from "@/components/layout/GlobalSearch";
+import { RolePreviewSwitcher } from "@/components/layout/RolePreviewSwitcher";
 import {
   Select,
   SelectContent,
@@ -180,6 +181,7 @@ export function SiteHeader() {
                     <DropdownMenuSeparator />
                   </>
                 )}
+                <RolePreviewSwitcher />
                 <div className="px-2 py-1.5 border-t border-zinc-800 mt-1.5 pt-2">
                   <p className="text-[10px] font-bold uppercase text-zinc-500 tracking-widest mb-1.5">Acessibilidade & Aparência</p>
                   <div className="flex flex-wrap items-center gap-1">
