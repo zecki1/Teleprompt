@@ -1,0 +1,15 @@
+# Compose APENAS do backend para a VM do Google Cloud (frente dos frontends na Vercel).
+# A porta 5000 fica presa no loopback (127.0.0.1) e só o nginx do host (com HTTPS)
+# expõe /api e /hubs ao público. Usar junto com deploy/api-nginx.conf + certbot.
+services:
+  backend:
+    build: ./backend
+    image: teleprompt-backend:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      # CORS: origens EXATAS dos 3 frontends na Vercel (separadas por ;).
+      # Troque logo após criar os projetos na Vercel (use os domínios de produção).
+      - Cors__Origins=https://next.teleprompt.zecki1.com.br;https://angular2x.teleprompt.zecki1.com.br;https://angular15.teleprompt.zecki1.com.br

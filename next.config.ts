@@ -74,7 +74,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: https:",
               "font-src 'self' data:",
-              "connect-src 'self' http://localhost:5026 http://localhost:5000 ws://localhost:5026 ws://localhost:5000 wss://teleprompt-api.invalid https://teleprompt-api.invalid https://vlibras.gov.br https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com",
+              "connect-src 'self' http://localhost:5026 http://localhost:5000 ws://localhost:5026 ws://localhost:5000 wss://teleprompt-api.invalid https://teleprompt-api.invalid https://api.teleprompt.zecki1.com.br wss://api.teleprompt.zecki1.com.br https://vlibras.gov.br https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com",
               "frame-src 'none'",
               "media-src 'self' https: blob:",
             ].join("; "),
