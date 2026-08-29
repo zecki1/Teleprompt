@@ -162,45 +162,61 @@
           </header>
 
           @if (openProjectId() !== group.project.id) {
-            <div class="cards">
-              @for (s of group.scripts; track s.id) {
-                <article class="card script-card" [style.--ring]="meta(s.localStatus).color">
-                  <div class="row" style="justify-content: space-between">
-                    @if (canAssign()) {
-                      <select
-                        class="status-select"
-                        [ngModel]="s.localStatus"
-                        [style.--c]="meta(s.localStatus).color"
-                        (change)="changeStatus(s, $event)"
-                        (click)="$event.stopPropagation()"
-                      >
-                        @for (opt of statuses; track opt.value) {
-                          <option [value]="opt.value">{{ opt.label }}</option>
-                        }
-                      </select>
-                    } @else {
-                      <span class="pill" [style]="pillStyle(s.localStatus)">
-                        {{ meta(s.localStatus).label }}
-                      </span>
-                    }
-                  </div>
-
-                  <a class="title truncate" [routerLink]="['/editor', s.id]">{{ s.title }}</a>
-                  <p class="faint small">{{ s.createdAt | date: "dd/MM/yyyy" }} · v{{ s.version }}</p>
-
-                  <footer class="row" style="gap: 0.25rem">
-                    <a class="btn btn-secondary btn-sm grow" [routerLink]="['/editor', s.id]">Abrir editor</a>
-                    <a class="btn btn-primary btn-sm" [routerLink]="['/tp', s.id]" title="Teleprompter">
-                      TP
-                    </a>
-                    <button type="button" class="icon-btn danger" title="Excluir"
-                            (click)="deleteTarget.set(s)">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
-                    </button>
-                  </footer>
-                </article>
+            @for (row of folderRowsOf(group.project.id); track (row.key || 'raiz')) {
+              @if (row.segments.length > 0) {
+                <div
+                  class="folder-row"
+                  [style.marginLeft.px]="(row.segments.length - 1) * 20"
+                >
+                  <span class="folder-icon">▸</span>
+                  <span class="folder-name">{{ row.segments.join(' › ') }}</span>
+                  <span class="faint small">{{ row.scripts.length }}</span>
+                </div>
               }
-            </div>
+              <div
+                class="cards"
+                [class.folder-cards]="row.segments.length > 0"
+                [style.marginLeft.px]="row.segments.length * 20"
+              >
+                @for (s of row.scripts; track s.id) {
+                  <article class="card script-card" [style.--ring]="meta(s.localStatus).color">
+                    <div class="row" style="justify-content: space-between">
+                      @if (canAssign()) {
+                        <select
+                          class="status-select"
+                          [ngModel]="s.localStatus"
+                          [style.--c]="meta(s.localStatus).color"
+                          (change)="changeStatus(s, $event)"
+                          (click)="$event.stopPropagation()"
+                        >
+                          @for (opt of statuses; track opt.value) {
+                            <option [value]="opt.value">{{ opt.label }}</option>
+                          }
+                        </select>
+                      } @else {
+                        <span class="pill" [style]="pillStyle(s.localStatus)">
+                          {{ meta(s.localStatus).label }}
+                        </span>
+                      }
+                    </div>
+
+                    <a class="title truncate" [routerLink]="['/editor', s.id]">{{ s.title }}</a>
+                    <p class="faint small">{{ s.createdAt | date: "dd/MM/yyyy" }} · v{{ s.version }}</p>
+
+                    <footer class="row" style="gap: 0.25rem">
+                      <a class="btn btn-secondary btn-sm grow" [routerLink]="['/editor', s.id]">Abrir editor</a>
+                      <a class="btn btn-primary btn-sm" [routerLink]="['/tp', s.id]" title="Teleprompter">
+                        TP
+                      </a>
+                      <button type="button" class="icon-btn danger" title="Excluir"
+                              (click)="deleteTarget.set(s)">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+                      </button>
+                    </footer>
+                  </article>
+                }
+              </div>
+            }
           }
         </section>
       }

@@ -124,29 +124,40 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }
             </div>
 
             @if (!collapsedProjects().has(group.projectName)) {
-              <div class="scripts-grid">
-                @for (script of group.scripts; track script.id) {
-                  <div class="script-card">
-                    <div class="script-card-header">
-                      <span class="script-status-dot" [style.background]="getStatusConfig(script.status).color"></span>
-                      <span class="script-status-label" [style.color]="getStatusConfig(script.status).color">
-                        {{ getStatusConfig(script.status).label }}
-                      </span>
-                    </div>
-                    <a [routerLink]="['/scripts', script.id]" class="script-card-title">{{ script.title }}</a>
-                    <div class="script-card-meta">
-                      <span>v{{ script.version }}</span>
-                      <span class="meta-sep">·</span>
-                      <span>{{ script.updatedAt | date:'dd/MM/yyyy' }}</span>
-                    </div>
-                    <div class="script-card-actions">
-                      <button class="action-btn" (click)="openEditor(script.id)" title="Editar">✏</button>
-                      <button class="action-btn" (click)="openTeleprompter(script.id)" title="Teleprompter">▶</button>
-                      <button class="action-btn btn-danger" (click)="confirmDelete(script.id)" title="Excluir">🗑</button>
-                    </div>
+              @for (row of folderRowsOf(group.projectName); track (row.key || 'raiz')) {
+                @if (row.segments.length > 0) {
+                  <div class="folder-row" [style.marginLeft.px]="(row.segments.length - 1) * 18">
+                    <span class="folder-arrow">▸</span>
+                    <span class="folder-name">{{ row.segments.join(' › ') }}</span>
+                    <span class="folder-count">{{ row.scripts.length }}</span>
                   </div>
                 }
-              </div>
+                <div class="scripts-grid"
+                     [class.folder-cards]="row.segments.length > 0"
+                     [style.marginLeft.px]="row.segments.length * 18">
+                  @for (script of row.scripts; track script.id) {
+                    <div class="script-card">
+                      <div class="script-card-header">
+                        <span class="script-status-dot" [style.background]="getStatusConfig(script.status).color"></span>
+                        <span class="script-status-label" [style.color]="getStatusConfig(script.status).color">
+                          {{ getStatusConfig(script.status).label }}
+                        </span>
+                      </div>
+                      <a [routerLink]="['/scripts', script.id]" class="script-card-title">{{ script.title }}</a>
+                      <div class="script-card-meta">
+                        <span>v{{ script.version }}</span>
+                        <span class="meta-sep">·</span>
+                        <span>{{ script.updatedAt | date:'dd/MM/yyyy' }}</span>
+                      </div>
+                      <div class="script-card-actions">
+                        <button class="action-btn" (click)="openEditor(script.id)" title="Editar">✏</button>
+                        <button class="action-btn" (click)="openTeleprompter(script.id)" title="Teleprompter">▶</button>
+                        <button class="action-btn btn-danger" (click)="confirmDelete(script.id)" title="Excluir">🗑</button>
+                      </div>
+                    </div>
+                  }
+                </div>
+              }
             }
           </div>
         }
@@ -381,6 +392,21 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }
     }
     @media (max-width: 640px) { .scripts-grid { grid-template-columns: 1fr; } }
 
+    .folder-row {
+      display: flex; align-items: center; gap: 0.5rem;
+      margin: 1.1rem 0 0.4rem; padding: 0.4rem 0.5rem;
+      font-size: 0.8rem; font-weight: 700; letter-spacing: 0.02em;
+      color: var(--primary); border-bottom: 1px solid var(--border);
+    }
+    .folder-row .folder-arrow { font-size: 0.6rem; opacity: 0.8; }
+    .folder-row .folder-name { text-transform: uppercase; }
+    .folder-row .folder-count {
+      margin-left: auto; font-size: 0.7rem; font-weight: 600;
+      color: var(--muted-foreground); background: color-mix(in srgb, var(--primary) 12%, transparent);
+      padding: 0.125rem 0.5rem; border-radius: 999px;
+    }
+    .folder-cards { margin-top: 0.4rem; }
+
     .script-card {
       background: var(--card); border: 1px solid var(--border); border-radius: 8px;
       padding: 1.25rem; transition: border-color 0.15s, box-shadow 0.15s;
@@ -512,14 +538,50 @@ export class DashboardComponent implements OnInit {
     config
   }));
 
-  totalScripts = computed(() => this.scripts().length);
+  totalScripts = computed(() => this.scripts().filter(s => !s.isPlaceholder).length);
+
+  /** Uma "linha" de pasta: roteiros que moram exatamente nesse caminho. */
+  folderRowsByProject = computed(() => {
+    const out = new Map<string, { key: string; segments: string[]; scripts: Script[] }[]>();
+    for (const group of this.scriptsByProject()) {
+      const buckets = new Map<string, Script[]>();
+      const rows: { key: string; segments: string[]; scripts: Script[] }[] = [];
+      for (const s of group.scripts) {
+        const segments = [s.folder, s.subfolder, s.lesson].filter(
+          (x): x is string => Boolean(x),
+        );
+        if (segments.length === 0) {
+          rows.push({ key: '', segments: [], scripts: [] });
+          rows[rows.length - 1].scripts.push(s);
+          continue;
+        }
+        const key = segments.join('\u0000');
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key)!.push(s);
+      }
+      for (const [key, scripts] of buckets) {
+        rows.push({ key, segments: key.split('\u0000'), scripts });
+      }
+      rows.sort((a, b) =>
+        a.segments.length !== b.segments.length
+          ? a.segments.length - b.segments.length
+          : a.key.localeCompare(b.key),
+      );
+      out.set(group.projectName, rows);
+    }
+    return out;
+  });
+
+  folderRowsOf(projectName: string): { key: string; segments: string[]; scripts: Script[] }[] {
+    return this.folderRowsByProject().get(projectName) ?? [];
+  }
 
   scriptsByProject = computed(() => {
-    const filtered = this.scripts().filter(s => {
-      if (this.projectIdFilter()) return s.projectId === this.projectIdFilter();
-      if (this.statusFilter() !== 'all') return ScriptStatus[s.status] === this.statusFilter();
-      return true;
-    });
+    const filtered = this.scripts().filter(s =>
+      !s.isPlaceholder &&
+      (!this.projectIdFilter() || s.projectId === this.projectIdFilter()) &&
+      (this.statusFilter() === 'all' || ScriptStatus[s.status] === this.statusFilter())
+    );
 
     const groups: Record<string, Script[]> = {};
     filtered.forEach(s => {

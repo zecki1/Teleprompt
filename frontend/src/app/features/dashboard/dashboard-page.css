@@ -81,6 +81,24 @@
   gap: 0.75rem;
 }
 
+/* Pastas e subpastas (mesma hierarquia de projeto → pasta → subpasta do Next) */
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.375rem 0.25rem 0.375rem 0.125rem;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--accent, #2563eb);
+  border-bottom: 1px solid var(--border, rgba(128, 128, 128, 0.2));
+}
+.folder-row .folder-icon { font-size: 0.625rem; opacity: 0.7; }
+.folder-row .folder-name { text-transform: uppercase; }
+
+.folder-cards { margin-top: 0.375rem; }
+
 .script-card {
   display: flex;
   flex-direction: column;

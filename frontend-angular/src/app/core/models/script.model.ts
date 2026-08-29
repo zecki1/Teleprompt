@@ -9,6 +9,10 @@ export interface Script {
   lockedBy?: string;
   version: number;
   createdBy?: string;
+  folder: string | null;
+  subfolder: string | null;
+  lesson: string | null;
+  isPlaceholder: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -17,12 +21,19 @@ export interface CreateScriptRequest {
   projectId: string;
   title: string;
   content?: string;
+  folder?: string | null;
+  subfolder?: string | null;
+  lesson?: string | null;
+  isPlaceholder?: boolean;
 }
 
 export interface UpdateScriptRequest {
   title?: string;
   content?: string;
   status?: ScriptStatus;
+  folder?: string | null;
+  subfolder?: string | null;
+  lesson?: string | null;
 }
 
 export interface ParseRequest {

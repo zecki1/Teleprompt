@@ -29,6 +29,13 @@ interface ProjectGroup {
   scripts: ScriptView[];
 }
 
+/** Uma "linha" de pasta: scripts que moram exatamente nesse caminho. */
+interface FolderRow {
+  key: string;
+  segments: string[];
+  scripts: ScriptView[];
+}
+
 @Component({
   selector: 'app-dashboard-page',
   imports: [DatePipe, FormsModule, ModalComponent, RouterLink],
@@ -74,6 +81,7 @@ export class DashboardPage {
 
     if (projectFilter) list = list.filter((s) => s.projectId === projectFilter);
     if (allowed.size > 0) list = list.filter((s) => allowed.has(s.localStatus));
+    list = list.filter((s) => !s.isPlaceholder);
     if (q) {
       list = list.filter(
         (s) =>
@@ -107,6 +115,47 @@ export class DashboardPage {
     }
     return [...map.values()];
   });
+
+  /**
+   * Pastas por projeto: cada linha agrupa os roteiros que estão exatamente em
+   * um caminho (folder → subfolder → lesson). Ordenadas: raiz primeiro e,
+   * depois, por profundidade e nome — espelhando o tree do Next.
+   */
+  protected readonly folderRowsByProject = computed(() => {
+    const out = new Map<string, FolderRow[]>();
+    for (const group of this.groups()) {
+      const rows: FolderRow[] = [];
+      const buckets = new Map<string, ScriptView[]>();
+      for (const s of group.scripts) {
+        const segments = [s.folder, s.subfolder, s.lesson].filter(
+          (x): x is string => Boolean(x),
+        );
+        if (segments.length === 0) {
+          rows.push({ key: '', segments: [], scripts: [] });
+          rows[rows.length - 1].scripts.push(s);
+          continue;
+        }
+        const key = segments.join('\u0000');
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key)!.push(s);
+      }
+      for (const [key, scripts] of buckets) {
+        const segments = key.split('\u0000');
+        rows.push({ key, segments, scripts });
+      }
+      rows.sort((a, b) =>
+        a.segments.length !== b.segments.length
+          ? a.segments.length - b.segments.length
+          : a.key.localeCompare(b.key, undefined, { numeric: true }),
+      );
+      out.set(group.project.id, rows);
+    }
+    return out;
+  });
+
+  protected folderRowsOf(projectId: string): FolderRow[] {
+    return this.folderRowsByProject().get(projectId) ?? [];
+  }
 
   protected readonly stats = computed(() => {
     const all = this.scripts();

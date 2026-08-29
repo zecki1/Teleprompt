@@ -86,6 +86,8 @@ public class FirebaseSyncService
         _logger.LogInformation("Firebase sync: projetos {Imported}/{Skipped} → scripts", report.Projects, report.ProjectsSkipped);
         await SyncScriptsAsync(firestore, report, ct);
         _logger.LogInformation("Firebase sync: scripts {Imported}/{Skipped} → subcoleções", report.Scripts, report.ScriptsSkipped);
+        await BackfillScriptPathsAsync(firestore, report, ct);
+        _logger.LogInformation("Firebase sync: pastas backfiladas {Backfilled}/{Skipped}", report.ScriptsBackfilled, report.ScriptsBackfillSkipped);
         await SyncScriptSubcollectionsAsync(firestore, report, ct);
         await SyncTeamsAsync(firestore, report, ct);
         _logger.LogInformation("Firebase sync: equipes {Imported}/{Skipped} → apresentadores", report.Teams, report.TeamsSkipped);
@@ -164,6 +166,53 @@ public class FirebaseSyncService
         if (data[key] is IReadOnlyList<object> list)
             return list.Select(x => x?.ToString() ?? string.Empty).Where(s => !string.IsNullOrEmpty(s)).ToList();
         return new List<string>();
+    }
+
+    /// <summary>"Raiz"/"Sem Pasta"/vazio viram null — pasta raiz é ausência de pasta.</summary>
+    private static string? NormalizeFolder(string? folder)
+    {
+        if (string.IsNullOrWhiteSpace(folder)) return null;
+        var trimmed = folder.Trim();
+        if (trimmed.Equals("Raiz", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("Sem Pasta", StringComparison.OrdinalIgnoreCase))
+            return null;
+        return trimmed;
+    }
+
+    /// <summary>
+    /// Extrai pasta/subpasta/aula de um documento legado do Firestore. Aceita
+    /// os campos strings (folder/subfolder/lesson) e o antigo caminho em array
+    /// ou string (path): ["Pasta", "Subpasta", "Aula"] ou "Pasta › Subpasta".
+    /// </summary>
+    private (string? folder, string? subfolder, string? lesson) ExtractFolderFields(Dictionary<string, object> data)
+    {
+        var folder = NormalizeFolder(GetString(data, "folder"));
+        if (!string.IsNullOrWhiteSpace(folder))
+            return (folder, NormalizeFolder(GetString(data, "subfolder")), NormalizeFolder(GetString(data, "lesson")));
+
+        if (!data.TryGetValue("path", out var pathValue)) return (null, null, null);
+
+        var segments = new List<string>();
+        switch (pathValue)
+        {
+            case IReadOnlyList<object> list:
+                segments.AddRange(list
+                    .Select(x => NormalizeFolder(x?.ToString()))
+                    .Where(s => s is not null)
+                    .Cast<string>());
+                break;
+            case string raw:
+                segments.AddRange(raw
+                    .Split(new[] { '/', '›', '>', '»' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(x => NormalizeFolder(x))
+                    .Where(s => s is not null)
+                    .Cast<string>());
+                break;
+        }
+
+        if (segments.Count == 0) return (null, null, null);
+        var segs = segments.ToArray();
+        return (segs[0], segs.Length > 1 ? segs[1] : null, segs.Length > 2 ? segs[2] : null);
     }
 
     private static Role ParseRole(string? role)
@@ -384,6 +433,7 @@ public class FirebaseSyncService
             if (await _db.Scripts.AnyAsync(s => s.Id == doc.Id, ct)) { report.ScriptsSkipped++; continue; }
 
             var data = doc.ToDictionary();
+            var (folder, subfolder, lesson) = ExtractFolderFields(data);
             _db.Scripts.Add(new Script
             {
                 Id = doc.Id,
@@ -392,9 +442,9 @@ public class FirebaseSyncService
                 Title = GetString(data, "title") ?? "Roteiro",
                 Content = GetString(data, "content") ?? string.Empty,
                 Status = ParseScriptStatus(GetString(data, "status")),
-                Folder = GetString(data, "folder", "path"),
-                Subfolder = GetString(data, "subfolder", "subpath"),
-                Lesson = GetString(data, "lesson", "lesson"),
+                Folder = folder,
+                Subfolder = subfolder,
+                Lesson = lesson,
                 IsPlaceholder = GetBool(data, "isPlaceholder"),
                 IsLocked = GetBool(data, "isLocked"),
                 Version = Math.Max(1, GetInt(data, "version", 1)),
@@ -405,6 +455,69 @@ public class FirebaseSyncService
             report.Scripts++;
         }
         await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Preenche Folder/Subfolder/Lesson/IsPlaceholder dos roteiros já importados
+    /// a partir do Firestore. Nunca sobrescreve um roteiro que já tem pasta
+    /// (movimentos/edições locais são preservados) e nunca mexe em título/conteúdo.
+    /// </summary>
+    private async Task BackfillScriptPathsAsync(FirestoreDb firestore, FirebaseSyncReport report, CancellationToken ct)
+    {
+        // Roteiros locais que ainda não têm pasta: candidatos ao backfill.
+        var candidates = await _db.Scripts.Where(s => string.IsNullOrEmpty(s.Folder)).ToListAsync(ct);
+        var byId = candidates.ToDictionary(s => s.Id);
+
+        var snapshot = await firestore.Collection("scripts").GetSnapshotAsync(ct);
+        foreach (var doc in snapshot.Documents)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!byId.TryGetValue(doc.Id, out var script))
+            {
+                report.ScriptsBackfillSkipped++;
+                continue;
+            }
+
+            var data = doc.ToDictionary();
+            var (folder, subfolder, lesson) = ExtractFolderFields(data);
+            var isPlaceholder = GetBool(data, "isPlaceholder");
+
+            if (string.IsNullOrWhiteSpace(folder) && !isPlaceholder)
+            {
+                report.ScriptsBackfillNoop++;
+                continue;
+            }
+
+            script.Folder = folder;
+            script.Subfolder = subfolder;
+            script.Lesson = lesson;
+            if (isPlaceholder) script.IsPlaceholder = true;
+            report.ScriptsBackfilled++;
+        }
+
+        await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Re-executa apenas o backfill de pastas (sem a importação completa).
+    /// Idempotente: um segundo run não acha roteiros sem pasta que já tenham
+    /// caminho no Firestore.
+    /// </summary>
+    public async Task<FirebaseSyncReport> BackfillPathsAsync(CancellationToken ct = default)
+    {
+        if (!_enabled)
+            return new FirebaseSyncReport { Message = "Firebase:ProjectId não configurado — backfill ignorado." };
+
+        if (!TryResolveServiceAccount(out string? _))
+            return new FirebaseSyncReport { Message = "Service account do Firebase não encontrada." };
+
+        var firestore = await FirestoreDb.CreateAsync(_projectId!);
+        var report = new FirebaseSyncReport { ProjectId = _projectId! };
+        await BackfillScriptPathsAsync(firestore, report, ct);
+        report.Message = $"Backfill de pastas concluído: {report.ScriptsBackfilled} roteiro(s) atualizado(s).";
+        _logger.LogInformation("Firebase sync: backfill de pastas {Backfilled} atualizado(s), {Noop} sem pasta no Firestore, {Skipped} já com pasta/inexistente.",
+            report.ScriptsBackfilled, report.ScriptsBackfillNoop, report.ScriptsBackfillSkipped);
+        return report;
     }
 
     private async Task SyncScriptSubcollectionsAsync(FirestoreDb firestore, FirebaseSyncReport report, CancellationToken ct)
@@ -542,6 +655,9 @@ public class FirebaseSyncReport
     public int ProjectsSkipped { get; set; }
     public int Scripts { get; set; }
     public int ScriptsSkipped { get; set; }
+    public int ScriptsBackfilled { get; set; }
+    public int ScriptsBackfillSkipped { get; set; }
+    public int ScriptsBackfillNoop { get; set; }
     public int Versions { get; set; }
     public int VersionsSkipped { get; set; }
     public int Comments { get; set; }
@@ -555,7 +671,7 @@ public class FirebaseSyncReport
 
     public string ToSummary() =>
         $"workspaces={Workspaces}(+{WorkspacesSkipped} skip) users={Users}(+{UsersSkipped} skip) " +
-        $"projects={Projects}(+{ProjectsSkipped} skip) scripts={Scripts}(+{ScriptsSkipped} skip) " +
+        $"projects={Projects}(+{ProjectsSkipped} skip) scripts={Scripts}(+{ScriptsSkipped} skip; +{ScriptsBackfilled} backfill) " +
         $"versions={Versions}(+{VersionsSkipped} skip) comments={Comments}(+{CommentsSkipped} skip) " +
         $"teams={Teams}(+{TeamsSkipped} skip) presenters={Presenters}(+{PresentersSkipped} skip) " +
         $"activities={Activities}(+{ActivitiesSkipped} skip)";

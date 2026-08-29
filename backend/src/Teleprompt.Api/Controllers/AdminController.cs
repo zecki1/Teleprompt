@@ -39,6 +39,22 @@ public class AdminController : ControllerBase
         return Ok(report);
     }
 
+    /// <summary>
+    /// Recupera a estrutura de pastas/subpastas dos roteiros legados: preenche
+    /// Folder/Subfolder/Lesson/IsPlaceholder no SQLite a partir do Firestore,
+    /// sem sobrescrever roteiros que já têm pasta nem tocar em título/conteúdo.
+    /// </summary>
+    [HttpPost("firebase/backfill-paths")]
+    [Authorize(Policy = PolicyNames.SuperAdmin)]
+    public async Task<ActionResult<FirebaseSyncReport>> FirebaseBackfillPaths()
+    {
+        if (!_firebaseSync.Enabled)
+            return BadRequest(new FirebaseSyncReport { Message = "Firebase:ProjectId não configurado — backfill indisponível." });
+
+        var report = await _firebaseSync.BackfillPathsAsync();
+        return Ok(report);
+    }
+
     [HttpGet("debug-logs")]
     [Authorize(Policy = PolicyNames.CanViewDebugLogs)]
     public async Task<ActionResult<List<DebugLogDto>>> DebugLogs([FromQuery] int limit = 100)
