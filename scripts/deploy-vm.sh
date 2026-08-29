@@ -39,7 +39,9 @@ fi
 echo "==> [2/7] Service account OK: $SA ($(wc -c < "$SA") bytes)"
 
 echo "==> [3/7] Subindo o container (build + background)"
+sudo systemctl start docker || sudo service docker start || true
 docker compose -f docker-compose.api.yml up -d --build
+docker compose -f docker-compose.api.yml ps
 
 echo "==> [4/7] Aguardando boot e coletando logs de Firebase/sync"
 for i in $(seq 1 20); do
