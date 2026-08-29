@@ -8,7 +8,7 @@ import { debugInfo, debugError } from "@/lib/debug-log";
 // Credenciais de exibição da conta demo (mantidas por compatibilidade).
 // A autenticação agora é feita pelo back-end .NET (Identity), não pelo Firebase.
 export const DEMO_EMAIL = "demo@teleprompt.app";
-export const DEMO_PASSWORD = "  ";
+export const DEMO_PASSWORD = "Demo@12345";
 export const DEMO_USER_NAME = "Equipe de Demonstração";
 export const DEMO_WORKSPACE_NAME = "Workspace de Demonstração";
 export const DEMO_PROJECT_NAME = "Tutorial de Demonstração";

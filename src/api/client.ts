@@ -3,20 +3,23 @@
 /**
  * Cliente HTTP / Firestore para o backend.
  *
- * Quando NEXT_PUBLIC_USE_FIREBASE=true, todas as chamadas api.get/post/put/del
- * são direcionadas ao Firestore (client-side). Caso contrário, usa o backend .NET.
+ * Depois da migração, a fonte de verdade é o backend .NET. O modo Firestore
+ * (legado) foi desativado à força para que nenhum ambiente (ex.: Vercel com
+ * NEXT_PUBLIC_USE_FIREBASE=true) volte a ler o Firestore, sem pastas e sem
+ * login no backend.
  */
 
 const DEFAULT_TIMEOUT_MS = 20000;
 
-export const useFirebase =
-  typeof process !== "undefined" &&
-  process.env.NEXT_PUBLIC_USE_FIREBASE === "true";
+/** Sempre falso: o backend .NET é a única fonte de dados da UI. */
+export const useFirebase = false;
+
+/** Backend de produção usado quando NEXT_PUBLIC_API_URL não é definido no build. */
+const DEFAULT_API_URL = "https://api.teleprompt.zecki1.com.br";
 
 export function apiBaseUrl(): string {
   return (
-    process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") ||
-    "http://localhost:5026"
+    process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || DEFAULT_API_URL
   );
 }
 
