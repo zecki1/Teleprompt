@@ -41,6 +41,12 @@ export const LOCAL_TO_BACKEND_STATUS: Record<ScriptStatus, string> = {
 };
 
 export function toScriptDoc(dto: ScriptDto): ScriptDoc {
+  const folder =
+    dto.folder && dto.folder !== "Raiz" && dto.folder !== "Sem Pasta" ? dto.folder : null;
+  const subfolder = folder ? dto.subfolder ?? undefined : undefined;
+  const lesson = folder ? dto.lesson ?? undefined : undefined;
+  const path = [folder, subfolder, lesson].filter((seg): seg is string => Boolean(seg));
+
   return {
     id: dto.id,
     title: dto.title,
@@ -53,7 +59,11 @@ export function toScriptDoc(dto: ScriptDto): ScriptDoc {
     commentCount: 0,
     commentAuthors: [],
     isMirrored: false,
-    isPlaceholder: false,
+    isPlaceholder: dto.isPlaceholder,
+    path,
+    folder: folder ?? undefined,
+    subfolder,
+    lesson,
   };
 }
 

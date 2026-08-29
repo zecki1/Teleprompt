@@ -45,6 +45,11 @@ public static class SeedExampleData
             isEditor: true, isRevisor: false, canRevert: false, canAssign: false,
             requiresChecklist: true);
 
+        // Roteiros âncora criados pela opção "Nova Pasta" ficam com títulos
+        // duplicados ("Roteiro Inicial"). No workspace demo, dá um nome próprio
+        // para cada um (idempotente: só mexe em quem ainda tem o título padrão).
+        await RenameInitialScriptsAsync(db, workspace);
+
         if (await db.Projects.AnyAsync(p => p.WorkspaceId == workspace.Id && p.Code != null && p.Code.StartsWith("EX-")))
         {
             await db.SaveChangesAsync();
@@ -76,12 +81,12 @@ public static class SeedExampleData
             };
             db.Projects.Add(project);
 
-            var scriptSamples = new (string Title, ScriptStatus Status, int ScriptAge)[]
+            var scriptSamples = new (string Title, ScriptStatus Status, int ScriptAge, string Folder, string Subfolder, string Lesson)[]
             {
-                ($"{name} — Aula 01", ScriptStatus.Rascunho, ageDays),
-                ($"{name} — Aula 02 (Revisão)", ScriptStatus.EmRevisao, Math.Max(1, ageDays - 2))
+                ($"{name} — Aula 01", ScriptStatus.Rascunho, ageDays, "Módulo 1", "Unidade 1", "Aula 01"),
+                ($"{name} — Aula 02 (Revisão)", ScriptStatus.EmRevisao, Math.Max(1, ageDays - 2), "Módulo 1", "Unidade 2", "Aula 02")
             };
-            foreach (var (title, scriptStatus, scriptAge) in scriptSamples)
+            foreach (var (title, scriptStatus, scriptAge, folder, subfolder, lesson) in scriptSamples)
             {
                 db.Scripts.Add(new Script
                 {
@@ -89,6 +94,9 @@ public static class SeedExampleData
                     WorkspaceId = workspace.Id,
                     Title = title,
                     Status = scriptStatus,
+                    Folder = folder,
+                    Subfolder = subfolder,
+                    Lesson = lesson,
                     Version = 1,
                     CreatedBy = admin.Id,
                     CreatedAt = totalDays.AddDays(-scriptAge),
@@ -107,6 +115,32 @@ public static class SeedExampleData
             CreatedAt = totalDays.AddDays(-30)
         });
 
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task RenameInitialScriptsAsync(TelepromptDbContext db, Workspace workspace)
+    {
+        var projects = await db.Projects.AsNoTracking()
+            .Where(p => p.WorkspaceId == workspace.Id)
+            .ToDictionaryAsync(p => p.Id, p => p);
+        var scripts = await db.Scripts
+            .Where(s => s.WorkspaceId == workspace.Id && !s.IsPlaceholder)
+            .Where(s => s.Title != null && s.Title.ToLower().StartsWith("roteiro inicial"))
+            .OrderBy(s => s.CreatedAt)
+            .ToListAsync();
+        if (scripts.Count == 0)
+            return;
+
+        var counters = new Dictionary<string, int>();
+        foreach (var script in scripts)
+        {
+            projects.TryGetValue(script.ProjectId, out var project);
+            var key = project?.Code ?? project?.Name ?? script.ProjectId;
+            counters[key] = counters.GetValueOrDefault(key) + 1;
+            var n = counters[key];
+            var label = string.IsNullOrWhiteSpace(key) ? "Projeto" : key;
+            script.Title = $"{label} — Roteiro Inicial {n:00}";
+        }
         await db.SaveChangesAsync();
     }
 

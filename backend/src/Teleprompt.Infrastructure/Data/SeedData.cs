@@ -13,6 +13,33 @@ public static class SeedData
     public const string DemoPassword = "Demo@12345";
     public const string DemoWorkspaceName = "Workspace Demonstração";
 
+    /// <summary>
+    /// Bancos SQLite criados com EnsureCreated antigamente não têm as colunas de
+    /// pasta adicionadas depois. Como a VM roda em produção com um .db já existente,
+    /// aplica os ALTERs de forma idempotente (ignora erro de coluna duplicada).
+    /// </summary>
+    private static async Task EnsureSqliteColumnsAsync(TelepromptDbContext db)
+    {
+        var ddls = new[]
+        {
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"Folder\" TEXT NULL",
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"Subfolder\" TEXT NULL",
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"Lesson\" TEXT NULL",
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"IsPlaceholder\" INTEGER NOT NULL DEFAULT 0"
+        };
+        foreach (var ddl in ddls)
+        {
+            try
+            {
+                await db.Database.ExecuteSqlRawAsync(ddl);
+            }
+            catch
+            {
+                // "duplicate column name" → coluna já existe; segue o baile.
+            }
+        }
+    }
+
     public static async Task SeedAsync(IServiceProvider services)
     {
         var db = services.GetRequiredService<TelepromptDbContext>();
@@ -23,7 +50,10 @@ public static class SeedData
         if (connectionType.Contains("SqlConnection", StringComparison.OrdinalIgnoreCase))
             await db.Database.MigrateAsync();
         else
+        {
             await db.Database.EnsureCreatedAsync();
+            await EnsureSqliteColumnsAsync(db);
+        }
 
         var demoEmailLower = DemoEmail.ToLowerInvariant();
         if (await db.Users.AnyAsync(u => u.NormalizedEmail == demoEmailLower.ToUpperInvariant()))

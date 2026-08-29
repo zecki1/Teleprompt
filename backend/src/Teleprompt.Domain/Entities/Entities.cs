@@ -89,6 +89,16 @@ public class Script : Entity
 
     public Enums.ScriptStatus Status { get; set; } = Enums.ScriptStatus.Rascunho;
 
+    /// <summary>Estrutura de pastas (projeto → pasta → subpasta → roteiro).</summary>
+    public string? Folder { get; set; }
+
+    public string? Subfolder { get; set; }
+
+    public string? Lesson { get; set; }
+
+    /// <summary>Roteiro âncora criado ao criar uma pasta; fica oculto da listagem.</summary>
+    public bool IsPlaceholder { get; set; }
+
     public bool IsLocked { get; set; }
 
     public string? LockedBy { get; set; }

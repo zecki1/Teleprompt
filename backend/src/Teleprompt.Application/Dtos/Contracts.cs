@@ -39,12 +39,13 @@ public record ProjectDto(
     string Id, string Name, string? Code, string? ExternalLink,
     string WorkspaceId, string? Status, string? Bucket, string CreatedAt);
 
-public record CreateScriptRequest(string ProjectId, string Title, string? Content = null);
-public record UpdateScriptRequest(string? Title, string? Content, string? Status);
+public record CreateScriptRequest(string ProjectId, string Title, string? Content = null, string? Folder = null, string? Subfolder = null, string? Lesson = null, bool IsPlaceholder = false);
+public record UpdateScriptRequest(string? Title, string? Content, string? Status, string? Folder = null, string? Subfolder = null, string? Lesson = null, string? ProjectId = null);
 public record ScriptDto(
     string Id, string ProjectId, string WorkspaceId, string Title,
     string Content, string Status, bool IsLocked, string? LockedBy,
-    int Version, string CreatedAt, string UpdatedAt);
+    int Version, string CreatedAt, string UpdatedAt,
+    string? Folder = null, string? Subfolder = null, string? Lesson = null, bool IsPlaceholder = false);
 
 public record ParseRequest(string Content, int ParagraphsPerScene = 0);
 

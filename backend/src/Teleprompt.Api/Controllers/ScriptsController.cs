@@ -43,6 +43,10 @@ public class ScriptsController : ControllerBase
             WorkspaceId = User.WorkspaceId() ?? string.Empty,
             Title = request.Title.Trim(),
             Content = request.Content ?? string.Empty,
+            Folder = NormalizeFolder(request.Folder),
+            Subfolder = NormalizeFolder(request.Subfolder),
+            Lesson = NormalizeFolder(request.Lesson),
+            IsPlaceholder = request.IsPlaceholder,
             CreatedBy = User.UserId(),
             Version = 1
         };
@@ -98,6 +102,14 @@ public class ScriptsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.Status) &&
             Enum.TryParse<ScriptStatus>(request.Status, true, out var status))
             script.Status = status;
+        if (request.Folder != null)
+            script.Folder = NormalizeFolder(request.Folder);
+        if (request.Subfolder != null)
+            script.Subfolder = NormalizeFolder(request.Subfolder);
+        if (request.Lesson != null)
+            script.Lesson = NormalizeFolder(request.Lesson);
+        if (request.ProjectId != null)
+            script.ProjectId = request.ProjectId;
 
         await _db.SaveChangesAsync();
         return Ok(ToDto(script));
@@ -303,5 +315,17 @@ public class ScriptsController : ControllerBase
     internal static ScriptDto ToDto(Script s) => new(
         s.Id, s.ProjectId, s.WorkspaceId, s.Title, s.Content,
         s.Status.ToString(), s.IsLocked, s.LockedBy, s.Version,
-        s.CreatedAt.ToString("O"), s.UpdatedAt.ToString("O"));
+        s.CreatedAt.ToString("O"), s.UpdatedAt.ToString("O"),
+        s.Folder, s.Subfolder, s.Lesson, s.IsPlaceholder);
+
+    /// <summary>"Raiz"/"Sem Pasta"/vazio viram null — a pasta raiz é ausência de pasta.</summary>
+    private static string? NormalizeFolder(string? folder)
+    {
+        if (string.IsNullOrWhiteSpace(folder)) return null;
+        var trimmed = folder.Trim();
+        if (trimmed.Equals("Raiz", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("Sem Pasta", StringComparison.OrdinalIgnoreCase))
+            return null;
+        return trimmed;
+    }
 }

@@ -10,6 +10,7 @@ import { listMyWorkspaces, createWorkspace as apiCreateWorkspace, joinWorkspaceB
 import { listTeams } from "@/api/teams";
 import { listUsers } from "@/api/users";
 import type { UserDto } from "@/api/types";
+import { isDemoWorkspaceName } from "@/services/demo";
 
 import { addKnownAccount } from "@/lib/account-storage";
 import { setDebugUserContext } from "@/lib/debug-log";
@@ -340,6 +341,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [realUser?.uid, realUser?.workspaceId, realUser?.isSuperAdmin]);
+
+  // Registra se o último workspace usado era de demonstração (para o login
+  // ocultar os botões "Ver como Admin/Técnico" quando o workspace não é demo).
+  useEffect(() => {
+    try {
+      const isDemo = isDemoWorkspaceName(currentWorkspace?.name);
+      window.localStorage.setItem("tp_last_workspace_is_demo", isDemo ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [currentWorkspace?.id, currentWorkspace?.name]);
+
+  // Workspaces que não são demo não têm recursos de demonstração: se o usuário
+  // real está num workspace comum, a visão demo é desativada automaticamente.
+  useEffect(() => {
+    if (!realUser?.uid || !currentWorkspace) return;
+    if (!isDemoWorkspaceName(currentWorkspace.name)) {
+      setDemoViewState(null);
+      try {
+        window.localStorage.removeItem(DEMO_VIEW_KEY);
+      } catch {
+        // ignore
+      }
+      writeDemoCookie(null);
+    }
+  }, [realUser?.uid, currentWorkspace]);
 
   const buildDebugContext = (u: ExtendedUser) => ({
     uid: u.uid,

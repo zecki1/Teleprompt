@@ -1,4 +1,5 @@
 import { ScriptDoc, FolderNode, MAX_PATH_DEPTH } from "@/types/script";
+import { updateScript } from "@/api/scripts";
 
 /**
  * Returns the canonical path[] for a script, falling back to legacy fields.
@@ -127,40 +128,81 @@ export function isValidPath(path: string[]): boolean {
 }
 
 /**
- * O back-end .NET não possui conceito de pastas/caminhos para roteiros.
- * Estas funções de persistência são mantidas por compatibilidade de assinatura,
- * mas não escrevem em lugar nenhum (a UI continua funcionando em modo plano).
+ * O back-end .NET persiste a estrutura de pastas nos campos
+ * folder/subfolder/lesson do roteiro. Estas funções gravam o novo caminho
+ * através da API — mover/renomear pastas funciona de ponta a ponta.
  */
 
+/** Converte um path[] nos campos de pasta persistidos pelo backend. */
+function toFolderFields(path: string[]): { folder: string | null; subfolder: string | null; lesson: string | null } {
+  return {
+    folder: path[0] ?? null,
+    subfolder: path[1] ?? null,
+    lesson: path[2] ?? null,
+  };
+}
+
 export async function moveScript(
-  _scriptId: string,
-  _newPath: string[],
-  _targetProject?: { projectId: string; projectName: string }
+  scriptId: string,
+  newPath: string[],
+  targetProject?: { projectId: string; projectName: string }
 ): Promise<void> {
-  console.warn("[pathUtils] Pastas não são persistidas no back-end .NET.");
+  await updateScript(scriptId, {
+    ...toFolderFields(newPath),
+    ...(targetProject ? { projectId: targetProject.projectId } : {}),
+  });
 }
 
 export async function moveScripts(
-  _scripts: ScriptDoc[],
-  _newPath: string[],
-  _targetProject?: { projectId: string; projectName: string }
+  scripts: ScriptDoc[],
+  newPath: string[],
+  targetProject?: { projectId: string; projectName: string }
 ): Promise<void> {
-  console.warn("[pathUtils] Pastas não são persistidas no back-end .NET.");
+  await Promise.all(
+    scripts
+      .filter((s) => s.id)
+      .map((s) => moveScript(s.id, newPath, targetProject))
+  );
 }
 
 export async function renameFolder(
-  _scripts: ScriptDoc[],
-  _targetPath: string[],
-  _newName: string
+  scripts: ScriptDoc[],
+  targetPath: string[],
+  newName: string
 ): Promise<void> {
-  console.warn("[pathUtils] Pastas não são persistidas no back-end .NET.");
+  const promises: Promise<unknown>[] = [];
+  for (const script of scripts) {
+    const oldPath = getScriptPath(script);
+    if (oldPath.length === 0 || targetPath.length === 0) continue;
+    if (!targetPath.every((seg, i) => oldPath[i] === seg)) continue;
+    const next = [...oldPath];
+    next[targetPath.length - 1] = newName;
+    promises.push(updateScript(script.id, toFolderFields(next)));
+  }
+  await Promise.all(promises);
 }
 
 export async function moveFolder(
-  _scripts: ScriptDoc[],
-  _sourcePath: string[],
-  _destinationParentPath: string[],
-  _targetProject?: { projectId: string; projectName: string }
+  scripts: ScriptDoc[],
+  sourcePath: string[],
+  destinationParentPath: string[],
+  targetProject?: { projectId: string; projectName: string }
 ): Promise<void> {
-  console.warn("[pathUtils] Pastas não são persistidas no back-end .NET.");
+  if (sourcePath.length === 0) return;
+  const promises: Promise<unknown>[] = [];
+  for (const script of scripts) {
+    const oldPath = getScriptPath(script);
+    if (oldPath.length === 0) continue;
+    if (!sourcePath.every((seg, i) => oldPath[i] === seg)) continue;
+    // Mantém o nome da pasta (último segmento do sourcePath) e as subpastas.
+    const tail = oldPath.slice(sourcePath.length - 1);
+    const next = [...(destinationParentPath ?? []), ...tail];
+    promises.push(
+      updateScript(script.id, {
+        ...toFolderFields(next),
+        ...(targetProject ? { projectId: targetProject.projectId } : {}),
+      })
+    );
+  }
+  await Promise.all(promises);
 }

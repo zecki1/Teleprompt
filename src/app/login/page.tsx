@@ -52,7 +52,16 @@ export default function LoginPage() {
   const [isSignup, setIsSignup] = useState(false);
   const [selectedEmail, setSelectedEmail] = useState(paramAccount || "");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [showDemoButtons, setShowDemoButtons] = useState(true);
   const initialMount = useRef(true);
+
+  // Workspaces que não são demo não devem mostrar os botões "Ver como Admin/Técnico".
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("tp_last_workspace_is_demo") === "0")
+        setShowDemoButtons(false);
+    } catch {}
+  }, []);
   const knownAccounts = getKnownAccounts();
 
   useEffect(() => {
@@ -177,34 +186,38 @@ export default function LoginPage() {
             </CardContent>
             <CardFooter className="pb-6 pt-4">
               <div className="w-full flex flex-col items-center gap-3">
-                <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
-                  <Eye className="h-3 w-3" /> Quer ver como é?
-                </div>
-                <div className="grid grid-cols-2 gap-2 w-full">
-                  <Button
-                    variant="outline"
-                    className="gap-2"
-                    onClick={() => {
-                      setDemoView("admin");
-                      router.push("/dashboard");
-                    }}
-                  >
-                    <UserCog className="h-4 w-4" /> Ver como Admin
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="gap-2"
-                    onClick={() => {
-                      setDemoView("tecnico");
-                      router.push("/dashboard");
-                    }}
-                  >
-                    <Wrench className="h-4 w-4" /> Ver como Técnico
-                  </Button>
-                </div>
-                <p className="text-[10px] text-muted-foreground/70 text-center leading-snug">
-                  Apenas uma visualização de demonstração — nenhum dado real é criado ou alterado.
-                </p>
+                {showDemoButtons && (
+                  <>
+                    <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
+                      <Eye className="h-3 w-3" /> Quer ver como é?
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 w-full">
+                      <Button
+                        variant="outline"
+                        className="gap-2"
+                        onClick={() => {
+                          setDemoView("admin");
+                          router.push("/dashboard");
+                        }}
+                      >
+                        <UserCog className="h-4 w-4" /> Ver como Admin
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="gap-2"
+                        onClick={() => {
+                          setDemoView("tecnico");
+                          router.push("/dashboard");
+                        }}
+                      >
+                        <Wrench className="h-4 w-4" /> Ver como Técnico
+                      </Button>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground/70 text-center leading-snug">
+                      Apenas uma visualização de demonstração — nenhum dado real é criado ou alterado.
+                    </p>
+                  </>
+                )}
                 <p className="text-center text-sm">
                   {isSignup ? (
                     <>Já tem uma conta? <button onClick={() => setIsSignup(false)} className="font-semibold text-primary hover:underline">Faça o login</button></>

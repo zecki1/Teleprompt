@@ -2,15 +2,23 @@
 
 import { Eye, RotateCcw, UserCog, Wrench } from "lucide-react";
 import { useAuth, type DemoView } from "@/contexts/AuthContext";
+import { isDemoWorkspaceName } from "@/services/demo";
 import { cn } from "@/lib/utils";
 
 /**
  * Alterna a visualização da aplicação entre "Admin" e "Técnico" (demo),
  * para quem quiser ver as duas telas como se fosse uma demonstração.
  * Só afeta a UI — as permissões reais do usuário no backend não mudam.
+ * Só é exibido em workspaces de demonstração (ou em sessão demo aberta).
  */
 export function RolePreviewSwitcher() {
-  const { demoView, setDemoView } = useAuth();
+  const { user, currentWorkspace, demoView, setDemoView } = useAuth();
+
+  const isDemoContext =
+    demoView !== null ||
+    !user?.workspaceId ||
+    isDemoWorkspaceName(currentWorkspace?.name);
+  if (!isDemoContext) return null;
 
   const options: { value: Exclude<DemoView, null>; label: string; Icon: typeof UserCog }[] = [
     { value: "admin", label: "Admin", Icon: UserCog },

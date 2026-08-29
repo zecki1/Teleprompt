@@ -14,6 +14,14 @@ export const DEMO_WORKSPACE_NAME = "Workspace de Demonstração";
 export const DEMO_PROJECT_NAME = "Tutorial de Demonstração";
 export const DEMO_SCRIPT_TITLE = "Roteiro de Exemplo";
 
+/**
+ * Detecta workspace de demonstração pelo nome (o id varia por ambiente/banco).
+ * Botões e personas demo só devem aparecer em workspaces de demonstração.
+ */
+export function isDemoWorkspaceName(name?: string | null): boolean {
+  return /demonstra/i.test(name ?? "");
+}
+
 // Roteiro de exemplo com os marcadores suportados pelo parser:
 // Cena, [Loc] (locução), [Let] (lettering), [Pron] (pronúncia), [Img] (imagem),
 // [Url] (fonte), [Abe]/[Enc] (abertura/encerramento) e Tempo.

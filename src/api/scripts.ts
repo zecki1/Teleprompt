@@ -7,12 +7,20 @@ export interface CreateScriptRequest {
   projectId: string;
   title: string;
   content?: string;
+  folder?: string | null;
+  subfolder?: string | null;
+  lesson?: string | null;
+  isPlaceholder?: boolean;
 }
 
 export interface UpdateScriptRequest {
   title?: string;
   content?: string;
   status?: string;
+  folder?: string | null;
+  subfolder?: string | null;
+  lesson?: string | null;
+  projectId?: string;
 }
 
 export interface ParseRequest {

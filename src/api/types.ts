@@ -84,6 +84,10 @@ export interface ScriptDto {
   version: number;
   createdAt: string;
   updatedAt: string;
+  folder: string | null;
+  subfolder: string | null;
+  lesson: string | null;
+  isPlaceholder: boolean;
 }
 
 export interface VersionDto {

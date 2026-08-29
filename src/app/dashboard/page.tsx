@@ -1889,11 +1889,17 @@ function DashboardContent() {
                 if (newFolderName) finalPath.push(newFolderName);
                 if (finalPath.length === 0) finalPath.push("Raiz");
 
+                const pathSegs = finalPath.filter(seg => seg && seg !== "Raiz");
+
                 try {
                   await createScript({
                     projectId: pid,
-                    title: "Roteiro Inicial",
+                    title: `Roteiro Inicial — ${pathSegs.join(" › ") || "Pasta"}`,
                     content: "",
+                    folder: pathSegs[0] ?? null,
+                    subfolder: pathSegs[1] ?? null,
+                    lesson: pathSegs[2] ?? null,
+                    isPlaceholder: true,
                   });
                   
                   toast.success("Pasta criada com sucesso!");
