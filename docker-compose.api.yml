@@ -12,4 +12,4 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       # CORS: origens EXATAS dos 3 frontends na Vercel (separadas por ;).
       # Troque logo após criar os projetos na Vercel (use os domínios de produção).
-      - Cors__Origins=https://next.teleprompt.zecki1.com.br;https://angular2x.teleprompt.zecki1.com.br;https://angular15.teleprompt.zecki1.com.br
+      - Cors__Origins=https://next.teleprompt.zecki1.com.br;https://angular22.teleprompt.zecki1.com.br;https://angular17.teleprompt.zecki1.com.br

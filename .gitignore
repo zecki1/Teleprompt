@@ -43,3 +43,5 @@ next-env.d.ts
 firestore.rules
 test-parser.js
 DEPLOY-VPS.md
+# banco dev SQLite (local)
+**/teleprompt-dev.db
