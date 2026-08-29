@@ -113,12 +113,17 @@
   </main>
 
   <script>
+    // Padrão: Next rodando no mesmo servidor, porta 3000.
+    var defaultNextUrl = location.protocol + '//' + location.hostname + ':3000';
+    document.getElementById('next-link').href = defaultNextUrl;
+
+    // Se hub-config.json definir nextUrl, usa ele.
     fetch('hub-config.json')
-      .then((r) => r.json())
-      .then((cfg) => {
-        if (cfg.nextUrl) document.getElementById('next-link').href = cfg.nextUrl;
+      .then(function (r) { return r.json(); })
+      .then(function (cfg) {
+        if (cfg && cfg.nextUrl) document.getElementById('next-link').href = cfg.nextUrl;
       })
-      .catch(() => {});
+      .catch(function () { /* usa o padrão */ });
     document.getElementById('api-host').textContent = location.origin;
   </script>
 </body>
