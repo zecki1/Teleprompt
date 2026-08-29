@@ -43,5 +43,8 @@ next-env.d.ts
 firestore.rules
 test-parser.js
 DEPLOY-VPS.md
+# chaves / segredos Firebase (nunca commitar)
+secrets/
+*-firebase-adminsdk-*.json
 # banco dev SQLite (local)
 **/teleprompt-dev.db
