@@ -94,7 +94,11 @@ public class ProjectsController : ControllerBase
             .Where(s => s.ProjectId == id)
             .OrderByDescending(s => s.UpdatedAt)
             .ToListAsync();
-        return Ok(list.Select(ScriptsController.ToDto));
+        var project = await _db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id);
+        var names = project == null
+            ? new Dictionary<string, string>()
+            : new Dictionary<string, string> { [id] = project.Name };
+        return Ok(list.Select(s => ScriptsController.ToDto(s, names)));
     }
 
     private static ProjectDto ToDto(Project p) => new(

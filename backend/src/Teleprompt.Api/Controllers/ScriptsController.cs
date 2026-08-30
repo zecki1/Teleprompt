@@ -32,7 +32,22 @@ public class ScriptsController : ControllerBase
             query = query.Where(s => s.ProjectId == projectId);
 
         var list = await query.OrderByDescending(s => s.UpdatedAt).ToListAsync();
-        return Ok(list.Select(ToDto));
+        var projectNames = await LoadProjectNamesAsync(list.Where(s => s.ProjectId != null).Select(s => s.ProjectId!));
+        return Ok(list.Select(s => ToDto(s, projectNames)));
+    }
+
+    /// <summary>
+    /// Resolve o nome do projeto para roteiros que ainda não têm ProjectName
+    /// gravado (dados legados). Garante que o agrupamento por projeto no frontend
+    /// nunca caia num fallback "Geral" para roteiros vinculados a um projeto real.
+    /// </summary>
+    private async Task<Dictionary<string, string>> LoadProjectNamesAsync(IEnumerable<string> projectIds)
+    {
+        var ids = projectIds.Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<string, string>();
+        return await _db.Projects.AsNoTracking()
+            .Where(p => ids.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, p => p.Name);
     }
 
     [HttpPost]
@@ -334,16 +349,26 @@ public class ScriptsController : ControllerBase
         return Ok(new ApiMessage("Roteiro liberado."));
     }
 
-    internal static ScriptDto ToDto(Script s) => new(
-        s.Id, s.ProjectId, s.WorkspaceId, s.Title, s.Content,
-        s.Status.ToString(), s.IsLocked, s.LockedBy, s.Version,
-        s.CreatedAt.ToString("O"), s.UpdatedAt.ToString("O"),
-        s.Folder, s.Subfolder, s.Lesson, s.IsPlaceholder,
-        s.EditorId, s.EditorName,
-        s.ReviewerId, s.ReviewerName,
-        s.VideomakerId, s.VideomakerName,
-        s.CreatedBy, s.CreatedByName, s.ProjectName,
-        ParsePresenterIds(s.PresenterIdsJson));
+    internal static ScriptDto ToDto(Script s) => ToDto(s, null);
+
+    internal static ScriptDto ToDto(Script s, IReadOnlyDictionary<string, string>? projectNames)
+    {
+        var projectName = s.ProjectName;
+        if (string.IsNullOrWhiteSpace(projectName) && !string.IsNullOrWhiteSpace(s.ProjectId)
+            && projectNames != null && projectNames.TryGetValue(s.ProjectId, out var resolved))
+            projectName = resolved;
+
+        return new ScriptDto(
+            s.Id, s.ProjectId, s.WorkspaceId, s.Title, s.Content,
+            s.Status.ToString(), s.IsLocked, s.LockedBy, s.Version,
+            s.CreatedAt.ToString("O"), s.UpdatedAt.ToString("O"),
+            s.Folder, s.Subfolder, s.Lesson, s.IsPlaceholder,
+            s.EditorId, s.EditorName,
+            s.ReviewerId, s.ReviewerName,
+            s.VideomakerId, s.VideomakerName,
+            s.CreatedBy, s.CreatedByName, projectName,
+            ParsePresenterIds(s.PresenterIdsJson));
+    }
 
     private static List<string>? ParsePresenterIds(string? json)
     {

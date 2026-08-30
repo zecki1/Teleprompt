@@ -185,35 +185,43 @@ public class FirebaseSyncService
     /// os campos strings (folder/subfolder/lesson) e o antigo caminho em array
     /// ou string (path): ["Pasta", "Subpasta", "Aula"] ou "Pasta › Subpasta".
     /// </summary>
+    /// <summary>
+    /// Extrai pasta/subpasta/aula de um documento legado do Firestore.
+    /// Prioriza o caminho completo (path) — que preserva a hierarquia
+    /// pasta/subpasta/lição — e usa folder/subfolder/lesson como fallback
+    /// quando o documento antigo só tem campos planos.
+    /// </summary>
     private (string? folder, string? subfolder, string? lesson) ExtractFolderFields(Dictionary<string, object> data)
     {
-        var folder = NormalizeFolder(GetString(data, "folder"));
-        if (!string.IsNullOrWhiteSpace(folder))
-            return (folder, NormalizeFolder(GetString(data, "subfolder")), NormalizeFolder(GetString(data, "lesson")));
-
-        if (!data.TryGetValue("path", out var pathValue)) return (null, null, null);
-
-        var segments = new List<string>();
-        switch (pathValue)
+        if (data.TryGetValue("path", out var pathValue))
         {
-            case IReadOnlyList<object> list:
-                segments.AddRange(list
-                    .Select(x => NormalizeFolder(x?.ToString()))
-                    .Where(s => s is not null)
-                    .Cast<string>());
-                break;
-            case string raw:
-                segments.AddRange(raw
-                    .Split(new[] { '/', '›', '>', '»' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(x => NormalizeFolder(x))
-                    .Where(s => s is not null)
-                    .Cast<string>());
-                break;
+            var segments = new List<string>();
+            switch (pathValue)
+            {
+                case IReadOnlyList<object> list:
+                    segments.AddRange(list
+                        .Select(x => NormalizeFolder(x?.ToString()))
+                        .Where(s => s is not null)
+                        .Cast<string>());
+                    break;
+                case string raw:
+                    segments.AddRange(raw
+                        .Split(new[] { '/', '›', '>', '»' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(x => NormalizeFolder(x))
+                        .Where(s => s is not null)
+                        .Cast<string>());
+                    break;
+            }
+
+            if (segments.Count > 0)
+            {
+                var segs = segments.ToArray();
+                return (segs[0], segs.Length > 1 ? segs[1] : null, segs.Length > 2 ? segs[2] : null);
+            }
         }
 
-        if (segments.Count == 0) return (null, null, null);
-        var segs = segments.ToArray();
-        return (segs[0], segs.Length > 1 ? segs[1] : null, segs.Length > 2 ? segs[2] : null);
+        var folder = NormalizeFolder(GetString(data, "folder"));
+        return (folder, NormalizeFolder(GetString(data, "subfolder")), NormalizeFolder(GetString(data, "lesson")));
     }
 
     private static Role ParseRole(string? role)
