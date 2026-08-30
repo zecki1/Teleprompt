@@ -21,7 +21,7 @@ DIR="$HOME/Teleprompt"
 SA="$DIR/secrets/firebase-service-account.json"
 
 cd "$DIR"
-echo "==> [1/7] Atualizando o repo (branch dotnet) e preparando pasta"
+echo "==> [1/8] Atualizando o repo (branch dotnet) e preparando pasta"
 git fetch origin
 git switch dotnet 2>/dev/null || git checkout dotnet
 git pull --ff-only
@@ -36,14 +36,36 @@ if [ ! -s "$SA" ]; then
   echo "Siga os passos 1-3 da seção PRÉ-REQUISITOS e rode o script de novo."
   exit 1
 fi
-echo "==> [2/7] Service account OK: $SA ($(wc -c < "$SA") bytes)"
+echo "==> [2/8] Service account OK: $SA ($(wc -c < "$SA") bytes)"
 
-echo "==> [3/7] Subindo o container (build + background)"
+BE_ENV="$DIR/secrets/backend.env"
+echo "==> [3/8] Garantindo chave JWT segura (auto-geração idempotente)"
+if [ ! -f "$BE_ENV" ]; then
+  if [ -f "$DIR/backend/secrets.env.example" ]; then
+    cp "$DIR/backend/secrets.env.example" "$BE_ENV"
+  else
+    touch "$BE_ENV"
+  fi
+fi
+if grep -qE '^JWT_KEY=(COLOQUE_UMA_CHAVE|)$' "$BE_ENV"; then
+  NEW_JWT="$(openssl rand -base64 48 | tr -d '\n')"
+  if grep -qE '^JWT_KEY=' "$BE_ENV"; then
+    sed -i "s#^JWT_KEY=.*#JWT_KEY=$NEW_JWT#" "$BE_ENV"
+  else
+    printf 'JWT_KEY=%s\n' "$NEW_JWT" >> "$BE_ENV"
+  fi
+  echo "    - JWT_KEY gerada e salva em secrets/backend.env (mantida entre deploys)."
+fi
+JWT_KEY="$(grep -E '^JWT_KEY=' "$BE_ENV" | head -1 | cut -d= -f2-)"
+[ -n "$JWT_KEY" ] || { echo "ERRO: JWT_KEY vazia em $BE_ENV"; exit 1; }
+export JWT_KEY
+
+echo "==> [4/8] Subindo o container (build + background)"
 sudo systemctl start docker || sudo service docker start || true
 docker compose -f docker-compose.api.yml up -d --build
 docker compose -f docker-compose.api.yml ps
 
-echo "==> [4/7] Aguardando boot e coletando logs de Firebase/sync"
+echo "==> [5/8] Aguardando boot e coletando logs de Firebase/sync"
 for i in $(seq 1 20); do
   if curl -sf -o /dev/null http://127.0.0.1:5000/health; then
     echo "    - API de pé após ${i}s (health OK)"
@@ -55,7 +77,7 @@ echo "    - Logs relevantes (Firebase/sync/erro):"
 docker compose -f docker-compose.api.yml logs --tail 400 backend \
   | grep -iE "firebase|sync|erro|error|fail|exception|warn" | tail -40 || true
 
-echo "==> [5/7] nginx + certbot (HTTPS)"
+echo "==> [6/8] nginx + certbot (HTTPS)"
 if ! command -v nginx >/dev/null 2>&1; then
   sudo apt-get update -y
   sudo apt-get install -y nginx
@@ -78,13 +100,14 @@ else
 fi
 sudo systemctl reload nginx
 
-echo "==> [6/7] Verificação externa"
+echo "==> [7/8] Verificação externa"
 curl -s -o /dev/null -w "    - https://$DOMAIN/swagger/v1/swagger.json -> HTTP %{http_code}\n" "https://$DOMAIN/swagger/v1/swagger.json" || true
 curl -s -o /dev/null -w "    - https://$DOMAIN/health          -> HTTP %{http_code}\n" "https://$DOMAIN/health" || true
 docker compose -f docker-compose.api.yml ps
 
-echo "==> [7/7] Resumo"
+echo "==> [8/8] Resumo"
 echo "    - API pública: https://$DOMAIN (swagger em /swagger)"
+echo "    - Chave JWT: secrets/backend.env (gerada automaticamente; não commitar)"
 echo "    - Contas importadas do Firestore usam a senha temporária: Migrated@Temp123!"
 echo "      (troque depois no Perfil)."
 echo "    - Logs ao vivo: docker compose -f docker-compose.api.yml logs -f --tail 200 backend"
