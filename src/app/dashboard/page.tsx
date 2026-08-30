@@ -681,7 +681,15 @@ function DashboardContent() {
           updateData.videomakerName = changingStatusPersonName;
         }
       }
-      await updateScript(script.id, { status: LOCAL_TO_BACKEND_STATUS[newStatus] });
+      await updateScript(script.id, {
+        status: LOCAL_TO_BACKEND_STATUS[newStatus],
+        editorId: (updateData.editorId as string) ?? undefined,
+        editorName: (updateData.editorName as string) ?? undefined,
+        reviewerId: (updateData.reviewerId as string) ?? undefined,
+        reviewerName: (updateData.reviewerName as string) ?? undefined,
+        videomakerId: (updateData.videomakerId as string) ?? undefined,
+        videomakerName: (updateData.videomakerName as string) ?? undefined,
+      });
       setScripts(scripts.map(s => s.id === script.id ? { ...s, ...updateData } : s));
       toast.success(`Status alterado para "${statusConfig[newStatus]?.label || newStatus}"`);
       setChangingStatusScript(null);
@@ -703,7 +711,11 @@ function DashboardContent() {
         reviewerName: reviewingScript.reviewerName || user?.displayName || user?.email
       };
       
-      await updateScript(reviewingScript.id, { status: LOCAL_TO_BACKEND_STATUS["revisao_realizada"] });
+      await updateScript(reviewingScript.id, {
+        status: LOCAL_TO_BACKEND_STATUS["revisao_realizada"],
+        reviewerId: reviewingScript.reviewerId || user?.uid,
+        reviewerName: reviewingScript.reviewerName || user?.displayName || user?.email,
+      });
       
       setScripts(scripts.map(s => s.id === reviewingScript.id ? { ...s, ...updateData } : s));
       toast.success("Revisão concluída com sucesso!");

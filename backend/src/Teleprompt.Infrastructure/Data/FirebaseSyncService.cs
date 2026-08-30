@@ -88,6 +88,7 @@ public class FirebaseSyncService
         _logger.LogInformation("Firebase sync: scripts {Imported}/{Skipped} → subcoleções", report.Scripts, report.ScriptsSkipped);
         await BackfillScriptPathsAsync(firestore, report, ct);
         _logger.LogInformation("Firebase sync: pastas backfiladas {Backfilled}/{Skipped}", report.ScriptsBackfilled, report.ScriptsBackfillSkipped);
+        await BackfillScriptMetadataAsync(firestore, report, ct);
         await SyncScriptSubcollectionsAsync(firestore, report, ct);
         await SyncTeamsAsync(firestore, report, ct);
         _logger.LogInformation("Firebase sync: equipes {Imported}/{Skipped} → apresentadores", report.Teams, report.TeamsSkipped);
@@ -449,6 +450,17 @@ public class FirebaseSyncService
                 IsLocked = GetBool(data, "isLocked"),
                 Version = Math.Max(1, GetInt(data, "version", 1)),
                 CreatedBy = GetString(data, "createdBy"),
+                CreatedByName = GetString(data, "createdByName"),
+                EditorId = GetString(data, "editorId"),
+                EditorName = GetString(data, "editorName"),
+                ReviewerId = GetString(data, "reviewerId"),
+                ReviewerName = GetString(data, "reviewerName"),
+                VideomakerId = GetString(data, "videomakerId"),
+                VideomakerName = GetString(data, "videomakerName"),
+                ProjectName = GetString(data, "project", "projectName"),
+                PresenterIdsJson = GetStringList(data, "presenterIds") is { Count: > 0 } pIds
+                    ? System.Text.Json.JsonSerializer.Serialize(pIds)
+                    : null,
                 CreatedAt = GetDateTime(data, "createdAt"),
                 UpdatedAt = GetDateTime(data, "updatedAt")
             });
@@ -518,6 +530,65 @@ public class FirebaseSyncService
         _logger.LogInformation("Firebase sync: backfill de pastas {Backfilled} atualizado(s), {Noop} sem pasta no Firestore, {Skipped} já com pasta/inexistente.",
             report.ScriptsBackfilled, report.ScriptsBackfillNoop, report.ScriptsBackfillSkipped);
         return report;
+    }
+
+    /// <summary>
+    /// Preenche os metadados de pessoas (editor, revisor, videomaker, criador,
+    /// projeto e apresentadores) dos roteiros já importados a partir do Firestore.
+    /// Idempotente: só atualiza campos que ainda estão vazios, para nunca apagar
+    /// atribuições feitas localmente depois da importação.
+    /// </summary>
+    private async Task BackfillScriptMetadataAsync(FirestoreDb firestore, FirebaseSyncReport report, CancellationToken ct)
+    {
+        // Candidatos: roteiros locais que ainda não têm os metadados de pessoas.
+        var candidates = await _db.Scripts
+            .Where(s => string.IsNullOrEmpty(s.EditorId) && string.IsNullOrEmpty(s.ReviewerId)
+                && string.IsNullOrEmpty(s.VideomakerId) && string.IsNullOrEmpty(s.CreatedByName)
+                && string.IsNullOrEmpty(s.ProjectName) && string.IsNullOrEmpty(s.PresenterIdsJson))
+            .ToListAsync(ct);
+        var byId = candidates.ToDictionary(s => s.Id);
+
+        var snapshot = await firestore.Collection("scripts").GetSnapshotAsync(ct);
+        foreach (var doc in snapshot.Documents)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!byId.TryGetValue(doc.Id, out var script))
+            {
+                report.ScriptsBackfillSkipNoId++;
+                continue;
+            }
+
+            var data = doc.ToDictionary();
+
+            var editorId = GetString(data, "editorId");
+            var reviewerId = GetString(data, "reviewerId");
+            var videomakerId = GetString(data, "videomakerId");
+            var createdByName = GetString(data, "createdByName");
+            var projectName = GetString(data, "project", "projectName");
+            var presenterIds = GetStringList(data, "presenterIds");
+
+            if (editorId == null && reviewerId == null && videomakerId == null
+                && createdByName == null && projectName == null && presenterIds.Count == 0)
+            {
+                report.ScriptsBackfillNoData++;
+                continue;
+            }
+
+            script.EditorId ??= editorId;
+            script.EditorName ??= GetString(data, "editorName");
+            script.ReviewerId ??= reviewerId;
+            script.ReviewerName ??= GetString(data, "reviewerName");
+            script.VideomakerId ??= videomakerId;
+            script.VideomakerName ??= GetString(data, "videomakerName");
+            script.CreatedByName ??= createdByName;
+            script.ProjectName ??= projectName;
+            if (presenterIds.Count > 0 && string.IsNullOrEmpty(script.PresenterIdsJson))
+                script.PresenterIdsJson = System.Text.Json.JsonSerializer.Serialize(presenterIds);
+
+            report.ScriptsBackfillMetadata++;
+        }
+
+        await _db.SaveChangesAsync(ct);
     }
 
     private async Task SyncScriptSubcollectionsAsync(FirestoreDb firestore, FirebaseSyncReport report, CancellationToken ct)
@@ -658,6 +729,9 @@ public class FirebaseSyncReport
     public int ScriptsBackfilled { get; set; }
     public int ScriptsBackfillSkipped { get; set; }
     public int ScriptsBackfillNoop { get; set; }
+    public int ScriptsBackfillMetadata { get; set; }
+    public int ScriptsBackfillSkipNoId { get; set; }
+    public int ScriptsBackfillNoData { get; set; }
     public int Versions { get; set; }
     public int VersionsSkipped { get; set; }
     public int Comments { get; set; }
@@ -671,7 +745,7 @@ public class FirebaseSyncReport
 
     public string ToSummary() =>
         $"workspaces={Workspaces}(+{WorkspacesSkipped} skip) users={Users}(+{UsersSkipped} skip) " +
-        $"projects={Projects}(+{ProjectsSkipped} skip) scripts={Scripts}(+{ScriptsSkipped} skip; +{ScriptsBackfilled} backfill) " +
+        $"projects={Projects}(+{ProjectsSkipped} skip) scripts={Scripts}(+{ScriptsSkipped} skip; +{ScriptsBackfilled} backfill; +{ScriptsBackfillMetadata} metadata)" +
         $"versions={Versions}(+{VersionsSkipped} skip) comments={Comments}(+{CommentsSkipped} skip) " +
         $"teams={Teams}(+{TeamsSkipped} skip) presenters={Presenters}(+{PresentersSkipped} skip) " +
         $"activities={Activities}(+{ActivitiesSkipped} skip)";

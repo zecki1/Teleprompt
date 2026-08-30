@@ -25,7 +25,16 @@ public static class SeedData
             "ALTER TABLE \"Scripts\" ADD COLUMN \"Folder\" TEXT NULL",
             "ALTER TABLE \"Scripts\" ADD COLUMN \"Subfolder\" TEXT NULL",
             "ALTER TABLE \"Scripts\" ADD COLUMN \"Lesson\" TEXT NULL",
-            "ALTER TABLE \"Scripts\" ADD COLUMN \"IsPlaceholder\" INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"IsPlaceholder\" INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"EditorId\" TEXT NULL",
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"EditorName\" TEXT NULL",
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"ReviewerId\" TEXT NULL",
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"ReviewerName\" TEXT NULL",
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"VideomakerId\" TEXT NULL",
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"VideomakerName\" TEXT NULL",
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"CreatedByName\" TEXT NULL",
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"ProjectName\" TEXT NULL",
+            "ALTER TABLE \"Scripts\" ADD COLUMN \"PresenterIdsJson\" TEXT NULL"
         };
         foreach (var ddl in ddls)
         {

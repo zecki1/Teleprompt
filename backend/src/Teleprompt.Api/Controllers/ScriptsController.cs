@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -48,6 +49,17 @@ public class ScriptsController : ControllerBase
             Lesson = NormalizeFolder(request.Lesson),
             IsPlaceholder = request.IsPlaceholder,
             CreatedBy = User.UserId(),
+            EditorId = request.EditorId,
+            EditorName = request.EditorName,
+            ReviewerId = request.ReviewerId,
+            ReviewerName = request.ReviewerName,
+            VideomakerId = request.VideomakerId,
+            VideomakerName = request.VideomakerName,
+            CreatedByName = request.CreatedByName,
+            ProjectName = request.ProjectName,
+            PresenterIdsJson = request.PresenterIds is { Count: > 0 }
+                ? JsonSerializer.Serialize(request.PresenterIds)
+                : null,
             Version = 1
         };
         _db.Scripts.Add(script);
@@ -110,6 +122,16 @@ public class ScriptsController : ControllerBase
             script.Lesson = NormalizeFolder(request.Lesson);
         if (request.ProjectId != null)
             script.ProjectId = request.ProjectId;
+
+        if (request.EditorId != null) script.EditorId = request.EditorId;
+        if (request.EditorName != null) script.EditorName = request.EditorName;
+        if (request.ReviewerId != null) script.ReviewerId = request.ReviewerId;
+        if (request.ReviewerName != null) script.ReviewerName = request.ReviewerName;
+        if (request.VideomakerId != null) script.VideomakerId = request.VideomakerId;
+        if (request.VideomakerName != null) script.VideomakerName = request.VideomakerName;
+        if (request.CreatedByName != null) script.CreatedByName = request.CreatedByName;
+        if (request.ProjectName != null) script.ProjectName = request.ProjectName;
+        if (request.PresenterIds != null) script.PresenterIdsJson = JsonSerializer.Serialize(request.PresenterIds);
 
         await _db.SaveChangesAsync();
         return Ok(ToDto(script));
@@ -316,7 +338,25 @@ public class ScriptsController : ControllerBase
         s.Id, s.ProjectId, s.WorkspaceId, s.Title, s.Content,
         s.Status.ToString(), s.IsLocked, s.LockedBy, s.Version,
         s.CreatedAt.ToString("O"), s.UpdatedAt.ToString("O"),
-        s.Folder, s.Subfolder, s.Lesson, s.IsPlaceholder);
+        s.Folder, s.Subfolder, s.Lesson, s.IsPlaceholder,
+        s.EditorId, s.EditorName,
+        s.ReviewerId, s.ReviewerName,
+        s.VideomakerId, s.VideomakerName,
+        s.CreatedBy, s.CreatedByName, s.ProjectName,
+        ParsePresenterIds(s.PresenterIdsJson));
+
+    private static List<string>? ParsePresenterIds(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     /// <summary>"Raiz"/"Sem Pasta"/vazio viram null — a pasta raiz é ausência de pasta.</summary>
     private static string? NormalizeFolder(string? folder)

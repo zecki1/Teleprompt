@@ -51,6 +51,8 @@ export function toScriptDoc(dto: ScriptDto): ScriptDoc {
     id: dto.id,
     title: dto.title,
     projectId: dto.projectId,
+    projectName: dto.projectName ?? undefined,
+    project: dto.projectName ?? undefined,
     workspaceId: dto.workspaceId,
     createdAt: dto.createdAt,
     updatedAt: dto.updatedAt,
@@ -64,6 +66,13 @@ export function toScriptDoc(dto: ScriptDto): ScriptDoc {
     folder: folder ?? undefined,
     subfolder,
     lesson,
+    editorId: dto.editorId ?? undefined,
+    editorName: dto.editorName ?? undefined,
+    reviewerId: dto.reviewerId ?? undefined,
+    reviewerName: dto.reviewerName ?? undefined,
+    videomakerId: dto.videomakerId ?? undefined,
+    videomakerName: dto.videomakerName ?? undefined,
+    presenterIds: dto.presenterIds ?? undefined,
   };
 }
 

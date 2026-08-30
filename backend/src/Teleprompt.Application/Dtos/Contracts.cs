@@ -39,13 +39,26 @@ public record ProjectDto(
     string Id, string Name, string? Code, string? ExternalLink,
     string WorkspaceId, string? Status, string? Bucket, string CreatedAt);
 
-public record CreateScriptRequest(string ProjectId, string Title, string? Content = null, string? Folder = null, string? Subfolder = null, string? Lesson = null, bool IsPlaceholder = false);
-public record UpdateScriptRequest(string? Title, string? Content, string? Status, string? Folder = null, string? Subfolder = null, string? Lesson = null, string? ProjectId = null);
+public record CreateScriptRequest(string ProjectId, string Title, string? Content = null, string? Folder = null, string? Subfolder = null, string? Lesson = null, bool IsPlaceholder = false,
+    string? EditorId = null, string? EditorName = null,
+    string? ReviewerId = null, string? ReviewerName = null,
+    string? VideomakerId = null, string? VideomakerName = null,
+    string? CreatedByName = null, string? ProjectName = null, List<string>? PresenterIds = null);
+public record UpdateScriptRequest(string? Title, string? Content, string? Status, string? Folder = null, string? Subfolder = null, string? Lesson = null, string? ProjectId = null,
+    string? EditorId = null, string? EditorName = null,
+    string? ReviewerId = null, string? ReviewerName = null,
+    string? VideomakerId = null, string? VideomakerName = null,
+    string? CreatedByName = null, string? ProjectName = null, List<string>? PresenterIds = null);
 public record ScriptDto(
     string Id, string ProjectId, string WorkspaceId, string Title,
     string Content, string Status, bool IsLocked, string? LockedBy,
     int Version, string CreatedAt, string UpdatedAt,
-    string? Folder = null, string? Subfolder = null, string? Lesson = null, bool IsPlaceholder = false);
+    string? Folder = null, string? Subfolder = null, string? Lesson = null, bool IsPlaceholder = false,
+    string? EditorId = null, string? EditorName = null,
+    string? ReviewerId = null, string? ReviewerName = null,
+    string? VideomakerId = null, string? VideomakerName = null,
+    string? CreatedBy = null, string? CreatedByName = null, string? ProjectName = null,
+    List<string>? PresenterIds = null);
 
 public record ParseRequest(string Content, int ParagraphsPerScene = 0);
 

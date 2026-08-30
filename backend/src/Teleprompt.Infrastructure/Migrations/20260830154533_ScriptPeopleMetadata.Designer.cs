@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Teleprompt.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using Teleprompt.Infrastructure.Data;
 namespace Teleprompt.Infrastructure.Migrations
 {
     [DbContext(typeof(TelepromptDbContext))]
-    partial class TelepromptDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260830154533_ScriptPeopleMetadata")]
+    partial class ScriptPeopleMetadata
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

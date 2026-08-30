@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { addPresenter } from "@/services/presenters";
+import { updateScript } from "@/api/scripts";
 
 interface BulkAssignDialogProps {
   open: boolean;
@@ -154,12 +155,24 @@ export function BulkAssignDialog({
         updates.push(next);
       }
 
+      await Promise.all(
+        updates.map(script =>
+          updateScript(script.id, {
+            editorId: script.editorId ?? undefined,
+            editorName: script.editorName ?? undefined,
+            reviewerId: script.reviewerId ?? undefined,
+            reviewerName: script.reviewerName ?? undefined,
+            videomakerId: script.videomakerId ?? undefined,
+            videomakerName: script.videomakerName ?? undefined,
+            presenterIds: script.presenterIds ?? undefined,
+          }),
+        ),
+      );
+
       const uniqueParts = Array.from(new Set(appliedParts)).join(", ");
       onAssigned(updates);
       onOpenChange(false);
-      toast.success(`Atribuição de ${uniqueParts} aplicada a ${label}!`, {
-        description: "Atribuição não é persistida no backend (campos de atribuição não são suportados).",
-      });
+      toast.success(`Atribuição de ${uniqueParts} aplicada a ${label}!`);
     } catch (error) {
       console.error("Erro na atribuição em lote:", error);
       toast.error("Erro ao atribuir em lote.");

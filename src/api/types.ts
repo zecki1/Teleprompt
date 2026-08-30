@@ -88,6 +88,16 @@ export interface ScriptDto {
   subfolder: string | null;
   lesson: string | null;
   isPlaceholder: boolean;
+  editorId?: string | null;
+  editorName?: string | null;
+  reviewerId?: string | null;
+  reviewerName?: string | null;
+  videomakerId?: string | null;
+  videomakerName?: string | null;
+  createdBy?: string | null;
+  createdByName?: string | null;
+  projectName?: string | null;
+  presenterIds?: string[] | null;
 }
 
 export interface VersionDto {

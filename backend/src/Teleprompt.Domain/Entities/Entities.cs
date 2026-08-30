@@ -105,7 +105,28 @@ public class Script : Entity
 
     public DateTime? LockedUntil { get; set; }
 
+    /// <summary>Metadados de pessoas (editor, revisor, videomaker, criador, apresentadores) vindos do Firestore.</summary>
+    public string? EditorId { get; set; }
+
+    public string? EditorName { get; set; }
+
+    public string? ReviewerId { get; set; }
+
+    public string? ReviewerName { get; set; }
+
+    public string? VideomakerId { get; set; }
+
+    public string? VideomakerName { get; set; }
+
     public string? CreatedBy { get; set; }
+
+    public string? CreatedByName { get; set; }
+
+    /// <summary>Nome do projeto legado vindo do Firestore.</summary>
+    public string? ProjectName { get; set; }
+
+    /// <summary>JSON com a lista de IDs de apresentadores (presenterIds).</summary>
+    public string? PresenterIdsJson { get; set; }
 
     public int Version { get; set; } = 1;
 

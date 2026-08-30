@@ -11,6 +11,15 @@ export interface CreateScriptRequest {
   subfolder?: string | null;
   lesson?: string | null;
   isPlaceholder?: boolean;
+  editorId?: string | null;
+  editorName?: string | null;
+  reviewerId?: string | null;
+  reviewerName?: string | null;
+  videomakerId?: string | null;
+  videomakerName?: string | null;
+  createdByName?: string | null;
+  projectName?: string | null;
+  presenterIds?: string[] | null;
 }
 
 export interface UpdateScriptRequest {
@@ -21,6 +30,15 @@ export interface UpdateScriptRequest {
   subfolder?: string | null;
   lesson?: string | null;
   projectId?: string;
+  editorId?: string | null;
+  editorName?: string | null;
+  reviewerId?: string | null;
+  reviewerName?: string | null;
+  videomakerId?: string | null;
+  videomakerName?: string | null;
+  createdByName?: string | null;
+  projectName?: string | null;
+  presenterIds?: string[] | null;
 }
 
 export interface ParseRequest {

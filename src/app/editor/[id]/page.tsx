@@ -1027,6 +1027,10 @@ function EditorContent({ id }: { id: string }) {
           setProject("Geral");
           setProjectId(script.projectId || null);
 
+          setEditorName(script.editorName ?? null);
+          setReviewerName(script.reviewerName ?? null);
+          setVideomakerName(script.videomakerName ?? null);
+
           const scriptPath = getScriptPath(toScriptDoc(script));
           setPath(scriptPath);
 
@@ -1150,19 +1154,30 @@ function EditorContent({ id }: { id: string }) {
       const rawContent = generateRawTextFromBlocks(scenes);
       const backendStatus = LOCAL_TO_BACKEND_STATUS[saveStatus];
 
+      const personFields =
+        saveStatus === "rascunho"
+          ? { editorId: user?.uid, editorName: user?.displayName || user?.email || null }
+          : saveStatus === "em_revisao" || saveStatus === "revisao_realizada"
+            ? { reviewerId: user?.uid, reviewerName: user?.displayName || user?.email || null }
+            : saveStatus === "gravado" || saveStatus === "aguardando_gravacao"
+              ? { videomakerId: user?.uid, videomakerName: user?.displayName || user?.email || null }
+              : {};
+
       if (isNew) {
         const created = await createScript({
           projectId: projectId || "geral",
           title: title || "Novo Roteiro",
           content: rawContent,
+          ...personFields,
         });
         currentScriptId = created.id;
-        await updateScript(currentScriptId, { status: backendStatus });
+        await updateScript(currentScriptId, { status: backendStatus, ...personFields });
       } else {
         await updateScript(currentScriptId, {
           title,
           content: rawContent,
           status: backendStatus,
+          ...personFields,
         });
       }
 
