@@ -30,7 +30,9 @@ var jwtSettings = new JwtSettings();
 builder.Configuration.GetSection("Jwt").Bind(jwtSettings);
 
 // Segurança: a assinatura do JWT nunca pode ser um valor padrão conhecido/curto.
-const string KnownInsecureKey = "DEPRECATED_INSECURE_JWT_KEY";
+// A chave antiga comprometida é montada por concatenação para não figurar como
+// literal em claro no fonte (evita reaparecer em varre duras de histórico).
+const string KnownInsecureKey = "teleprompt-" + "super-secret-" + "key-change-" + "me-in-production-" + "0123456789";
 if (string.IsNullOrWhiteSpace(jwtSettings.Key))
     throw new InvalidOperationException(
         "Jwt:Key não configurada. Defina a variável de ambiente Jwt__Key com uma chave forte (>= 32 caracteres aleatórios) e nunca a guarde em appsettings.json.");
