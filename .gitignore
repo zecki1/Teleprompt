@@ -1,5 +1,11 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# .NET build artifacts (nunca versionar bin/obj — contêm segredos/assemblys)
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+
 # dependencies
 /node_modules
 /.pnp
@@ -22,7 +28,6 @@
 
 # misc
 .DS_Store
-*.pem
 
 # debug
 npm-debug.log*
@@ -43,10 +48,30 @@ next-env.d.ts
 firestore.rules
 test-parser.js
 DEPLOY-VPS.md
-# chaves / segredos Firebase (nunca commitar)
+
+# =============================================================================
+# SEGREDOS / CREDENCIAIS — nunca commitar
+# =============================================================================
 secrets/
+# .NET User Secrets (config segura de desenvolvimento local)
+**/appsettings.Local.json
+**/appsettings.*.local.json
+# arquivos de env/secrets do backend (Docker/VM)
+**/backend.env
+**/.env
+# certificados / chaves privadas
+*.pem
+*.key
+*.p12
+*.pfx
+# arquivos de credencial de cloud/service account (Firebase, GCP)
 *-firebase-adminsdk-*.json
-# banco SQLite do compose (volume ./,data)
-/data
-# banco dev SQLite (local)
+*-service-account*.json
+creds*.json
+# dados sensíveis do banco local
 **/teleprompt-dev.db
+**/teleprompt.db
+
+# banco SQLite do compose (volume ./,data) — só o diretório raiz /data
+/data/
+!/data/.gitkeep

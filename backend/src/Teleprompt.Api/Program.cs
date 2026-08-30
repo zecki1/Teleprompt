@@ -28,8 +28,18 @@ builder.Services.AddInfrastructure(builder.Configuration);
 
 var jwtSettings = new JwtSettings();
 builder.Configuration.GetSection("Jwt").Bind(jwtSettings);
+
+// Segurança: a assinatura do JWT nunca pode ser um valor padrão conhecido/curto.
+const string KnownInsecureKey = "DEPRECATED_INSECURE_JWT_KEY";
 if (string.IsNullOrWhiteSpace(jwtSettings.Key))
-    throw new InvalidOperationException("Jwt:Key não configurada no appsettings/UserSecrets.");
+    throw new InvalidOperationException(
+        "Jwt:Key não configurada. Defina a variável de ambiente Jwt__Key com uma chave forte (>= 32 caracteres aleatórios) e nunca a guarde em appsettings.json.");
+if (jwtSettings.Key.Equals(KnownInsecureKey, StringComparison.Ordinal))
+    throw new InvalidOperationException(
+        "Jwt:Key está usando o valor padrão inseguro conhecido. Gere uma chave aleatória forte e defina via variável de ambiente Jwt__Key.");
+if (Encoding.UTF8.GetByteCount(jwtSettings.Key) < 32)
+    throw new InvalidOperationException(
+        "Jwt:Key muito curta. Use pelo menos 32 caracteres aleatórios e defina via variável de ambiente Jwt__Key.");
 builder.Services.AddSingleton(jwtSettings);
 
 builder.Services.AddIdentityCore<ApplicationUser>(options =>

@@ -21,4 +21,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <UserSecretsId>Teleprompt.Api</UserSecretsId>
+  </PropertyGroup>
+
 </Project>

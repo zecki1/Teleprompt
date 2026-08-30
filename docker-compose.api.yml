@@ -8,19 +8,26 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:5000:5000"
+    env_file:
+      # Variáveis secretas (JWT, banco, Firebase) ficam FORA do git.
+      # Crie ./secrets/backend.env seguindo o modelo secrets/backend.env.example
+      # e NUNCA commite esse arquivo.
+      - secrets/backend.env
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_ENVIRONMENT=Production
       # CORS: origens EXATAS dos 3 frontends na Vercel (separadas por ;).
       # Troque logo após criar os projetos na Vercel (use os domínios de produção).
       - Cors__Origins=https://next.teleprompt.zecki1.com.br;https://angular22.teleprompt.zecki1.com.br;https://angular17.teleprompt.zecki1.com.br
       # SQLite persistente fora do container (os dados não podem morrer em rebuild).
       - ConnectionStrings__DefaultConnection=Data Source=/app/data/teleprompt-dev.db
       # Firebase (Firestore) — importa os dados existentes no boot (idempotente).
-      # Coloque a service account JSON em ./secrets/firebase-service-account.json e
-      # defina o ProjectId abaixo; se omitido, o sync fica desativado.
+      # A service account JSON vive em ./secrets/firebase-service-account.json (ignorada pelo git).
       - Firebase__ProjectId=teleprompt-1
       - Firebase__ServiceAccountKey=/app/secrets/firebase-service-account.json
       - Firebase__AutoImport=true
+      # JWT: obrigatório e forte (>= 32 caracteres aleatórios). Nunca usar um valor
+      # commitado. Defina Jwt__Key=... em secrets/backend.env.
+      - Jwt__Key=${JWT_KEY:?Defina JWT_KEY no seu ambiente / secrets/backend.env}
     volumes:
       - ./secrets:/app/secrets:ro
       - ./data:/app/data
