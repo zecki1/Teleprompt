@@ -59,6 +59,11 @@ fi
 JWT_KEY="$(grep -E '^JWT_KEY=' "$BE_ENV" | head -1 | cut -d= -f2-)"
 [ -n "$JWT_KEY" ] || { echo "ERRO: JWT_KEY vazia em $BE_ENV"; exit 1; }
 export JWT_KEY
+# Também grava em .env (raiz) para o docker compose interpolar em comandos
+# manuais (ps/logs/up) sem depender de export — arquivo ignorado pelo git.
+if [ ! -f "$DIR/.env" ] || ! grep -qE '^JWT_KEY=' "$DIR/.env"; then
+  printf 'JWT_KEY=%s\n' "$JWT_KEY" > "$DIR/.env"
+fi
 
 echo "==> [4/8] Subindo o container (build + background)"
 sudo systemctl start docker || sudo service docker start || true
