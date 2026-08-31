@@ -592,8 +592,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const setDemoView = (view: DemoView) => {
     setDemoViewState(view);
     try {
-      if (view) window.localStorage.setItem(DEMO_VIEW_KEY, view);
-      else window.localStorage.removeItem(DEMO_VIEW_KEY);
+      if (view) {
+        window.localStorage.setItem(DEMO_VIEW_KEY, view);
+        clearStoredToken();
+        setRealUser(null);
+      } else {
+        window.localStorage.removeItem(DEMO_VIEW_KEY);
+      }
     } catch {
       // ignore
     }

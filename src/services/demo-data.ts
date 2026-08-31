@@ -43,8 +43,7 @@ export function isPublicDemoMode(): boolean {
   if (typeof window === "undefined") return false;
   try {
     const view = window.localStorage.getItem(DEMO_VIEW_KEY);
-    if (view !== "admin" && view !== "tecnico") return false;
-    return !window.localStorage.getItem("tp_token");
+    return view === "admin" || view === "tecnico";
   } catch {
     return false;
   }
