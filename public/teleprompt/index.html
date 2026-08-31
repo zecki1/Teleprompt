@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Teleprompt — Escolha a versão</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      background: #0f0f13;
+      color: #e4e4e7;
+      padding: 1rem;
+    }
+    .card {
+      max-width: 560px;
+      width: 100%;
+      background: #18181b;
+      border: 1px solid #27272a;
+      border-radius: 16px;
+      padding: 2rem;
+      text-align: center;
+      box-shadow: 0 25px 50px -12px rgba(0,0,0,.6);
+    }
+    .logo {
+      font-size: 1.6rem;
+      font-weight: 800;
+      letter-spacing: .5px;
+    }
+    .logo span { color: #6161ff; }
+    .subtitle {
+      margin: .5rem 0 1.75rem;
+      color: #a1a1aa;
+      font-size: .95rem;
+    }
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding: 1rem 1.25rem;
+      margin-bottom: .75rem;
+      border-radius: 12px;
+      border: 1px solid #27272a;
+      background: #212126;
+      color: #e4e4e7;
+      font-size: 1.05rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: border-color .15s, background .15s, transform .1s;
+    }
+    .btn:hover { border-color: #6161ff; background: #2a2a31; transform: translateY(-1px); }
+    .btn small { display: block; font-weight: 400; color: #a1a1aa; margin-top: 2px; }
+    .btn .arrow { font-size: 1.3rem; color: #6161ff; }
+    .footer { margin-top: 1.5rem; font-size: .8rem; color: #71717a; }
+    .back {
+      display: inline-block;
+      margin-top: 1rem;
+      font-size: .85rem;
+      color: #6161ff;
+      text-decoration: none;
+    }
+    .back:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <p class="logo">▸ Tele<span>prompt</span></p>
+    <p class="subtitle">Escolha a versão que você quer acessar</p>
+
+    <a class="btn" href="https://next.teleprompt.zecki1.com.br/dashboard">
+      <span>Next.js<small>Aplicação principal (recomendada)</small></span>
+      <span class="arrow">→</span>
+    </a>
+
+    <a class="btn" href="https://angular22.teleprompt.zecki1.com.br">
+      <span>Angular 22<small>Frontend novo (frontend/)</small></span>
+      <span class="arrow">→</span>
+    </a>
+
+    <a class="btn" href="https://angular17.teleprompt.zecki1.com.br">
+      <span>Angular 17<small>Frontend antigo (frontend-angular/)</small></span>
+      <span class="arrow">→</span>
+    </a>
+
+    <p class="footer">As três versões usam a mesma API e os mesmos dados.</p>
+  </div>
+</body>
+</html>
