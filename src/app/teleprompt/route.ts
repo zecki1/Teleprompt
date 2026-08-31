@@ -83,7 +83,7 @@ const HTML = /* html */ `<!doctype html>
     <p class="logo">▸ Tele<span>prompt</span></p>
     <p class="subtitle">Escolha a versão que você quer acessar</p>
 
-    <a class="btn primary" href="https://next.teleprompt.zecki1.com.br">
+    <a class="btn primary" href="/teleprompt/next">
       <span>
         Aplicação Principal
         <span class="badge">Recomendado</span>
@@ -94,7 +94,7 @@ const HTML = /* html */ `<!doctype html>
 
     <div class="divider"></div>
 
-    <a class="btn" href="https://angular22.teleprompt.zecki1.com.br">
+    <a class="btn" href="/teleprompt/angular22">
       <span>
         Angular 22
         <small>Frontend novo (frontend/)</small>
@@ -102,7 +102,7 @@ const HTML = /* html */ `<!doctype html>
       <span class="arrow">→</span>
     </a>
 
-    <a class="btn" href="https://angular17.teleprompt.zecki1.com.br">
+    <a class="btn" href="/teleprompt/angular17">
       <span>
         Angular 17
         <small>Frontend legado (frontend-angular/)</small>

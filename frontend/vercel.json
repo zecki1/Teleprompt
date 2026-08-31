@@ -1,5 +1,5 @@
 {
   "framework": "angular",
-  "buildCommand": "ng build --configuration production",
+  "buildCommand": "ng build --configuration production --base-href /teleprompt/angular22/",
   "outputDirectory": "dist/frontend/browser"
 }
