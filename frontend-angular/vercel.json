@@ -1,5 +1,5 @@
 {
   "framework": "angular",
-  "buildCommand": "ng build --configuration production --base-href /teleprompt/angular17/",
+  "buildCommand": "ng build --configuration production",
   "outputDirectory": "dist/teleprompt-frontend/browser"
 }

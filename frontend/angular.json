@@ -31,7 +31,7 @@
           },
           "configurations": {
             "production": {
-              "baseHref": "/teleprompt/angular22/",
+              "baseHref": "/",
               "budgets": [
                 {
                   "type": "initial",
