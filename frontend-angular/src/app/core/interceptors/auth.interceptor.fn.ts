@@ -9,7 +9,8 @@ const refreshTokenSubject = new BehaviorSubject<string | null>(null);
 
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const authService = inject(AuthService);
-  const token = authService.getToken();
+  const isDemo = authService.isDemo() || req.url.includes('/demo/');
+  const token = isDemo ? null : authService.getToken();
 
   if (token) {
     req = req.clone({
@@ -19,7 +20,6 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
 
   return next(req).pipe(
     catchError((error) => {
-      const isDemo = authService.isDemo();
       if (error.status === 401 && !req.url.includes('/auth/') && !isDemo) {
         if (!isRefreshing) {
           isRefreshing = true;

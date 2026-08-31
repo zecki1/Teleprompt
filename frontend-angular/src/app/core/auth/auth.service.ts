@@ -76,6 +76,11 @@ export class AuthService {
 
   /** Entra na visualização demo como admin/técnico (sem conta). */
   startDemo(view: DemoView): void {
+    localStorage.removeItem(environment.jwt.tokenKey);
+    localStorage.removeItem(environment.jwt.refreshTokenKey);
+    localStorage.removeItem('teleprompt_user');
+    this.token.set(null);
+    this.currentUser.set(null);
     this.demo.set(view);
     try {
       localStorage.setItem(DEMO_VIEW_KEY, view);

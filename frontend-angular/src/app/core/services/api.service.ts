@@ -33,7 +33,7 @@ export class ApiService {
 
   /** true quando a visualização demo (sem login) está ativa. */
   private get isDemo(): boolean {
-    return this.authService.isDemo() && !this.authService.getToken();
+    return this.authService.isDemo();
   }
 
   private get<T>(path: string, params?: Record<string, string>): Observable<T> {

@@ -52,9 +52,9 @@ export class DemoDataService {
 
   private cached: Promise<DemoBundle> | null = null;
 
-  /** Só usa dados demo em visualização demo SEM token (visita anônima). */
+  /** Usa dados demo sempre que a visualização demo estiver ativa. */
   get isDemo(): boolean {
-    return this.auth.isDemo() && !getStoredToken();
+    return this.auth.isDemo();
   }
 
   private bundle(): Promise<DemoBundle> {

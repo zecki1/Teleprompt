@@ -119,6 +119,8 @@ export class AuthStore {
 
   /** Entra na visualização demo como admin/técnico (sem conta). */
   startDemo(view: DemoView): void {
+    setStoredToken(null);
+    this._real.set(null);
     this._demo.set(view);
     try {
       localStorage.setItem(DEMO_VIEW_KEY, view);
