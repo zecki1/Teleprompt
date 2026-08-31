@@ -15,9 +15,8 @@ services:
       - secrets/backend.env
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      # CORS: origens EXATAS dos 3 frontends na Vercel (separadas por ;).
-      # Troque logo após criar os projetos na Vercel (use os domínios de produção).
-      - Cors__Origins=https://next.teleprompt.zecki1.com.br;https://angular22.teleprompt.zecki1.com.br;https://angular17.teleprompt.zecki1.com.br
+      # CORS: origens EXATAS dos 3 frontends + Next (www.zecki1.com.br) (separadas por ;).
+      - Cors__Origins=https://www.zecki1.com.br;https://zecki1.com.br;https://next.teleprompt.zecki1.com.br;https://angular22.teleprompt.zecki1.com.br;https://angular17.teleprompt.zecki1.com.br
       # SQLite persistente fora do container (os dados não podem morrer em rebuild).
       - Database__Provider=Sqlite
       - ConnectionStrings__DefaultConnection=Data Source=/app/data/teleprompt-dev.db
