@@ -486,15 +486,12 @@ function DashboardContent() {
       });
 
       allScriptsRef.current = sorted;
-      if (projectIdFilter) {
-        loadedCountRef.current = SCRIPTS_PAGE_SIZE;
-        setHasMoreScripts(false);
-        setScripts(sorted);
-      } else {
-        const count = Math.min(loadedCountRef.current, sorted.length);
-        setScripts(sorted.slice(0, count));
-        setHasMoreScripts(sorted.length > count);
-      }
+      // Carrega TODOS os roteiros de uma vez: a árvore de pastas e o
+      // agrupamento por projeto precisam do dataset completo (senão pastas
+      // e subpastas ficam ocultas — o Angular carrega tudo e mostra tudo).
+      loadedCountRef.current = Math.max(loadedCountRef.current, sorted.length);
+      setHasMoreScripts(false);
+      setScripts(sorted);
       setLoading(false);
     } catch (err) {
       console.error("ERRO CRÍTICO AO CARREGAR DADOS:", err);
