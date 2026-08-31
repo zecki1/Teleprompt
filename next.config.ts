@@ -71,9 +71,9 @@ const nextConfig: NextConfig = {
             value: [
               "default-src 'self'",
               "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://vlibras.gov.br https://cdn.jsdelivr.net",
-              "style-src 'self' 'unsafe-inline'",
+              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "img-src 'self' data: blob: https:",
-              "font-src 'self' data:",
+              "font-src 'self' data: https://fonts.gstatic.com",
               "connect-src 'self' http://localhost:5026 http://localhost:5000 ws://localhost:5026 ws://localhost:5000 wss://teleprompt-api.invalid https://teleprompt-api.invalid https://api.teleprompt.zecki1.com.br wss://api.teleprompt.zecki1.com.br https://vlibras.gov.br https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com",
               "frame-src 'none'",
               "media-src 'self' https: blob:",
