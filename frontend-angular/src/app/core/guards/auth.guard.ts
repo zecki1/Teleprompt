@@ -8,6 +8,9 @@ export class AuthGuard implements CanActivate {
   private router = inject(Router);
 
   canActivate(route: ActivatedRouteSnapshot, state: RouterStateSnapshot): boolean {
+    // Demo ativo: libera sempre sem precisar de token.
+    if (this.authService.isDemo()) return true;
+
     if (this.authService.isAuthenticated()) {
       return true;
     }

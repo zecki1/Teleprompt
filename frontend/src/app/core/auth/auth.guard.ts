@@ -8,6 +8,9 @@ export const authGuard: CanActivateFn = () => {
   const auth = inject(AuthStore);
   const router = inject(Router);
 
+  // Demo ativo: libera sem precisar de token ou bootstrap completo.
+  if (auth.isDemo()) return true;
+
   if (auth.status() === 'authenticated') return true;
 
   if (auth.status() === 'idle' && auth.token) {

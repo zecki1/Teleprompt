@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { Actions, createEffect, ofType } from '@ngrx/effects';
 import { of } from 'rxjs';
-import { map, exhaustMap, catchError, tap } from 'rxjs/operators';
+import { map, exhaustMap, catchError, tap, filter } from 'rxjs/operators';
 import { AuthService } from '@core/auth/auth.service';
 import { environment } from '@env/environment';
 import { ObservabilityService } from '@core/services/observability.service';
@@ -97,6 +97,8 @@ export class AuthEffects {
   loadUser$ = createEffect(() =>
     this.actions$.pipe(
       ofType(AuthActions.loadUser),
+      // Ignora quando o modo demo estiver ativo: evita /auth/me com token antigo
+      filter(() => !this.authService.isDemo()),
       exhaustMap(() =>
         this.authService.getMe().pipe(
           map(user => AuthActions.loadUserSuccess({ user })),

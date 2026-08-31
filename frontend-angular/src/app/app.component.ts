@@ -477,7 +477,7 @@ export class AppComponent implements OnInit {
     this.store.select(selectUser).subscribe(u => this.user.set(u));
 
     const token = this.authService.getToken();
-    if (token) {
+    if (token && !this.authService.isDemo()) {
       this.store.dispatch(AuthActions.loadUser());
     }
 
