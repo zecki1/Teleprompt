@@ -1,9 +1,13 @@
+const isBrowser = typeof window !== 'undefined';
+const isLocal = isBrowser && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const API_BASE = isLocal || !isBrowser ? 'http://localhost:5026' : 'https://api.teleprompt.zecki1.com.br';
+
 export const environment = {
   production: false,
-  apiUrl: 'http://localhost:5026/api/v1',
+  apiUrl: `${API_BASE}/api/v1`,
   signalR: {
-    scriptHubUrl: 'http://localhost:5026/hubs/script',
-    tpHubUrl: 'http://localhost:5026/hubs/tp'
+    scriptHubUrl: `${API_BASE}/hubs/script`,
+    tpHubUrl: `${API_BASE}/hubs/tp`
   },
   jwt: {
     tokenKey: 'teleprompt_token',

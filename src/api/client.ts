@@ -18,9 +18,16 @@ export const useFirebase = false;
 const DEFAULT_API_URL = "https://api.teleprompt.zecki1.com.br";
 
 export function apiBaseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || DEFAULT_API_URL
-  );
+  const envUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "");
+  if (typeof window !== "undefined") {
+    const isLocal =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1";
+    if (!isLocal && (!envUrl || envUrl.includes("localhost") || envUrl.includes("127.0.0.1"))) {
+      return DEFAULT_API_URL;
+    }
+  }
+  return envUrl || DEFAULT_API_URL;
 }
 
 export class ApiError extends Error {

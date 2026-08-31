@@ -14,12 +14,13 @@ const AUTH_PATHS = [
   `${API_PREFIX}/auth/login`,
   `${API_PREFIX}/auth/register`,
   `${API_PREFIX}/auth/refresh`,
+  `${API_PREFIX}/demo/`,
 ];
 
 let refreshInFlight: Promise<string | null> | null = null;
 
 function isAuthPath(url: string): boolean {
-  return AUTH_PATHS.some((p) => url.includes(p));
+  return AUTH_PATHS.some((p) => url.includes(p)) || url.includes('/demo/');
 }
 
 /** Renova o JWT uma única vez mesmo com várias requisições 401 concorrentes. */
