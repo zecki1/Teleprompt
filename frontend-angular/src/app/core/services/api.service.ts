@@ -1,7 +1,10 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams, HttpHeaders } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, of } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { environment } from '@env/environment';
+import { AuthService } from '../auth/auth.service';
+import { DemoDataService } from './demo-data.service';
 import {
   User, UpdateProfileRequest, UpdatePermissionsRequest
 } from '../models/user.model';
@@ -23,7 +26,15 @@ import { Presenter, CreatePresenterRequest, Activity, Report, DebugLog, ErrorRep
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
+  private authService = inject(AuthService);
+  private demoData = inject(DemoDataService);
+
   constructor(private http: HttpClient) {}
+
+  /** true quando a visualização demo (sem login) está ativa. */
+  private get isDemo(): boolean {
+    return this.authService.isDemo() && !this.authService.getToken();
+  }
 
   private get<T>(path: string, params?: Record<string, string>): Observable<T> {
     let httpParams = new HttpParams();
@@ -53,7 +64,8 @@ export class ApiService {
   getMe = () => this.get<User>('/auth/me');
 
   // Users
-  getUsers = () => this.get<User[]>('/users');
+  getUsers = (): Observable<User[]> =>
+    this.isDemo ? this.demoData.users() : this.get<User[]>('/users');
   getUser = (id: string) => this.get<User>(`/users/${id}`);
   updateProfile = (request: UpdateProfileRequest) => this.put<User>('/users/me', request);
   updatePermissions = (id: string, request: UpdatePermissionsRequest) =>
@@ -61,9 +73,11 @@ export class ApiService {
   deleteUser = (id: string) => this.delete<void>(`/users/${id}`);
 
   // Workspaces
-  getMyWorkspaces = () => this.get<Workspace[]>('/workspaces/mine');
+  getMyWorkspaces = (): Observable<Workspace[]> =>
+    this.isDemo ? this.demoData.workspace().pipe(map(w => [w])) : this.get<Workspace[]>('/workspaces/mine');
   createWorkspace = (request: CreateWorkspaceRequest) => this.post<Workspace>('/workspaces', request);
-  getWorkspace = (id: string) => this.get<Workspace>(`/workspaces/${id}`);
+  getWorkspace = (id: string) =>
+    this.isDemo ? this.demoData.workspace() : this.get<Workspace>(`/workspaces/${id}`);
   updateWorkspace = (id: string, request: CreateWorkspaceRequest) => this.put<Workspace>(`/workspaces/${id}`, request);
   joinWorkspace = (request: JoinWorkspaceRequest) => this.post<Workspace>('/workspaces/join', request);
   addWorkspaceMember = (id: string, request: AddMemberRequest) => this.post<ApiMessage>(`/workspaces/${id}/members`, request);
@@ -83,26 +97,23 @@ export class ApiService {
   getTeamMembers = (id: string) => this.get<string[]>(`/teams/${id}/members`);
 
   // Projects
-  getProjects = (workspaceId?: string) => {
-    const params: Record<string, string> = {};
-    if (workspaceId) params['workspaceId'] = workspaceId;
-    return this.get<Project[]>('/projects', params);
-  };
+  getProjects = (workspaceId?: string): Observable<Project[]> =>
+    this.isDemo ? this.demoData.projects() : this.get<Project[]>('/projects', workspaceId ? { workspaceId } : {});
   createProject = (request: CreateProjectRequest) => this.post<Project>('/projects', request);
   getProject = (id: string) => this.get<Project>(`/projects/${id}`);
   updateProject = (id: string, request: CreateProjectRequest) => this.put<Project>(`/projects/${id}`, request);
   deleteProject = (id: string) => this.delete<void>(`/projects/${id}`);
-  getProjectScripts = (id: string) => this.get<Script[]>(`/projects/${id}/scripts`);
+  getProjectScripts = (id: string) =>
+    this.isDemo ? this.demoData.scripts().pipe(map(s => s.filter(x => x.projectId === id))) : this.get<Script[]>(`/projects/${id}/scripts`);
 
   // Scripts
-  getScripts = (projectId?: string, workspaceId?: string) => {
-    const params: Record<string, string> = {};
-    if (projectId) params['projectId'] = projectId;
-    if (workspaceId) params['workspaceId'] = workspaceId;
-    return this.get<Script[]>('/scripts', params);
-  };
+  getScripts = (projectId?: string, workspaceId?: string): Observable<Script[]> =>
+    this.isDemo
+      ? this.demoData.scripts().pipe(map(s => (projectId ? s.filter(x => x.projectId === projectId) : s)))
+      : this.get<Script[]>('/scripts', { ...(projectId ? { projectId } : {}), ...(workspaceId ? { workspaceId } : {}) });
   createScript = (request: CreateScriptRequest) => this.post<Script>('/scripts', request);
-  getScript = (id: string) => this.get<Script>(`/scripts/${id}`);
+  getScript = (id: string) =>
+    this.isDemo ? this.demoData.script(id) : this.get<Script>(`/scripts/${id}`);
   updateScript = (id: string, request: UpdateScriptRequest) => this.put<Script>(`/scripts/${id}`, request);
   deleteScript = (id: string) => this.delete<void>(`/scripts/${id}`);
   parseScript = (request: ParseRequest) => this.post<unknown>('/scripts/parse', request);
@@ -131,14 +142,15 @@ export class ApiService {
     this.post<ApiMessage>(`/tp/sessions/${id}/recorded`, { scriptId });
 
   // Presenters
-  getPresenters = () => this.get<Presenter[]>('/presenters');
+  getPresenters = (): Observable<Presenter[]> =>
+    this.isDemo ? this.demoData.presenters() : this.get<Presenter[]>('/presenters');
   createPresenter = (request: CreatePresenterRequest) => this.post<Presenter>('/presenters', request);
   updatePresenter = (id: string, request: CreatePresenterRequest) => this.put<Presenter>(`/presenters/${id}`, request);
   deletePresenter = (id: string) => this.delete<void>(`/presenters/${id}`);
 
   // Activities
-  getActivities = (page = 1, pageSize = 50) =>
-    this.get<Activity[]>('/activities', { page: page.toString(), pageSize: pageSize.toString() });
+  getActivities = (page = 1, pageSize = 50): Observable<Activity[]> =>
+    this.isDemo ? this.demoData.activities() : this.get<Activity[]>('/activities', { page: page.toString(), pageSize: pageSize.toString() });
 
   // Reports
   getReports = (workspaceId?: string) => {

@@ -17,12 +17,16 @@ import { toast } from "sonner";
 import { Briefcase, Key, Sparkles, ArrowRight, Hourglass } from "lucide-react";
 
 export function WelcomeModal() {
-  const { user, setupInitialWorkspace, joinWorkspaceByToken } = useAuth();
+  const { user, demoView, setupInitialWorkspace, joinWorkspaceByToken } = useAuth();
   const [open, setOpen] = useState(true);
   const [step, setStep] = useState<"choose" | "create" | "join">("choose");
   const [workspaceName, setWorkspaceName] = useState("");
   const [inviteToken, setInviteToken] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Visualização demo já traz um workspace fictício pronto (Estúdio Pixel):
+  // não abre o onboarding de criação de workspace durante a demonstração.
+  if (demoView) return null;
 
   const isNewUser = user && (!user.workspaces || user.workspaces.length === 0);
 
@@ -136,7 +140,9 @@ export function WelcomeModal() {
                 Criar Workspace
               </DialogTitle>
               <DialogDescription>
-                Dê um nome para seu workspace. Você poderá convitar sua equipe depois.
+                Aqui você cria seu próprio workspace <strong>isolado</strong> — apenas
+                você (como admin) pode vê-lo e convidar outras pessoas para ele. Seus
+                projetos e roteiros ficam separados dos demais usuários.
               </DialogDescription>
             </DialogHeader>
 

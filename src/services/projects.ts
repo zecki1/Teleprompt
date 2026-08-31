@@ -11,6 +11,7 @@ import { listScripts } from "@/api/scripts";
 import { toProject, toScriptDoc } from "@/lib/script-mappers";
 import type { ProjectDto } from "@/api/types";
 import { ScriptDoc } from "@/types/script";
+import { isPublicDemoMode, getDemoProjects, getDemoScripts } from "@/services/demo-data";
 
 export interface ProjectLink {
   label: string;
@@ -44,6 +45,10 @@ function mapProject(dto: ProjectDto): Project {
 
 export async function fetchProjects(workspaceId: string, isSuperAdmin?: boolean): Promise<Project[]> {
   try {
+    if (isPublicDemoMode()) {
+      const dtos = await getDemoProjects();
+      return dtos.map(mapProject);
+    }
     const dtos = await listProjects(isSuperAdmin ? undefined : workspaceId);
     return dtos.map(mapProject);
   } catch (error) {
@@ -77,7 +82,9 @@ export async function deleteProject(projectId: string): Promise<void> {
 
 export async function getScriptsByWorkspace(workspaceId: string, isSuperAdmin?: boolean): Promise<ScriptDoc[]> {
   try {
-    const dtos = await listScripts({ workspaceId: isSuperAdmin ? undefined : workspaceId });
+    const dtos = isPublicDemoMode()
+      ? await getDemoScripts()
+      : await listScripts({ workspaceId: isSuperAdmin ? undefined : workspaceId });
     return dtos.map(toScriptDoc);
   } catch (error) {
     console.error("Erro ao buscar scripts:", error);
@@ -87,7 +94,9 @@ export async function getScriptsByWorkspace(workspaceId: string, isSuperAdmin?: 
 
 export async function getScriptsByProject(projectId: string): Promise<ScriptDoc[]> {
   try {
-    const dtos = await listProjectScripts(projectId);
+    const dtos = isPublicDemoMode()
+      ? (await getDemoScripts()).filter((s) => s.projectId === projectId)
+      : await listProjectScripts(projectId);
     return dtos.map(toScriptDoc);
   } catch (error) {
     console.error("Erro ao buscar roteiros do projeto:", error);

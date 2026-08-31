@@ -84,3 +84,20 @@ public record ErrorReportDto(string Id, string? UserId, string? ScreenshotUrl, s
 public record DebugLogDto(string Id, string Level, string Source, string Message, string CreatedAt);
 
 public record ApiMessage(string Message);
+
+// ---- Dados de demonstração (degustação sem login, 100% fictícios) ----
+// Dataset orgânico e isolado do banco real (LGPD): nenhum registro de
+// cliente/SENAI é exposto aqui. Serve apenas para explorar a UI.
+public record DemoWorkspaceDto(
+    WorkspaceDto Workspace,
+    List<DemoUserDto> Users,
+    List<PresenterDto> Presenters,
+    List<ProjectDto> Projects,
+    List<ScriptDto> Scripts,
+    List<ActivityDto> Activities);
+
+public record DemoUserDto(
+    string Id, string Email, string DisplayName, string Role,
+    bool IsSuperAdmin, bool IsEditor, bool IsRevisor, bool CanRevert,
+    bool CanViewAdmin, bool CanViewReports, bool CanViewActivityHistory,
+    bool RequiresChecklist, string WorkspaceId);

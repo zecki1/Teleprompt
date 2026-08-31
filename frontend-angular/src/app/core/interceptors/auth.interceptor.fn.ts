@@ -19,7 +19,8 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
 
   return next(req).pipe(
     catchError((error) => {
-      if (error.status === 401 && !req.url.includes('/auth/')) {
+      const isDemo = authService.isDemo();
+      if (error.status === 401 && !req.url.includes('/auth/') && !isDemo) {
         if (!isRefreshing) {
           isRefreshing = true;
           refreshTokenSubject.next(null);

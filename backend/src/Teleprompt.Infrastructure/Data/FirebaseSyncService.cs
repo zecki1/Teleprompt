@@ -607,13 +607,20 @@ public class FirebaseSyncService
             ct.ThrowIfCancellationRequested();
             if (!await _db.Scripts.AnyAsync(s => s.Id == scriptDoc.Id, ct)) continue;
 
+            // Deduplicação dentro do MESMO script antes do SaveChanges: o check no
+            // banco (AnyAsync) não enxerga entidades ainda não persistidas no lote,
+            // então documentos duplicados do Firestore quebravam a UNIQUE constraint.
+            var seenVersions = new HashSet<(string ScriptId, int VersionNumber)>();
+            var seenComments = new HashSet<string>();
+
             var versions = await scriptDoc.Reference.Collection("versions").GetSnapshotAsync(ct);
             foreach (var doc in versions.Documents)
             {
                 var data = doc.ToDictionary();
                 var versionNumber = GetInt(data, "versionNumber", 1);
+                var key = (scriptDoc.Id, versionNumber);
                 var exists = await _db.Versions.AnyAsync(v => v.ScriptId == scriptDoc.Id && v.VersionNumber == versionNumber, ct);
-                if (exists) { report.VersionsSkipped++; continue; }
+                if (exists || !seenVersions.Add(key)) { report.VersionsSkipped++; continue; }
 
                 _db.Versions.Add(new ScriptVersion
                 {
@@ -631,6 +638,7 @@ public class FirebaseSyncService
             foreach (var doc in comments.Documents)
             {
                 var data = doc.ToDictionary();
+                if (!seenComments.Add(doc.Id)) { report.CommentsSkipped++; continue; }
                 if (await _db.Comments.AnyAsync(c => c.Id == doc.Id, ct)) { report.CommentsSkipped++; continue; }
 
                 _db.Comments.Add(new Comment

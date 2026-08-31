@@ -143,7 +143,8 @@ export function CreateOrJoinWorkspaceModal({ open, onOpenChange }: Props) {
                 Criar Workspace
               </DialogTitle>
               <DialogDescription>
-                Dê um nome para seu workspace.
+                Aqui você cria seu próprio workspace <strong>isolado</strong> — apenas
+                você (como admin) pode vê-lo e convidar outras pessoas para ele.
               </DialogDescription>
             </DialogHeader>
 

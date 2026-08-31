@@ -3,18 +3,21 @@ import { inject, Injectable } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 
 import { API_BASE_URL, API_PREFIX } from '../config';
+import { DemoDataService } from './demo-data.service';
 import type { ProjectDto, ScriptDto, ApiMessage, CreateScriptRequest } from './types';
 
 @Injectable({ providedIn: 'root' })
 export class ProjectsService {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = inject(API_BASE_URL);
+  private readonly demo = inject(DemoDataService);
 
   private url(path = ''): string {
     return `${this.baseUrl}${API_PREFIX}/projects${path}`;
   }
 
   list(workspaceId?: string): Promise<ProjectDto[]> {
+    if (this.demo.isDemo) return this.demo.projects();
     const params: Record<string, string> = {};
     if (workspaceId) params['workspaceId'] = workspaceId;
     return firstValueFrom(this.http.get<ProjectDto[]>(this.url(), { params }));
@@ -39,6 +42,7 @@ export class ProjectsService {
   }
 
   scriptsOf(projectId: string): Promise<ScriptDto[]> {
+    if (this.demo.isDemo) return this.demo.scriptsOf(projectId);
     return firstValueFrom(
       this.http.get<ScriptDto[]>(this.url(`/${projectId}/scripts`)),
     );
@@ -49,21 +53,32 @@ export class ProjectsService {
 export class ScriptsService {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = inject(API_BASE_URL);
+  private readonly demo = inject(DemoDataService);
 
   private url(path = ''): string {
     return `${this.baseUrl}${API_PREFIX}/scripts${path}`;
   }
 
-  list(
+  async list(
     params: { projectId?: string; workspaceId?: string } = {},
   ): Promise<ScriptDto[]> {
+    if (this.demo.isDemo) {
+      return params.projectId
+        ? this.demo.scriptsOf(params.projectId)
+        : this.demo.scripts();
+    }
     const query: Record<string, string> = {};
     if (params.projectId) query['projectId'] = params.projectId;
     if (params.workspaceId) query['workspaceId'] = params.workspaceId;
     return firstValueFrom(this.http.get<ScriptDto[]>(this.url(), { params: query }));
   }
 
-  get(id: string): Promise<ScriptDto> {
+  async get(id: string): Promise<ScriptDto> {
+    if (this.demo.isDemo) {
+      const s = await this.demo.script(id);
+      if (!s) throw new Error(`Roteiro ${id} não encontrado na demo.`);
+      return s;
+    }
     return firstValueFrom(this.http.get<ScriptDto>(this.url(`/${id}`)));
   }
 

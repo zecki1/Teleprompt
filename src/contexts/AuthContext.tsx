@@ -11,6 +11,7 @@ import { listTeams } from "@/api/teams";
 import { listUsers } from "@/api/users";
 import type { UserDto } from "@/api/types";
 import { isDemoWorkspaceName } from "@/services/demo";
+import { isPublicDemoMode, getDemoUsers, getDemoWorkspace, clearDemoCache } from "@/services/demo-data";
 
 import { addKnownAccount } from "@/lib/account-storage";
 import { setDebugUserContext } from "@/lib/debug-log";
@@ -353,6 +354,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [currentWorkspace?.id, currentWorkspace?.name]);
 
+  // Demo pública (sem login): popula workspaces/usuários com o dataset fictício
+  // para as telas de administração e cabeçalho exibirem dados da demonstração.
+  useEffect(() => {
+    let cancelled = false;
+    const hydrateDemo = async () => {
+      if (!isPublicDemoMode()) {
+        setCurrentWorkspace(null);
+        setUserWorkspacesDetailed([]);
+        setAllUsers([]);
+        return;
+      }
+      try {
+        const [ws, users] = await Promise.all([getDemoWorkspace(), getDemoUsers()]);
+        if (cancelled) return;
+        const wsDto = workspaceToDto(ws);
+        setCurrentWorkspace(wsDto);
+        setUserWorkspacesDetailed([wsDto]);
+        setAllUsers(
+          users.map((u) => ({
+            uid: u.id,
+            email: u.email ?? "demo@estudiopixel.demo",
+            displayName: u.displayName ?? undefined,
+            name: u.displayName ?? undefined,
+            role: toRole(u.role),
+            isSuperAdmin: u.isSuperAdmin,
+            canCollaborate: u.isEditor,
+            isEditor: u.isEditor,
+            isRevisor: u.isRevisor,
+            canRevert: u.canRevert,
+            canViewAdmin: u.canViewAdmin,
+            canViewReports: u.canViewReports,
+            canViewActivityHistory: u.canViewActivityHistory,
+            canViewDebugLogs: u.isSuperAdmin,
+            canAssign: u.isSuperAdmin,
+            requiresChecklist: u.requiresChecklist,
+            status: "active",
+            workspaceId: u.workspaceId,
+            workspaces: [u.workspaceId],
+            avatarUrl: "",
+            photoURL: null,
+          })),
+        );
+      } catch {
+        if (!cancelled) {
+          setCurrentWorkspace(null);
+          setAllUsers([]);
+        }
+      }
+    };
+    void hydrateDemo();
+    return () => {
+      cancelled = true;
+    };
+  }, [demoView, realUser?.uid]);
+
   // Workspaces que não são demo não têm recursos de demonstração: se o usuário
   // real está num workspace comum, a visão demo é desativada automaticamente.
   useEffect(() => {
@@ -541,6 +597,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // ignore
     }
+    if (!view) clearDemoCache();
     writeDemoCookie(view);
   };
 
