@@ -11,8 +11,7 @@ import { routes } from './app.routes';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { AuthStore } from './core/auth/auth.store';
 import { API_BASE_URL } from './core/config';
-
-const API_BASE = 'https://api.teleprompt.zecki1.com.br';
+import { environment } from '../environments/environment';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -20,6 +19,6 @@ export const appConfig: ApplicationConfig = {
     provideRouter(routes, withComponentInputBinding()),
     provideHttpClient(withInterceptors([authInterceptor])),
     provideAppInitializer(() => inject(AuthStore).bootstrap()),
-    { provide: API_BASE_URL, useValue: API_BASE },
+    { provide: API_BASE_URL, useValue: environment.apiUrl },
   ],
 };

@@ -8,6 +8,7 @@ import {
 } from "@/api/presenters";
 import { toPresenter } from "@/lib/script-mappers";
 import type { PresenterDto } from "@/api/types";
+import { isPublicDemoMode, getDemoPresenters } from "@/services/demo-data";
 
 export interface Presenter {
   id: string;
@@ -24,7 +25,7 @@ export const addPresenter = async (name: string, _workspaceId: string, _userId: 
 
 export const getPresenters = async (workspaceId: string): Promise<Presenter[]> => {
   try {
-    const dtos = await listPresenters();
+    const dtos = isPublicDemoMode() ? await getDemoPresenters() : await listPresenters();
     return dtos.map((dto: PresenterDto) => ({ ...toPresenter(dto), workspaceId }));
   } catch (error) {
     console.error("Erro ao buscar apresentadores:", error);

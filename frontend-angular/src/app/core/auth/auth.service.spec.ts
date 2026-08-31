@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { AuthService } from './auth.service';
 import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
 import { Router } from '@angular/router';
+import { Store } from '@ngrx/store';
 import { environment } from '@env/environment';
 
 describe('AuthService', () => {
@@ -16,7 +17,8 @@ describe('AuthService', () => {
       imports: [HttpClientTestingModule],
       providers: [
         AuthService,
-        { provide: Router, useValue: routerSpy }
+        { provide: Router, useValue: routerSpy },
+        { provide: Store, useValue: { dispatch: jasmine.createSpy('dispatch') } }
       ]
     });
 

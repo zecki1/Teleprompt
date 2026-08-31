@@ -75,6 +75,7 @@ import { exportAllToWord } from "@/lib/export-all-word";
 import { exportAllToPPT } from "@/lib/export-all-ppt";
 import { Presenter, getPresenters } from "@/services/presenters";
 import { BulkAssignDialog } from "@/components/dashboard/BulkAssignDialog";
+import { isPublicDemoMode } from "@/services/demo-data";
 
 type ScriptCategory = "video" | "podcast";
 
@@ -458,8 +459,9 @@ function DashboardContent() {
   const loadScripts = useCallback(async () => {
     const activeWorkspaceId = user?.workspaceId || "";
     const isSuper = user?.isSuperAdmin;
+    const demo = isPublicDemoMode();
 
-    if (authLoading || !user?.uid || (!activeWorkspaceId && !isSuper)) {
+    if (authLoading || !user?.uid || (!demo && !activeWorkspaceId && !isSuper)) {
       return;
     }
 
@@ -514,7 +516,7 @@ function DashboardContent() {
       return;
     }
     
-    if (!activeWorkspaceId && !isSuper) {
+    if (!isPublicDemoMode() && !activeWorkspaceId && !isSuper) {
       setScripts([]);
       setLoading(false);
       return;

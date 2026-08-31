@@ -28,7 +28,9 @@ describe('AuthGuard', () => {
   });
 
   it('should allow access when authenticated', () => {
-    const authService = TestBed.inject(AuthService);
+    const authService = TestBed.inject(AuthService) as unknown as {
+      isAuthenticated: ReturnType<typeof signal<boolean>>;
+    };
     authService.isAuthenticated.set(true);
     const mockRoute = { data: {} } as any;
     const mockState = { url: '/dashboard' } as any;
@@ -37,7 +39,9 @@ describe('AuthGuard', () => {
   });
 
   it('should deny access and redirect when not authenticated', () => {
-    const authService = TestBed.inject(AuthService);
+    const authService = TestBed.inject(AuthService) as unknown as {
+      isAuthenticated: ReturnType<typeof signal<boolean>>;
+    };
     authService.isAuthenticated.set(false);
     const mockRoute = { data: {} } as any;
     const mockState = { url: '/dashboard' } as any;

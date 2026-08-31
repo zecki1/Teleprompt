@@ -13,12 +13,9 @@
 # testing
 /coverage
 
-# next.js
-/.next/
-/out/
-
-# production
-/build
+# angular build/cache
+/dist
+/.angular/cache
 
 # misc
 .DS_Store

@@ -34,8 +34,8 @@ describe('AuthEffects', () => {
     canAssign: false,
     requiresChecklist: true,
     status: UserStatus.Active,
-    workspaceId: null,
-    avatarUrl: null
+    workspaceId: undefined,
+    avatarUrl: undefined
   };
 
   const mockResponse: AuthResponse = {
@@ -75,7 +75,7 @@ describe('AuthEffects', () => {
     });
 
     it('should dispatch loginFailure on error', (done) => {
-      const error = { error: { message: 'Invalid credentials' } };
+      const error = { status: 401, error: { message: 'Invalid credentials' } };
       authServiceSpy.login.and.returnValue(throwError(() => error));
 
       actions$ = of(AuthActions.login({ request: { email: 'test@test.com', password: 'wrong' } }));
