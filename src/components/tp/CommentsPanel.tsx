@@ -3,10 +3,11 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { listComments, addComment, resolveComment } from "@/api/comments";
 import { listUsers } from "@/api/users";
-import { toComment } from "@/lib/script-mappers";
+import { toComment, toActivity } from "@/lib/script-mappers";
 import { toDate } from "@/lib/data-utils";
 import { usePolling } from "@/lib/polling";
 import { useAuth } from "@/contexts/AuthContext";
+import { isPublicDemoMode, getDemoActivities } from "@/services/demo-data";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,6 +35,7 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
   const [userMap, setUserMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    if (isPublicDemoMode()) return;
     let active = true;
     listUsers()
       .then((dtos) => {
@@ -53,6 +55,29 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
   }, []);
 
   const loadComments = useCallback(async () => {
+    if (isPublicDemoMode()) {
+      try {
+        const dtos = await getDemoActivities();
+        const list: Comment[] = dtos
+          .filter((dto) => dto.type === "Comment")
+          .map((dto) => {
+            const local = toActivity(dto);
+            return {
+              id: local.id,
+              text: local.description || "Comentário de demonstração",
+              userId: local.userId ?? "",
+              userName: local.userId ? userMap[local.userId] || "Usuário" : "Sistema",
+              createdAt: local.createdAt,
+              isResolved: false,
+            };
+          });
+        list.sort((a, b) => toDate(b.createdAt).getTime() - toDate(a.createdAt).getTime());
+        setComments(list);
+      } catch (error) {
+        console.error("Error loading comments (demo):", error);
+      }
+      return;
+    }
     try {
       const dtos = await listComments(scriptId);
       const list: Comment[] = dtos.map((dto) => {
@@ -77,10 +102,14 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
     loadComments();
   }, [loadComments]);
 
-  usePolling(loadComments, 5000, [loadComments]);
+  usePolling(loadComments, 5000, isPublicDemoMode() ? [] : [loadComments]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isPublicDemoMode()) {
+      setNewComment("");
+      return;
+    }
     if (!newComment.trim() || !user) return;
 
     setIsSending(true);
@@ -186,6 +215,11 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
       </div>
 
       <div className="p-4 border-t border-zinc-800 bg-zinc-950/50 backdrop-blur-sm">
+        {isPublicDemoMode() ? (
+          <p className="text-[11px] text-zinc-500 text-center font-medium py-3">
+            Comentários desabilitados no modo demonstração.
+          </p>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-3">
           <Textarea
             value={newComment}
@@ -205,6 +239,7 @@ export function CommentsPanel({ scriptId, onClose, hasFooter }: { scriptId: stri
             )}
           </Button>
         </form>
+        )}
       </div>
     </div>
   );

@@ -1,0 +1,11 @@
+{
+  "$comment": "Aplicar neste arquivo: o vercel.json do projeto Vercel do domínio zecki1.com.br (NÃO está neste repo). Leia deploy/SITE_URLS.md antes. Estes rewrites fazem proxy para os subdomínios atuais preservando o prefixo /teleprompt/* — exigem que cada subapp tenha basePath/baseHref definido conforme a Opção A do deploy/SITE_URLS.md.",
+  "rewrites": [
+    { "source": "/teleprompt/next/:path*", "destination": "https://next.teleprompt.zecki1.com.br/teleprompt/next/:path*" },
+    { "source": "/teleprompt/angular22/:path*", "destination": "https://angular22.teleprompt.zecki1.com.br/teleprompt/angular22/:path*" },
+    { "source": "/teleprompt/angular17/:path*", "destination": "https://angular17.teleprompt.zecki1.com.br/teleprompt/angular17/:path*" },
+    { "source": "/teleprompt/next", "destination": "https://next.teleprompt.zecki1.com.br/teleprompt/next" },
+    { "source": "/teleprompt/angular22", "destination": "https://angular22.teleprompt.zecki1.com.br/teleprompt/angular22" },
+    { "source": "/teleprompt/angular17", "destination": "https://angular17.teleprompt.zecki1.com.br/teleprompt/angular17" }
+  ]
+}

@@ -4,83 +4,138 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Teleprompt — Escolha a versão</title>
+  <meta name="description" content="Plataforma de teleprompter e roteiros. Escolha a versão: Next.js, Angular 22 ou Angular 17. Todas usam a mesma API e os mesmos dados.">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #f7f7fb;
+      --card: #ffffff;
+      --ink: #18181b;
+      --muted: #63636b;
+      --line: #e5e5ea;
+      --brand: #6161ff;
+      --brand-soft: #eef0ff;
+    }
     body {
       min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
-      background: #0f0f13;
-      color: #e4e4e7;
-      padding: 1rem;
-    }
-    .card {
-      max-width: 560px;
-      width: 100%;
-      background: #18181b;
-      border: 1px solid #27272a;
-      border-radius: 16px;
-      padding: 2rem;
-      text-align: center;
-      box-shadow: 0 25px 50px -12px rgba(0,0,0,.6);
-    }
-    .logo {
-      font-size: 1.6rem;
-      font-weight: 800;
-      letter-spacing: .5px;
-    }
-    .logo span { color: #6161ff; }
-    .subtitle {
-      margin: .5rem 0 1.75rem;
-      color: #a1a1aa;
-      font-size: .95rem;
-    }
-    .btn {
+      background: var(--bg);
+      color: var(--ink);
+      padding: 2rem 1rem;
       display: flex;
+      flex-direction: column;
       align-items: center;
-      justify-content: space-between;
-      width: 100%;
-      padding: 1rem 1.25rem;
-      margin-bottom: .75rem;
-      border-radius: 12px;
-      border: 1px solid #27272a;
-      background: #212126;
-      color: #e4e4e7;
-      font-size: 1.05rem;
-      font-weight: 600;
-      text-decoration: none;
-      transition: border-color .15s, background .15s, transform .1s;
     }
-    .btn:hover { border-color: #6161ff; background: #2a2a31; transform: translateY(-1px); }
-    .btn small { display: block; font-weight: 400; color: #a1a1aa; margin-top: 2px; }
-    .btn .arrow { font-size: 1.3rem; color: #6161ff; }
-    .footer { margin-top: 1.5rem; font-size: .8rem; color: #71717a; }
+    .wrap { width: 100%; max-width: 1080px; }
+    header { text-align: center; margin-bottom: 2rem; }
+    .logo { font-size: 1.7rem; font-weight: 800; letter-spacing: .5px; }
+    .logo span { color: var(--brand); }
+    .subtitle { margin-top: .4rem; color: var(--muted); font-size: 1rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: .9rem;
+      box-shadow: 0 10px 30px -18px rgba(0,0,0,.25);
+      transition: transform .12s, box-shadow .12s, border-color .12s;
+    }
+    .card:hover { transform: translateY(-3px); box-shadow: 0 20px 40px -20px rgba(0,0,0,.35); border-color: var(--brand); }
+    .badge {
+      align-self: flex-start;
+      font-size: .68rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      padding: .28rem .6rem;
+      border-radius: 999px;
+      background: var(--brand-soft);
+      color: var(--brand);
+    }
+    .card h2 { font-size: 1.25rem; }
+    .desc { color: var(--muted); font-size: .9rem; line-height: 1.5; min-height: 3rem; }
+    .features { list-style: none; display: flex; flex-direction: column; gap: .35rem; font-size: .86rem; color: var(--ink); }
+    .features li { display: flex; gap: .5rem; align-items: baseline; }
+    .features li::before { content: "✓"; color: var(--brand); font-weight: 800; }
+    .version { font-size: .78rem; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .btn {
+      margin-top: auto;
+      display: block;
+      text-align: center;
+      text-decoration: none;
+      padding: .8rem 1rem;
+      border-radius: 12px;
+      background: var(--brand);
+      color: #fff;
+      font-weight: 700;
+      transition: filter .12s;
+    }
+    .btn:hover { filter: brightness(1.06); }
+    footer { margin-top: 2rem; text-align: center; color: var(--muted); font-size: .82rem; }
+    footer code { background: #eeeef3; padding: .1rem .35rem; border-radius: 6px; }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f0f13; --card: #18181b; --ink: #e4e4e7; --muted: #a1a1aa;
+        --line: #27272a; --brand-soft: #26263a;
+      }
+      footer code { background: #212126; }
+    }
   </style>
 </head>
 <body>
-  <div class="card">
-    <p class="logo">▸ Tele<span>prompt</span></p>
-    <p class="subtitle">Escolha a versão que você quer acessar</p>
+  <div class="wrap">
+    <header>
+      <p class="logo">▸ Tele<span>prompt</span></p>
+      <p class="subtitle">Uma plataforma de teleprompter e roteiros em 3 versões — todas consomem a mesma API e os mesmos dados.</p>
+    </header>
 
-    <!-- EDITAR: troque os hrefs abaixo pelas URLs reais da Vercel (ou use os subdomínios). -->
-    <a class="btn" href="https://next.teleprompt.zecki1.com.br">
-      <span>Next.js<small>Aplicação principal (recomendada)</small></span>
-      <span class="arrow">→</span>
-    </a>
+    <main class="grid">
+      <a class="card" href="/teleprompt/next">
+        <span class="badge">Recomendado</span>
+        <h2>Next.js</h2>
+        <p class="desc">App Router, React 19, Tailwind, React Query e SignalR. Versão flagship, moderna e minimalista.</p>
+        <ul class="features">
+          <li>Editor de roteiro com cenas e marcadores</li>
+          <li>Teleprompter com espelhos sincronizados</li>
+          <li>Organização por pastas e subpastas</li>
+        </ul>
+        <span class="version">/teleprompt/next</span>
+        <span class="btn">Acessar Next.js →</span>
+      </a>
 
-    <a class="btn" href="https://angular22.teleprompt.zecki1.com.br">
-      <span>Angular 22<small>Frontend novo (frontend/)</small></span>
-      <span class="arrow">→</span>
-    </a>
+      <a class="card" href="/teleprompt/angular22">
+        <span class="badge">Frontend novo</span>
+        <h2>Angular 22</h2>
+        <p class="desc">Vite + Signals, inspirado no Monday. Interface de gestão clara e focada em colaboração.</p>
+        <ul class="features">
+          <li>Dashboard de projetos e roteiros</li>
+          <li>Gerenciamento de times e permissões</li>
+          <li>Tema inspirado no Monday</li>
+        </ul>
+        <span class="version">/teleprompt/angular22</span>
+        <span class="btn">Acessar Angular 22 →</span>
+      </a>
 
-    <a class="btn" href="https://angular17.teleprompt.zecki1.com.br">
-      <span>Angular 17<small>Frontend antigo (frontend-angular/)</small></span>
-      <span class="arrow">→</span>
-    </a>
+      <a class="card" href="/teleprompt/angular17">
+        <span class="badge">Frontend legado</span>
+        <h2>Angular 17</h2>
+        <p class="desc">Versão madura com NgRx e visual retrô/simples. Estável e enxuta.</p>
+        <ul class="features">
+          <li>Fluxo completo de roteiro e gravação</li>
+          <li>Teleprompter embutido</li>
+          <li>Visual retro simples (estilo Apple)</li>
+        </ul>
+        <span class="version">/teleprompt/angular17</span>
+        <span class="btn">Acessar Angular 17 →</span>
+      </a>
+    </main>
 
-    <p class="footer">As três versões usam a mesma API e os mesmos dados.</p>
+    <footer>
+      <p>As três versões usam a mesma API (<code>api.teleprompt.zecki1.com.br</code>) e o mesmo banco de dados.</p>
+    </footer>
   </div>
 </body>
 </html>

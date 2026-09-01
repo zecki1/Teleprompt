@@ -71,6 +71,7 @@ import { toDate } from "@/lib/data-utils";
 import { usePolling } from "@/lib/polling";
 import { listActivities } from "@/api/activities";
 import { toActivity } from "@/lib/script-mappers";
+import { isPublicDemoMode, getDemoUsers, getDemoWorkspace, getDemoActivities } from "@/services/demo-data";
 import { Presenter, getPresenters, addPresenter, deletePresenter, updatePresenter as updatePresenterService } from "@/services/presenters";
 import { DebugLogsPanel } from "@/components/admin/DebugLogsPanel";
 import { DemoSetupPanel } from "@/components/admin/DemoSetupPanel";
@@ -147,6 +148,7 @@ interface ActivityItem {
 export default function AdminPage() {
   const { user } = useAuth();
   const router = useRouter();
+  const isDemo = isPublicDemoMode();
   const [usersList, setUsersList] = useState<ExtendedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
@@ -161,6 +163,10 @@ export default function AdminPage() {
   const [savingPresenter, setSavingPresenter] = useState(false);
   
   const handleCopyInvite = () => {
+    if (isDemo) {
+      toast.error("Ações de convite indisponíveis no modo demonstração.");
+      return;
+    }
     if (!user?.workspaceId) {
       toast.error("Você não está vinculado a um workspace.");
       return;
@@ -171,6 +177,11 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
+    if (isDemo) {
+      loadActivities();
+      return;
+    }
+
     const canAccess = user?.role === "SuperAdmin" || user?.isSuperAdmin === true || user?.canViewAdmin === true;
     
     if (user && !canAccess) {
@@ -182,10 +193,47 @@ export default function AdminPage() {
       loadActivities();
       loadPresenters();
     }
-  }, [user, router]);
+  }, [user, router, isDemo]);
 
   // Lista de usuários via REST (atualização periódica para refletir mudanças de permissões sem reload)
   const loadUsers = async () => {
+    if (isDemo) {
+      try {
+        const demoUsers = await getDemoUsers();
+        setUsersList(
+          demoUsers.map((u): ExtendedUser => ({
+            uid: u.id,
+            email: u.email ?? "demo@estudiopixel.demo",
+            displayName: u.displayName ?? "Usuário",
+            name: u.displayName ?? "Usuário",
+            role: (u.role as Role) || "Docente",
+            isSuperAdmin: u.isSuperAdmin,
+            canCollaborate: u.isEditor,
+            isEditor: u.isEditor,
+            isRevisor: u.isRevisor,
+            canRevert: u.canRevert,
+            canAssign: u.isSuperAdmin,
+            canViewAdmin: u.canViewAdmin,
+            canViewReports: u.canViewReports,
+            canViewActivityHistory: u.canViewActivityHistory,
+            canViewDebugLogs: u.isSuperAdmin,
+            requiresChecklist: u.requiresChecklist,
+            status: "active",
+            workspaceId: u.workspaceId,
+            workspaces: [u.workspaceId],
+            createdAt: null,
+            updatedAt: null,
+            avatarUrl: "",
+            photoURL: null,
+          })),
+        );
+      } catch (error) {
+        console.error("Erro ao carregar usuários (demo):", error);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     if (!user) return;
     try {
       const list = await getUsers(user.workspaceId, user.isSuperAdmin);
@@ -200,14 +248,14 @@ export default function AdminPage() {
 
   useEffect(() => {
     loadUsers();
-  }, [user?.uid, user?.workspaceId, user?.isSuperAdmin]);
+  }, [user?.uid, user?.workspaceId, user?.isSuperAdmin, isDemo]);
 
-  usePolling(loadUsers, 5000, [user?.uid, user?.workspaceId, user?.isSuperAdmin]);
+  usePolling(loadUsers, 5000, isDemo ? [] : [user?.uid, user?.workspaceId, user?.isSuperAdmin]);
 
   const loadActivities = async () => {
     try {
-      const data = await listActivities({ page: 1, pageSize: 100 });
-      setActivities(data.map((dto) => {
+      const dtos = isDemo ? await getDemoActivities() : await listActivities({ page: 1, pageSize: 100 });
+      setActivities(dtos.map((dto) => {
         const local = toActivity(dto);
         return {
           id: local.id,
@@ -225,6 +273,11 @@ export default function AdminPage() {
   };
 
   const loadPresenters = async () => {
+    if (isDemo) {
+      setPresenters([]);
+      setLoadingPresenters(false);
+      return;
+    }
     if (!user?.workspaceId) return;
     try {
       const data = await getPresenters(user.workspaceId);
@@ -237,6 +290,10 @@ export default function AdminPage() {
   };
 
   const handleAddPresenter = async () => {
+    if (isDemo) {
+      toast.error("Cadastro de apresentadores indisponível no modo demonstração.");
+      return;
+    }
     if (!newPresenterName.trim() || !user?.workspaceId) return;
     setSavingPresenter(true);
     try {
@@ -252,6 +309,10 @@ export default function AdminPage() {
   };
 
   const handleSaveEditPresenter = async () => {
+    if (isDemo) {
+      toast.error("Edição de apresentadores indisponível no modo demonstração.");
+      return;
+    }
     if (!editingPresenter || !editPresenterName.trim()) return;
     setSavingPresenter(true);
     try {
@@ -267,6 +328,10 @@ export default function AdminPage() {
   };
 
   const handleDeletePresenter = async (presenterId: string) => {
+    if (isDemo) {
+      toast.error("Exclusão de apresentadores indisponível no modo demonstração.");
+      return;
+    }
     try {
       await deletePresenter(presenterId);
       setPresenters(presenters.filter(p => p.id !== presenterId));
@@ -277,6 +342,10 @@ export default function AdminPage() {
   };
 
   const handleRoleChange = async (uid: string, newRole: Role) => {
+    if (isDemo) {
+      toast.error("Alteração de cargos indisponível no modo demonstração.");
+      return;
+    }
     setUpdating(uid);
     try {
       await updateUserRole(uid, newRole);
@@ -291,6 +360,10 @@ export default function AdminPage() {
   };
 
   const togglePermission = async (uid: string, field: 'canCollaborate' | 'isEditor' | 'isRevisor' | 'requiresChecklist' | 'canRevert' | 'canAssign' | 'canViewAdmin' | 'canViewReports' | 'canViewActivityHistory' | 'canViewDebugLogs', value: boolean) => {
+    if (isDemo) {
+      toast.error("Alteração de permissões indisponível no modo demonstração.");
+      return;
+    }
     setUpdating(uid);
     try {
       await updateUserPermissions(uid, { [field]: value });
@@ -359,6 +432,13 @@ export default function AdminPage() {
           </div>
         </div>
       </div>
+
+      {isDemo && (
+        <div className="mb-8 p-4 rounded-2xl border border-amber-300/40 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-sm font-medium flex items-center gap-2">
+          <Eye className="w-5 h-5" />
+          Modo demonstração: as informações são fictícias e somente leitura. Alterações estão desativadas.
+        </div>
+      )}
 
       <Tabs defaultValue="usuarios" className="w-full">
         <TabsList className="bg-zinc-100 dark:bg-zinc-900 p-1 mb-8 rounded-2xl h-14 border border-zinc-200 dark:border-zinc-800">
@@ -446,7 +526,7 @@ export default function AdminPage() {
                           <Select
                             value={userItem.role}
                             onValueChange={(value) => handleRoleChange(userItem.uid, value as Role)}
-                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                            disabled={isDemo || updating === userItem.uid || userItem.uid === user?.uid}
                           >
                             <SelectTrigger className="w-full h-10 bg-transparent border-zinc-200 dark:border-zinc-800 rounded-xl focus:ring-2 focus:ring-primary/20">
                               <SelectValue>
@@ -545,7 +625,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.canCollaborate ?? false} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canCollaborate', val)}
-                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                            disabled={isDemo || updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -554,7 +634,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.isEditor} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'isEditor', val)}
-                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                            disabled={isDemo || updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -563,7 +643,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.isRevisor} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'isRevisor', val)}
-                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                            disabled={isDemo || updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -572,7 +652,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.canRevert} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canRevert', val)}
-                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                            disabled={isDemo || updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -581,7 +661,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.requiresChecklist ?? true} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'requiresChecklist', val)}
-                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                            disabled={isDemo || updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -590,7 +670,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.canAssign} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canAssign', val)}
-                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                            disabled={isDemo || updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -599,7 +679,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.canViewAdmin} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canViewAdmin', val)}
-                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                            disabled={isDemo || updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -608,7 +688,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.canViewReports} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canViewReports', val)}
-                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                            disabled={isDemo || updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -617,7 +697,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.canViewActivityHistory} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canViewActivityHistory', val)}
-                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                            disabled={isDemo || updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -626,7 +706,7 @@ export default function AdminPage() {
                           <Switch 
                             checked={userItem.canViewDebugLogs} 
                             onCheckedChange={(val) => togglePermission(userItem.uid, 'canViewDebugLogs', val)}
-                            disabled={updating === userItem.uid || userItem.uid === user?.uid}
+                            disabled={isDemo || updating === userItem.uid || userItem.uid === user?.uid}
                           />
                         </div>
                       </TableCell>
@@ -783,11 +863,12 @@ export default function AdminPage() {
                   value={newPresenterName}
                   onChange={(e) => setNewPresenterName(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleAddPresenter(); }}
+                  disabled={isDemo}
                   className="h-11 rounded-xl border-zinc-200 dark:border-zinc-800 font-bold flex-1"
                 />
                 <Button
                   onClick={handleAddPresenter}
-                  disabled={savingPresenter || !newPresenterName.trim()}
+                  disabled={isDemo || savingPresenter || !newPresenterName.trim()}
                   className="h-11 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-[10px] px-6"
                 >
                   {savingPresenter ? <Hourglass className="w-4 h-4 animate-spin" style={{ animationDuration: "2s" }} /> : <UserPlus className="w-4 h-4 mr-2" />}

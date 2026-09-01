@@ -95,6 +95,7 @@ a { color: var(--primary); text-decoration: none; }
 .btn-ghost:hover:not(:disabled) { background: #ececf2; color: var(--text); }
 
 .btn-sm { padding: 0.25rem 0.5625rem; font-size: 0.75rem; border-radius: 6px; }
+.btn-block { display: flex; width: 100%; }
 
 .icon-btn {
   display: inline-grid;

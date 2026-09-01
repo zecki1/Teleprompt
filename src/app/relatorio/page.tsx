@@ -9,10 +9,17 @@ import { listScripts } from "@/api/scripts";
 import { listProjects } from "@/api/projects";
 import { listActivities } from "@/api/activities";
 import { getReports } from "@/api/reports";
-import type { ReportsSummary } from "@/api/types";
+import type { ReportsSummary, ScriptDto } from "@/api/types";
 import { getUsers } from "@/services/users";
 import { toActivity, toScriptDoc } from "@/lib/script-mappers";
 import { usePolling } from "@/lib/polling";
+import {
+  isPublicDemoMode,
+  getDemoProjects,
+  getDemoScripts,
+  getDemoUsers,
+  getDemoActivities,
+} from "@/services/demo-data";
 
 import { ScriptDoc } from "@/types/script";
 import {
@@ -231,6 +238,29 @@ const buildMonthlyAdoption = (growth: ReportsSummary["growth"]) => {
   });
 };
 
+// Conta roteiros por status a partir das DTOs (modo demonstração).
+const buildByStatus = (scriptDtos: ScriptDto[]): { status: string; count: number }[] => {
+  const map = new Map<string, number>();
+  scriptDtos.forEach((dto) => {
+    const status = dto.status || "Rascunho";
+    map.set(status, (map.get(status) || 0) + 1);
+  });
+  return Array.from(map.entries()).map(([status, count]) => ({ status, count }));
+};
+
+// Series sintética de crescimento para o gráfico de adoção (modo demonstração).
+const buildDemoGrowth = (scriptDtos: ScriptDto[]): { year: number; month: number; count: number }[] => {
+  let total = scriptDtos.length;
+  const now = new Date();
+  const growth: { year: number; month: number; count: number }[] = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const share = Math.max(1, Math.round(total / 6));
+    growth.push({ year: d.getFullYear(), month: d.getMonth() + 1, count: share });
+  }
+  return growth;
+};
+
 export default function RelatorioPage() {
   const { user } = useAuth();
   const router = useRouter();
@@ -260,6 +290,11 @@ export default function RelatorioPage() {
   }, []);
 
   useEffect(() => {
+    if (isPublicDemoMode()) {
+      loadData("");
+      return;
+    }
+
     if (!user) {
       router.push("/login");
       return;
@@ -278,11 +313,82 @@ export default function RelatorioPage() {
 
   // Substitui o onSnapshot do Firestore: atualiza periodicamente os dados.
   usePolling(() => {
-    if (user) loadData(user.workspaceId || "");
+    if (!isPublicDemoMode() && user) loadData(user.workspaceId || "");
   }, 60000, [user?.uid, user?.workspaceId, isSuperAdmin]);
 
   const loadData = async (workspaceId: string) => {
     try {
+      if (isPublicDemoMode()) {
+        const [projectDtos, scriptDtos, demoUsers, activityDtos] = await Promise.all([
+          getDemoProjects(),
+          getDemoScripts(),
+          getDemoUsers(),
+          getDemoActivities(),
+        ]);
+
+        const userMap = new Map<string, UserInfo>();
+        demoUsers.forEach((u) => {
+          userMap.set(u.id, {
+            uid: u.id,
+            displayName: u.displayName || u.email?.split("@")[0] || "Usuário",
+            email: u.email || "",
+            role: u.role || "Docente",
+            createdAt: null,
+          });
+        });
+
+        const projectNameMap = new Map<string, string>();
+        projectDtos.forEach((p) => projectNameMap.set(p.id, p.name));
+
+        const allScripts: ScriptDoc[] = [];
+        const charMap = new Map<string, number>();
+        scriptDtos.forEach((dto) => {
+          const content = dto.content || "";
+          const base = toScriptDoc(dto);
+          const scenes = countScenes(content);
+          const script: ScriptDoc = {
+            ...base,
+            projectName: dto.projectId ? projectNameMap.get(dto.projectId) || undefined : undefined,
+            charCount: content.length,
+            sceneCount: scenes > 0 ? scenes : undefined,
+          };
+          charMap.set(script.id, content.length);
+          if (!script.isPlaceholder) allScripts.push(script);
+        });
+        setAllScripts(allScripts);
+
+        const allActivities: ActivityLog[] = activityDtos.map((dto) => {
+          const local = toActivity(dto);
+          const actionType = local.type;
+          const title = extractScriptTitle(local.description);
+          const userInfo = local.userId ? userMap.get(local.userId) : undefined;
+          return {
+            id: local.id,
+            userId: local.userId || "",
+            userName: userInfo?.displayName || "",
+            action: activityTypeToAction[actionType] || local.description || "Editou",
+            actionType,
+            scriptTitle: title || undefined,
+            timestamp: local.createdAt,
+          };
+        });
+        setWorkspaceActivities(allActivities);
+
+        const demoReports: ReportsSummary = {
+          totalScripts: allScripts.length,
+          totalProjects: projectDtos.length,
+          byStatus: buildByStatus(scriptDtos),
+          byBucket: [],
+          growth: buildDemoGrowth(scriptDtos),
+          generatedAt: new Date().toISOString(),
+        };
+        setReports(demoReports);
+        setMonthlyAdoptionData(buildMonthlyAdoption(demoReports.growth || []));
+
+        aggregateData(allScripts, userMap, allActivities, charMap);
+        return;
+      }
+
       const isSuper = isSuperAdmin;
 
       const [scriptDtos, projectDtos, userList, activityDtos, reportsSummary] = await Promise.all([

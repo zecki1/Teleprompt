@@ -3,6 +3,7 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { DOCUMENT } from '@angular/common';
 
 import { ScriptsService } from '../../core/api/projects.service';
+import { TpHubService } from '../../core/realtime/tp-hub.service';
 import type { ScriptDto } from '../../core/api/types';
 
 /// Estado compartilhado entre janela master (controlador) e espelhos,
@@ -31,6 +32,7 @@ export class TpPage {
   private readonly document = inject(DOCUMENT);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly tpHub = inject(TpHubService);
 
   protected readonly loading = signal(true);
   protected readonly error = signal<string | null>(null);
@@ -63,13 +65,64 @@ export class TpPage {
         // Pede o estado atual ao master ao abrir.
         this.post({ type: 'hello' });
       }
+      void this.joinTpRealtime();
     });
 
     this.destroyRef.onDestroy(() => {
       this.stopLoop();
       this.channel?.close();
       this.channel = null;
+      void this.tpHub.disconnect();
     });
+  }
+
+  /** Sessão TP compartilhada via SignalR (espelhos entre dispositivos). */
+  private tpSessionId(): string {
+    return `tp-${this.id()}`;
+  }
+
+  /** Conecta ao hub TpHub e entra na sessão (best-effort). */
+  private async joinTpRealtime(): Promise<void> {
+    try {
+      await this.tpHub.connect();
+      if (!this.tpHub.isConnected()) return;
+      await this.tpHub.joinTp(this.tpSessionId(), this.isMirror ? 'mirror' : 'master');
+      this.tpHub.onScrollStateChanged(({ position, speed, mode }) => {
+        if (!this.isMirror) return; // só o espelho obedece remoto
+        this.speed.set(speed);
+        this.mode = mode;
+        this.applyRemoteRatio(position);
+      });
+      this.tpHub.onRemoteCommand((_session, command) => {
+        if (this.isMirror) this.applyRemoteCommand(command);
+      });
+    } catch {
+      /* realtime é aumentativo; BroadcastChannel cobre o mesmo browser */
+    }
+  }
+
+  private mode = 'scroll';
+
+  private applyRemoteRatio(ratio: number): void {
+    const el = this.scrollView();
+    if (!el) return;
+    const max = el.scrollHeight - el.clientHeight;
+    if (max > 0) el.scrollTop = ratio * max;
+  }
+
+  private applyRemoteCommand(command: string): void {
+    if (command === 'play') {
+      if (!this.playing()) this.togglePlay();
+    } else if (command === 'pause') {
+      if (this.playing()) this.togglePlay();
+    } else if (command === 'reset') {
+      this.resetScrollRemote();
+    }
+  }
+
+  private resetScrollRemote(): void {
+    const el = this.scrollView();
+    if (el) el.scrollTo({ top: 0 });
   }
 
   /* ---------- Carregamento ---------- */
@@ -159,6 +212,11 @@ export class TpPage {
     }
     this.playing.update((v) => !v);
     this.broadcastState();
+    if (this.tpHub.isConnected()) {
+      void this.tpHub
+        .remoteCommand(this.tpSessionId(), this.playing() ? 'play' : 'pause')
+        .catch(() => undefined);
+    }
   }
 
   private step = (ts: number): void => {
@@ -171,7 +229,11 @@ export class TpPage {
       el.scrollTop += this.speed() * 55 * dt;
       const max = el.scrollHeight - el.clientHeight;
       // Envia a posição proporcional para os espelhos acompanharem.
-      if (max > 0) this.post({ type: 'scroll', ratio: el.scrollTop / max });
+      if (max > 0) {
+        const ratio = el.scrollTop / max;
+        this.post({ type: 'scroll', ratio });
+        this.broadcastRemoteScroll(ratio);
+      }
       if (el.scrollTop + el.clientHeight >= el.scrollHeight - 2) {
         this.stopAtEnd();
         return;
@@ -179,6 +241,15 @@ export class TpPage {
     }
     this.rafId = requestAnimationFrame(this.step);
   };
+
+  /** Transmite o estado de rolagem via SignalR (espelhos em outros dispositivos). */
+  private broadcastRemoteScroll(ratio: number): void {
+    if (this.tpHub.isConnected()) {
+      void this.tpHub
+        .scrollStateChanged(this.tpSessionId(), ratio, this.speed(), this.mode)
+        .catch(() => undefined);
+    }
+  }
 
   private stopAtEnd(): void {
     this.stopLoop();

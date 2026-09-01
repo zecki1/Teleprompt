@@ -1,5 +1,5 @@
 <div class="login-wrap">
-  <div class="login-card">
+  <div class="login-card card">
     <header class="brand">
       <div class="brand-mark">TP</div>
       <h1>Teleprompt</h1>
@@ -11,45 +11,45 @@
     </header>
 
     @if (error()) {
-      <div class="alert" role="alert">{{ error() }}</div>
+      <div class="alert-error" style="margin-bottom: 1rem" role="alert">{{ error() }}</div>
     }
 
     <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
       @if (isRegister) {
-        <label class="field">
-          <span>Nome</span>
-          <input
-            type="text"
-            formControlName="displayName"
-            placeholder="Seu nome"
-            autocomplete="name"
-          />
-        </label>
+        <label class="field-label" style="margin-top: 0.5rem">Nome</label>
+        <input
+          class="input"
+          type="text"
+          formControlName="displayName"
+          placeholder="Seu nome"
+          autocomplete="name"
+          style="margin-bottom: 1rem"
+        />
       }
 
-      <label class="field">
-        <span>E-mail</span>
-        <input
-          type="email"
-          formControlName="email"
-          placeholder="voce@exemplo.com"
-          autocomplete="email"
-          required
-        />
-      </label>
+      <label class="field-label">E-mail</label>
+      <input
+        class="input"
+        type="email"
+        formControlName="email"
+        placeholder="voce@exemplo.com"
+        autocomplete="email"
+        required
+        style="margin-bottom: 1rem"
+      />
 
-      <label class="field">
-        <span>Senha</span>
-        <input
-          type="password"
-          formControlName="password"
-          placeholder="••••••••"
-          autocomplete="{{ isRegister ? 'new-password' : 'current-password' }}"
-          required
-        />
-      </label>
+      <label class="field-label">Senha</label>
+      <input
+        class="input"
+        type="password"
+        formControlName="password"
+        placeholder="••••••••"
+        autocomplete="{{ isRegister ? 'new-password' : 'current-password' }}"
+        required
+        style="margin-bottom: 1.25rem"
+      />
 
-      <button class="primary" type="submit" [disabled]="submitting()">
+      <button class="btn btn-primary btn-block" type="submit" [disabled]="submitting()">
         @if (submitting()) {
           Entrando…
         } @else if (isRegister) {
@@ -76,10 +76,10 @@
       <div class="demo-entry">
         <span class="demo-label">Quer ver como é?</span>
         <div class="demo-actions">
-          <button type="button" class="demo-btn" (click)="enterDemo('admin')">
+          <button type="button" class="btn btn-secondary" (click)="enterDemo('admin')">
             Ver como Admin
           </button>
-          <button type="button" class="demo-btn" (click)="enterDemo('tecnico')">
+          <button type="button" class="btn btn-secondary" (click)="enterDemo('tecnico')">
             Ver como Técnico
           </button>
         </div>

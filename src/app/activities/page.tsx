@@ -36,6 +36,8 @@ import type { ActivityDto } from "@/api/types";
 import { toDate } from "@/lib/data-utils";
 import { usePolling } from "@/lib/polling";
 import { ActivityData, ActivityAction } from "@/lib/activity";
+import { isPublicDemoMode, getDemoActivities } from "@/services/demo-data";
+import { toActivity } from "@/lib/script-mappers";
 
 const actionConfig: Record<string, { label: string; color: string; icon: React.ElementType }> = {
   Editou: { label: "Edição", color: "bg-blue-500", icon: Edit3 },
@@ -85,6 +87,34 @@ export default function ActivitiesPage() {
   }, [allUsers]);
 
   const loadActivities = useCallback(async () => {
+    if (isPublicDemoMode()) {
+      try {
+        const dtos = await getDemoActivities();
+        const list = dtos.map((dto: ActivityDto) => {
+          const local = toActivity(dto);
+          const titleMatch = local.description?.match(/"([^"]+)"/);
+          return {
+            id: local.id,
+            userId: local.userId ?? "",
+            userName: local.userId
+              ? usersByName.get(local.userId) ?? "Usuário"
+              : "Sistema",
+            action: activityTypeToAction[local.type] ?? "Editou",
+            scriptTitle: titleMatch ? titleMatch[1] : undefined,
+            timestamp: toDate(local.createdAt),
+            workspaceId: "",
+          } satisfies ActivityData & { id: string };
+        });
+        setActivities(list);
+      } catch (error) {
+        console.error("Erro ao carregar atividades (demo):", error);
+        setActivities([]);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     if (!user?.uid) return;
     try {
       const dtos = await listActivities({ page: 1, pageSize: 100 });
@@ -112,7 +142,7 @@ export default function ActivitiesPage() {
   }, [user?.uid, user?.workspaceId, usersByName]);
 
   useEffect(() => {
-    if (!user?.uid) {
+    if (!isPublicDemoMode() && !user?.uid) {
       router.push("/login");
       return;
     }
@@ -120,7 +150,7 @@ export default function ActivitiesPage() {
     void loadActivities();
   }, [user?.uid, router, loadActivities]);
 
-  usePolling(loadActivities, 15000, [loadActivities]);
+  usePolling(loadActivities, 15000, isPublicDemoMode() ? [] : [loadActivities]);
 
   const filtered = useMemo(() => {
     let result = activities;
@@ -145,7 +175,7 @@ export default function ActivitiesPage() {
     return format(toDate(ts), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
   };
 
-  if (!user) return null;
+  if (!isPublicDemoMode() && !user) return null;
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">

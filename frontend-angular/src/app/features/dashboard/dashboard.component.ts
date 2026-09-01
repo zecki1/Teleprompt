@@ -7,6 +7,7 @@ import { ObservabilityService } from '@core/services/observability.service';
 import { AuthService } from '@core/auth/auth.service';
 import { Project } from '@core/models/project.model';
 import { Script, ScriptStatus } from '@core/models/script.model';
+import { getScriptPath } from '@core/models/script-path';
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   'Rascunho': { label: 'Rascunho', color: '#f97316', bg: 'rgba(249,115,22,0.1)' },
@@ -547,9 +548,7 @@ export class DashboardComponent implements OnInit {
       const buckets = new Map<string, Script[]>();
       const rows: { key: string; segments: string[]; scripts: Script[] }[] = [];
       for (const s of group.scripts) {
-        const segments = [s.folder, s.subfolder, s.lesson].filter(
-          (x): x is string => Boolean(x),
-        );
+        const segments = getScriptPath(s);
         if (segments.length === 0) {
           rows.push({ key: '', segments: [], scripts: [] });
           rows[rows.length - 1].scripts.push(s);

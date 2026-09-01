@@ -5,6 +5,7 @@ import { NormalModuleReplacementPlugin } from "webpack";
 const nodeEmptyModule = path.join(process.cwd(), "src/lib/node-empty.js");
 
 const nextConfig: NextConfig = {
+  basePath: process.env.NEXT_PUBLIC_BASE_PATH || "",
   // eslint: {
   //   ignoreDuringBuilds: true,
   // },
@@ -13,7 +14,6 @@ const nextConfig: NextConfig = {
   //   ignoreBuildErrors: true,
   // },
   
-  /* opções de configuração aqui */
   images: {
    remotePatterns: [
       { protocol: "https", hostname: "www.rockstargames.com" },

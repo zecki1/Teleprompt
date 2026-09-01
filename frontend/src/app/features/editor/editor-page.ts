@@ -1,10 +1,11 @@
 import { DatePipe } from '@angular/common';
-import { Component, computed, effect, inject, input, signal } from '@angular/core';
+import { Component, computed, DestroyRef, effect, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 
 import { AuthStore } from '../../core/auth/auth.store';
 import { ScriptsService } from '../../core/api/projects.service';
+import { ScriptHubService } from '../../core/realtime/script-hub.service';
 import type {
   ChecklistItemDto,
   CommentDto,
@@ -37,6 +38,8 @@ export class EditorPage {
 
   private readonly scriptsApi = inject(ScriptsService);
   private readonly auth = inject(AuthStore);
+  private readonly scriptHub = inject(ScriptHubService);
+  private readonly destroyRef = inject(DestroyRef);
 
   protected readonly loading = signal(true);
   protected readonly saving = signal(false);
@@ -62,6 +65,9 @@ export class EditorPage {
 
   constructor() {
     effect(() => void this.load(this.id()));
+    this.destroyRef.onDestroy(() => {
+      void this.leaveRealtime();
+    });
   }
 
   protected async load(id: string): Promise<void> {
@@ -77,11 +83,35 @@ export class EditorPage {
         this.refreshComments(),
         this.parseScenes(),
       ]);
+      await this.joinRealtime(id);
     } catch (e) {
       this.error.set(`Erro ao carregar o roteiro (${(e as { status?: number }).status ?? 'conexão'}).`);
     } finally {
       this.loading.set(false);
     }
+  }
+
+  /** Conecta ao hub ScriptHub e entra no grupo do roteiro (presença). */
+  private async joinRealtime(id: string): Promise<void> {
+    try {
+      await this.scriptHub.connect();
+      if (this.scriptHub.isConnected()) await this.scriptHub.joinScript(id);
+    } catch {
+      /* realtime é best-effort; a UI segue funcionando via REST */
+    }
+  }
+
+  /** Sai do grupo e desliga as notificações ao fechar o editor. */
+  private async leaveRealtime(): Promise<void> {
+    const s = this.script();
+    if (s) {
+      try {
+        await this.scriptHub.leaveScript(s.id);
+      } catch {
+        /* ignore */
+      }
+    }
+    await this.scriptHub.disconnect();
   }
 
   /* ---------- Conteúdo ---------- */
@@ -99,6 +129,11 @@ export class EditorPage {
       this.script.update((cur) =>
         cur ? { ...cur, title: this.title(), content: this.content() } : cur,
       );
+      // Notifica os demais colaboradores do grupo (realtime).
+      if (this.scriptHub.isConnected()) {
+        const user = this.auth.user()?.displayName ?? '';
+        await this.scriptHub.contentChanged(s.id, this.content(), user);
+      }
     } catch {
       this.error.set('Falha ao salvar.');
     } finally {

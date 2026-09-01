@@ -18,6 +18,7 @@ import {
   toBackendStatus,
   type LocalStatus,
 } from '../../shared/script-status';
+import { getScriptPath } from '../../shared/script-path';
 import { ModalComponent } from '../../shared/ui/modal';
 
 interface ScriptView extends ScriptDto {
@@ -127,9 +128,7 @@ export class DashboardPage {
       const rows: FolderRow[] = [];
       const buckets = new Map<string, ScriptView[]>();
       for (const s of group.scripts) {
-        const segments = [s.folder, s.subfolder, s.lesson].filter(
-          (x): x is string => Boolean(x),
-        );
+        const segments = getScriptPath(s);
         if (segments.length === 0) {
           rows.push({ key: '', segments: [], scripts: [] });
           rows[rows.length - 1].scripts.push(s);
