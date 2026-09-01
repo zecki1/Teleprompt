@@ -478,15 +478,21 @@ public class FirebaseSyncService
     }
 
     /// <summary>
-    /// Preenche Folder/Subfolder/Lesson/IsPlaceholder dos roteiros já importados
-    /// a partir do Firestore. Nunca sobrescreve um roteiro que já tem pasta
-    /// (movimentos/edições locais são preservados) e nunca mexe em título/conteúdo.
+    /// Reconcilia Folder/Subfolder/Lesson/IsPlaceholder de TODOS os roteiros
+    /// importados a partir do Firestore.
+    ///
+    /// Por que reconciliar e não só preencher vazios: o banco da VM foi montado por
+    /// uma ferramenta de migração que NÃO lia folder/subfolder/lesson (tudo nulo), e
+    /// depois o sync pula roteiros já importados. O resultado era projeto 100% achatado
+    /// no deploy, mesmo com a hierarquia presente no Firestore. O Firestore é a fonte
+    /// da estrutura de pastas: quando o documento tem caminho, usamos esse caminho;
+    /// quando NÃO tem (roteiro na raiz), preservamos o que existe localmente (respeita
+    /// movimentos feitos no app). Título/conteúdo/estado nunca são tocados.
     /// </summary>
     private async Task BackfillScriptPathsAsync(FirestoreDb firestore, FirebaseSyncReport report, CancellationToken ct)
     {
-        // Roteiros locais que ainda não têm pasta: candidatos ao backfill.
-        var candidates = await _db.Scripts.Where(s => string.IsNullOrEmpty(s.Folder)).ToListAsync(ct);
-        var byId = candidates.ToDictionary(s => s.Id);
+        var allScripts = await _db.Scripts.ToListAsync(ct);
+        var byId = allScripts.ToDictionary(s => s.Id);
 
         var snapshot = await firestore.Collection("scripts").GetSnapshotAsync(ct);
         foreach (var doc in snapshot.Documents)
@@ -502,7 +508,15 @@ public class FirebaseSyncService
             var (folder, subfolder, lesson) = ExtractFolderFields(data);
             var isPlaceholder = GetBool(data, "isPlaceholder");
 
-            if (string.IsNullOrWhiteSpace(folder) && !isPlaceholder)
+            var hasPath = !string.IsNullOrWhiteSpace(folder);
+            if (!hasPath)
+            {
+                if (isPlaceholder) script.IsPlaceholder = true;
+                report.ScriptsBackfillNoop++;
+                continue;
+            }
+
+            if (script.Folder == folder && script.Subfolder == subfolder && script.Lesson == lesson)
             {
                 report.ScriptsBackfillNoop++;
                 continue;
