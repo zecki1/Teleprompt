@@ -58,6 +58,7 @@ export class ScriptsService {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = inject(API_BASE_URL);
   private readonly demo = inject(DemoDataService);
+  private readonly ingestion = inject(IngestionService);
 
   private url(path = ''): string {
     return `${this.baseUrl}${API_PREFIX}/scripts${path}`;
@@ -86,8 +87,10 @@ export class ScriptsService {
     return firstValueFrom(this.http.get<ScriptDto>(this.url(`/${id}`)));
   }
 
-  create(input: CreateScriptRequest): Promise<ScriptDto> {
-    return firstValueFrom(this.http.post<ScriptDto>(this.url(), input));
+  async create(input: CreateScriptRequest): Promise<ScriptDto> {
+    const res = await firstValueFrom(this.http.post<ScriptDto>(this.url(), input));
+    try { this.ingestion.ingestBackend({ source: 'teleprompt', externalId: res.id, entityType: 'script', payload: res, occurredAt: new Date().toISOString() }); } catch {}
+    return res;
   }
 
   update(
